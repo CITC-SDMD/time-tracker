@@ -1,7 +1,11 @@
+mod api;
+mod auth;
 mod commands;
 mod db;
 mod logging;
 mod platform;
+#[cfg(test)]
+mod testutil;
 mod tracker;
 
 use std::sync::{Arc, Mutex};
@@ -21,6 +25,11 @@ pub fn run() {
             show_main_window(app);
         }))
         .invoke_handler(tauri::generate_handler![
+            commands::login,
+            commands::logout,
+            commands::get_session,
+            commands::refresh_me,
+            commands::accept_consent,
             commands::start_tracking,
             commands::pause_tracking,
             commands::resume_tracking,
@@ -46,17 +55,24 @@ pub fn run() {
                 .get_app_state("device_id")
                 .expect("seeded by db::Db::open on first run");
 
+            let api = api::ApiClient::from_db(&db);
+            let session = commands::restore_session(&db);
+            let may_track = commands::can_track(&session);
+
             let provider: Arc<dyn platform::ActivityProvider> = Arc::from(platform::provider());
             let clock = Arc::new(SystemClock);
             let mut engine = Engine::new(clock, provider, db, settings, user_id, device_id);
 
             // Crash recovery (task 6): close anything left open by a previous run, and
-            // auto-resume if tracking was on when the app last stopped running.
-            let auto_resumed = engine.recover_on_startup();
+            // auto-resume if tracking was on when the app last stopped running -- but only
+            // for someone who is logged in and has given consent.
+            let auto_resumed = engine.recover_on_startup(may_track);
 
             let engine = Arc::new(Mutex::new(engine));
             app.manage(commands::AppState {
                 engine: engine.clone(),
+                api,
+                session: Mutex::new(session),
                 _log_guard: log_guard,
             });
 

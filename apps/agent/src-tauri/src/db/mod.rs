@@ -375,4 +375,102 @@ impl Db {
         )?;
         Ok(())
     }
+
+    /// First login on this database only: everything recorded before login, under the
+    /// `local-<uuid>` placeholder id, now belongs to the person who logged in. Runs once
+    /// (`placeholder_adopted`); later logins by anyone never touch it. Returns how many
+    /// sessions were re-keyed.
+    pub fn adopt_placeholder_user(&self, real_user_id: &str) -> rusqlite::Result<usize> {
+        if self.get_app_state("placeholder_adopted").as_deref() == Some("1") {
+            return Ok(0);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let sessions = tx.execute(
+            "UPDATE sessions SET user_id = ?1 WHERE user_id LIKE 'local-%'",
+            params![real_user_id],
+        )?;
+        tx.execute(
+            "UPDATE sync_queue SET user_id = ?1 WHERE user_id LIKE 'local-%'",
+            params![real_user_id],
+        )?;
+        tx.execute(
+            "INSERT INTO app_state (key, value) VALUES ('placeholder_adopted', '1')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(sessions)
+    }
+
+    /// Queue rows for this user that still need sending.
+    pub fn pending_count(&self, user_id: &str) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM sync_queue WHERE user_id = ?1 AND status = 'PENDING'",
+            params![user_id],
+            |row| row.get(0),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn closed_session(db: &Db, user_id: &str) -> String {
+        let id = db
+            .open_session(&NewSession {
+                id: uuid::Uuid::now_v7().to_string(),
+                user_id: user_id.into(),
+                device_id: "dev".into(),
+                session_type: SessionType::Application,
+                app_name: Some("Code".into()),
+                process_name: Some("Code.exe".into()),
+                window_title: None,
+                idle_app_name: None,
+                started_at: 1_000,
+                last_seen_at: 1_000,
+            })
+            .unwrap();
+        db.close_session(&id, 6_000, false).unwrap();
+        id
+    }
+
+    #[test]
+    fn first_login_adopts_placeholder_sessions_and_queue_rows() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        let placeholder = db.get_app_state("current_user_id").unwrap();
+        assert!(placeholder.starts_with("local-"));
+        closed_session(&db, &placeholder);
+        closed_session(&db, &placeholder);
+
+        assert_eq!(db.adopt_placeholder_user("42").unwrap(), 2);
+
+        assert_eq!(db.pending_count("42").unwrap(), 2);
+        assert_eq!(db.pending_count(&placeholder).unwrap(), 0);
+        let rows = db.sessions_for_range("42", 0, 10_000).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn adoption_happens_only_once() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        let placeholder = db.get_app_state("current_user_id").unwrap();
+        closed_session(&db, &placeholder);
+        db.adopt_placeholder_user("42").unwrap();
+
+        // Stray placeholder data recorded later must not be handed to whoever logs in next.
+        closed_session(&db, &placeholder);
+        assert_eq!(db.adopt_placeholder_user("77").unwrap(), 0);
+        assert_eq!(db.pending_count("77").unwrap(), 0);
+        assert_eq!(db.pending_count("42").unwrap(), 1);
+    }
+
+    #[test]
+    fn other_users_data_is_never_adopted() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        closed_session(&db, "7");
+
+        assert_eq!(db.adopt_placeholder_user("42").unwrap(), 0);
+        assert_eq!(db.pending_count("7").unwrap(), 1);
+    }
 }

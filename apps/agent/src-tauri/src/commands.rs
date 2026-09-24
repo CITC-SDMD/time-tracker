@@ -7,15 +7,142 @@ use serde::Serialize;
 use tauri::State;
 use tracing_appender::non_blocking::WorkerGuard;
 
-use crate::db;
+use crate::api::{ApiClient, ApiError, MeDto};
 use crate::tracker::clock::SystemClock;
 use crate::tracker::engine::Engine;
+use crate::tracker::load_office_settings;
 use crate::tracker::state::{SessionKind, TrackingState};
+use crate::{auth, db};
 
 pub struct AppState {
     pub engine: Arc<Mutex<Engine<SystemClock>>>,
+    pub api: ApiClient,
+    /// Who is logged in on this PC, or `None`. The token itself stays in Credential Manager.
+    pub session: Mutex<Option<MeDto>>,
     /// Kept alive for the app's lifetime -- dropping it stops tracing-appender's flush thread.
     pub _log_guard: WorkerGuard,
+}
+
+/// Rebuilds the logged-in state at startup from Credential Manager plus the cached `Me`.
+/// Needs no network, so a PC that starts offline keeps tracking.
+pub fn restore_session(db: &db::Db) -> Option<MeDto> {
+    auth::load_token()?;
+    let me: MeDto = serde_json::from_str(&db.get_app_state("me_json")?).ok()?;
+    let user_id = db.get_app_state("current_user_id")?;
+    (me.id == user_id && me.status == "ACTIVE").then_some(me)
+}
+
+/// Whether the person may start tracking: logged in, and consent given for the current version.
+pub fn can_track(me: &Option<MeDto>) -> bool {
+    matches!(me, Some(me) if !me.consent_required)
+}
+
+fn require_ready(state: &AppState) -> Result<(), String> {
+    match &*state.session.lock().map_err(|_| "session lock poisoned")? {
+        None => Err("NOT_LOGGED_IN".into()),
+        Some(me) if me.consent_required => Err("CONSENT_REQUIRED".into()),
+        Some(_) => Ok(()),
+    }
+}
+
+/// Saves the latest `Me` (for offline restarts) and the office settings the engine uses.
+fn remember_me(engine: &mut Engine<SystemClock>, me: &MeDto) {
+    if let Ok(json) = serde_json::to_string(me) {
+        let _ = engine.db().set_app_state("me_json", &json);
+    }
+    if let Ok(json) = serde_json::to_string(&me.office_settings) {
+        let _ = engine.db().set_app_state("office_settings_json", &json);
+    }
+    let settings = load_office_settings(engine.db());
+    engine.apply_settings(settings);
+}
+
+fn api_error_string(err: ApiError) -> String {
+    err.code()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogoutDto {
+    pub synced: bool,
+    pub pending_count: i64,
+}
+
+#[tauri::command]
+pub async fn login(
+    state: State<'_, AppState>,
+    email: String,
+    password: String,
+) -> Result<MeDto, String> {
+    let (token, me) = state.api.login(&email, &password).await.map_err(api_error_string)?;
+    if me.status != "ACTIVE" {
+        return Err("DEACTIVATED".into());
+    }
+
+    let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    if !engine.set_user(&me.id) {
+        return Err("BUSY".into());
+    }
+    auth::save_token(&token).map_err(|e| format!("KEYRING: {e}"))?;
+    if let Err(err) = engine.db().adopt_placeholder_user(&me.id) {
+        tracing::error!(?err, "failed to adopt pre-login sessions");
+    }
+    remember_me(&mut engine, &me);
+    *state.session.lock().map_err(|_| "session lock poisoned")? = Some(me.clone());
+    Ok(me)
+}
+
+#[tauri::command]
+pub fn get_session(state: State<'_, AppState>) -> Result<Option<MeDto>, String> {
+    Ok(state.session.lock().map_err(|_| "session lock poisoned")?.clone())
+}
+
+/// Best effort: refreshes `Me` (e.g. a raised consent version). A network failure just
+/// keeps the cached copy; a rejected token is the sync worker's job to report.
+#[tauri::command]
+pub async fn refresh_me(state: State<'_, AppState>) -> Result<Option<MeDto>, String> {
+    let current = state.session.lock().map_err(|_| "session lock poisoned")?.clone();
+    let (Some(_), Some(token)) = (current.as_ref(), auth::load_token()) else {
+        return Ok(current);
+    };
+    if let Ok(me) = state.api.me(&token).await {
+        if me.status == "ACTIVE" {
+            let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+            remember_me(&mut engine, &me);
+            *state.session.lock().map_err(|_| "session lock poisoned")? = Some(me);
+        }
+    }
+    Ok(state.session.lock().map_err(|_| "session lock poisoned")?.clone())
+}
+
+#[tauri::command]
+pub async fn accept_consent(state: State<'_, AppState>) -> Result<MeDto, String> {
+    let (version, token) = {
+        let session = state.session.lock().map_err(|_| "session lock poisoned")?;
+        let me = session.as_ref().ok_or("NOT_LOGGED_IN")?;
+        (me.office_settings.consent_version, auth::load_token().ok_or("NOT_LOGGED_IN")?)
+    };
+    let me = state.api.accept_consent(&token, version).await.map_err(api_error_string)?;
+    let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    remember_me(&mut engine, &me);
+    *state.session.lock().map_err(|_| "session lock poisoned")? = Some(me.clone());
+    Ok(me)
+}
+
+/// Stops tracking and signs out. Sending what is still queued before signing out (docs
+/// §6.3) is added with the sync worker; queued data stays keyed to this user either way.
+#[tauri::command]
+pub fn logout(state: State<'_, AppState>) -> Result<LogoutDto, String> {
+    let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    engine.stop();
+    let pending_count = engine.db().pending_count(engine.user_id()).unwrap_or(0);
+    auth::clear_token();
+    let _ = engine.db().set_app_state("me_json", "");
+    *state.session.lock().map_err(|_| "session lock poisoned")? = None;
+    Ok(LogoutDto {
+        synced: pending_count == 0,
+        pending_count,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +240,7 @@ fn today_sessions(engine: &Engine<SystemClock>) -> Result<Vec<SessionDto>, Strin
 
 #[tauri::command]
 pub fn start_tracking(state: State<'_, AppState>) -> Result<TrackingStateDto, String> {
+    require_ready(&state)?;
     let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
     engine.start();
     Ok(tracking_state_dto(&engine))
@@ -127,6 +255,7 @@ pub fn pause_tracking(state: State<'_, AppState>) -> Result<TrackingStateDto, St
 
 #[tauri::command]
 pub fn resume_tracking(state: State<'_, AppState>) -> Result<TrackingStateDto, String> {
+    require_ready(&state)?;
     let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
     engine.resume();
     Ok(tracking_state_dto(&engine))

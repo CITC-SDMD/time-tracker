@@ -79,6 +79,17 @@ impl<C: Clock> Engine<C> {
         self.settings = settings;
     }
 
+    /// Switches which user new sessions are recorded under (login). Refused while a
+    /// session is being tracked, so one session never straddles two users.
+    pub fn set_user(&mut self, user_id: &str) -> bool {
+        if self.state != TrackingState::NotTracking {
+            return false;
+        }
+        self.user_id = user_id.to_owned();
+        let _ = self.db.set_app_state("current_user_id", user_id);
+        true
+    }
+
     pub fn start(&mut self) {
         if self.state != TrackingState::NotTracking {
             return;
@@ -156,16 +167,21 @@ impl<C: Clock> Engine<C> {
     /// Crash recovery (task 6): any session left open by a previous run gets
     /// `ended_at = last_seen_at`. If the app was mid-tracking when it went away
     /// (`was_tracking = yes`), resumes automatically. Returns whether it auto-resumed,
-    /// so the caller can surface a "Tracking resumed" notice.
-    pub fn recover_on_startup(&mut self) -> bool {
+    /// so the caller can surface a "Tracking resumed" notice. `allow_resume` is false when
+    /// nobody is logged in: orphaned sessions are still closed, but tracking stays off.
+    pub fn recover_on_startup(&mut self, allow_resume: bool) -> bool {
         if let Err(err) = self.db.close_all_open_sessions_at_last_seen() {
             tracing::error!(?err, "crash recovery: failed to close orphaned sessions");
         }
         let was_tracking = self.db.get_app_state("was_tracking").as_deref() == Some("yes");
-        if was_tracking {
+        if was_tracking && allow_resume {
             self.begin_tracking();
+            return true;
         }
-        was_tracking
+        if was_tracking {
+            let _ = self.db.set_app_state("was_tracking", "no");
+        }
+        false
     }
 
     fn begin_tracking(&mut self) {
@@ -721,7 +737,7 @@ mod tests {
             "test-device".into(),
         );
 
-        let auto_resumed = engine.recover_on_startup();
+        let auto_resumed = engine.recover_on_startup(true);
 
         assert!(auto_resumed);
         assert_eq!(engine.state(), TrackingState::Tracking);
@@ -729,6 +745,30 @@ mod tests {
         // The orphaned session was closed at last_seen_at, and a fresh one opened.
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].ended_at, Some(last_seen));
+    }
+
+    #[test]
+    fn logged_out_startup_closes_orphans_but_does_not_resume() {
+        let (mut engine, _clock, _provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.db().set_app_state("was_tracking", "yes").unwrap();
+
+        assert!(!engine.recover_on_startup(false));
+
+        assert_eq!(engine.state(), TrackingState::NotTracking);
+        assert_eq!(engine.db().get_app_state("was_tracking").as_deref(), Some("no"));
+    }
+
+    #[test]
+    fn user_can_only_change_while_not_tracking() {
+        let (mut engine, _clock, _provider) = engine_with(300, (Some(app("VSCode")), 0));
+
+        assert!(engine.set_user("42"));
+        assert_eq!(engine.user_id(), "42");
+        assert_eq!(engine.db().get_app_state("current_user_id").as_deref(), Some("42"));
+
+        engine.start();
+        assert!(!engine.set_user("99"));
+        assert_eq!(engine.user_id(), "42");
     }
 
     #[test]

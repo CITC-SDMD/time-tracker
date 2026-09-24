@@ -1,7 +1,27 @@
 <script setup lang="ts">
-// Phase 3: drives the local tracking engine directly, since there's no login screen
-// yet (Phase 2 desktop-side work) to gate this behind.
 const { state, summary, resumedNotice, error, start, pause, resume, stop } = useTracking()
+const { me, refresh, logout } = useAuth()
+
+const loggingOut = ref(false)
+
+// Best effort: picks up a raised consent version. The route guard then sends the person
+// to the consent screen if needed.
+onMounted(async () => {
+  await refresh().catch(() => {})
+  if (me.value?.consentRequired)
+    await navigateTo('/consent')
+})
+
+async function signOut() {
+  loggingOut.value = true
+  try {
+    await logout()
+    await navigateTo('/login')
+  }
+  finally {
+    loggingOut.value = false
+  }
+}
 
 function formatSeconds(seconds: number | undefined) {
   if (seconds === undefined)
@@ -20,6 +40,16 @@ function formatSeconds(seconds: number | undefined) {
       </h1>
       <p class="text-sm text-slate-500">
         Closing this window hides it to the tray; tracking keeps running.
+      </p>
+      <p class="mt-1 flex items-center justify-between text-sm">
+        <span>{{ me?.name }}</span>
+        <button
+          :disabled="loggingOut"
+          class="text-slate-500 underline disabled:opacity-50"
+          @click="signOut"
+        >
+          Log out
+        </button>
       </p>
     </header>
 
