@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { state, clock, resumedNotice, error, start, pause, resume, stop } = useTracking()
+const { state, clock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
 const { me, refresh, logout } = useAuth()
 const { status: sync, notice, dismissNotice } = useSync()
 const loginNotice = useState<string | null>('loginNotice', () => null)
@@ -136,8 +136,16 @@ async function signOut() {
     </section>
 
     <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-2 text-sm font-medium text-slate-500">
-        Today
+      <h2 class="mb-2 flex items-center justify-between text-sm font-medium text-slate-500">
+        <span>Today</span>
+        <button
+          v-if="state?.state === 'NOT_TRACKING'"
+          class="text-xs font-normal underline"
+          title="Sets these counters back to 00:00:00. Nothing is deleted."
+          @click="resetCounters"
+        >
+          Reset
+        </button>
       </h2>
       <dl class="grid grid-cols-[7rem_1fr] gap-y-1 text-sm">
         <dt class="text-slate-500">

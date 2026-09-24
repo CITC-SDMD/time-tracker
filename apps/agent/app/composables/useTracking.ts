@@ -95,6 +95,12 @@ export function useTracking() {
     state.value = await invoke<TrackingStateDto>('stop_tracking')
   }
 
+  /** Zeroes today's counters on screen; no session is deleted. Only while stopped. */
+  async function resetCounters() {
+    await invoke('reset_today_counters')
+    await refresh()
+  }
+
   onMounted(async () => {
     unlisten = await listen('tracking-resumed', () => {
       resumedNotice.value = true
@@ -112,5 +118,5 @@ export function useTracking() {
     unlisten?.()
   })
 
-  return { state, summary, clock, resumedNotice, error, start, pause, resume, stop, refresh }
+  return { state, summary, clock, resumedNotice, error, start, pause, resume, stop, resetCounters, refresh }
 }

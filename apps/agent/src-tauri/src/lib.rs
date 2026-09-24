@@ -38,6 +38,7 @@ pub fn run() {
             commands::stop_tracking,
             commands::get_tracking_state,
             commands::get_today_summary,
+            commands::reset_today_counters,
             commands::get_today_timeline,
             commands::get_today_sessions_debug,
         ])

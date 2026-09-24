@@ -346,7 +346,14 @@ pub fn get_tracking_state(state: State<'_, AppState>) -> Result<TrackingStateDto
 #[tauri::command]
 pub fn get_today_summary(state: State<'_, AppState>) -> Result<TodaySummaryDto, String> {
     let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
-    let (start_ms, end_ms) = today_range_ms();
+    let (day_start_ms, end_ms) = today_range_ms();
+    // "Reset" on the screen only moves the point the counters start from; nothing is deleted.
+    let reset_at_ms = engine
+        .db()
+        .get_app_state("counters_reset_at")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let start_ms = day_start_ms.max(reset_at_ms);
     let rows = engine
         .db()
         .sessions_for_range(engine.user_id(), start_ms, end_ms + 1)
@@ -377,6 +384,21 @@ pub fn get_today_summary(state: State<'_, AppState>) -> Result<TodaySummaryDto, 
         idle_ms,
         live_kind,
     })
+}
+
+/// Zeroes the on-screen counters (today's Tracked / Active / Idle). Refused while tracking,
+/// so a running session is never split by it. No session is deleted or changed, and
+/// everything is still sent to the server.
+#[tauri::command]
+pub fn reset_today_counters(state: State<'_, AppState>) -> Result<(), String> {
+    let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    if engine.state() != TrackingState::NotTracking {
+        return Err("STOP_FIRST".into());
+    }
+    engine
+        .db()
+        .set_app_state("counters_reset_at", &chrono::Utc::now().timestamp_millis().to_string())
+        .map_err(|e| e.to_string())
 }
 
 /// Phase 3 returns raw per-chunk sessions here, same shape as `get_today_sessions_debug`.
