@@ -32,6 +32,10 @@ pub struct OpenSession {
     pub window_title: Option<String>,
     pub idle_app_name: Option<String>,
     pub started_wall: DateTime<Utc>,
+    /// When this session started counting on screen. Equals `started_wall`, except for an
+    /// idle session noticed late: it is stored back-dated to the last input, but the live
+    /// idle counter starts from the moment idle was noticed.
+    pub display_from: DateTime<Utc>,
     pub started_mono: Instant,
     pub last_checkpoint_mono: Instant,
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { state, summary, resumedNotice, error, start, pause, resume, stop } = useTracking()
+const { state, clock, resumedNotice, error, start, pause, resume, stop } = useTracking()
 const { me, refresh, logout } = useAuth()
 const { status: sync, notice, dismissNotice } = useSync()
 const loginNotice = useState<string | null>('loginNotice', () => null)
@@ -39,14 +39,6 @@ async function signOut() {
   finally {
     loggingOut.value = false
   }
-}
-
-function formatSeconds(seconds: number | undefined) {
-  if (seconds === undefined)
-    return '—'
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}m ${s}s`
 }
 </script>
 
@@ -151,15 +143,21 @@ function formatSeconds(seconds: number | undefined) {
         <dt class="text-slate-500">
           Tracked
         </dt>
-        <dd>{{ formatSeconds(summary?.trackedSeconds) }}</dd>
+        <dd class="font-mono tabular-nums">
+          {{ clock?.tracked ?? '--:--:--' }}
+        </dd>
         <dt class="text-slate-500">
           Active
         </dt>
-        <dd>{{ formatSeconds(summary?.activeSeconds) }}</dd>
+        <dd class="font-mono tabular-nums">
+          {{ clock?.active ?? '--:--:--' }}
+        </dd>
         <dt class="text-slate-500">
           Idle
         </dt>
-        <dd>{{ formatSeconds(summary?.idleSeconds) }}</dd>
+        <dd class="font-mono tabular-nums">
+          {{ clock?.idle ?? '--:--:--' }}
+        </dd>
       </dl>
     </section>
 

@@ -222,9 +222,12 @@ pub struct TrackingStateDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TodaySummaryDto {
-    pub active_seconds: i64,
-    pub idle_seconds: i64,
-    pub tracked_seconds: i64,
+    /// Milliseconds as of this call; the screen adds the time since the call to the
+    /// `live_kind` counter so it advances smoothly, one second at a time.
+    pub active_ms: i64,
+    pub idle_ms: i64,
+    /// `ACTIVE` or `IDLE` while a session is open and counting, else `None`.
+    pub live_kind: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -349,30 +352,30 @@ pub fn get_today_summary(state: State<'_, AppState>) -> Result<TodaySummaryDto, 
         .sessions_for_range(engine.user_id(), start_ms, end_ms + 1)
         .map_err(|e| e.to_string())?;
 
-    let mut active_seconds = 0i64;
-    let mut idle_seconds = 0i64;
+    let mut active_ms = 0i64;
+    let mut idle_ms = 0i64;
     for row in &rows {
-        let secs = row.duration_seconds.unwrap_or(0);
+        let ms = row.duration_seconds.unwrap_or(0) * 1000;
         match row.session_type {
-            db::SessionType::Application => active_seconds += secs,
-            db::SessionType::Idle => idle_seconds += secs,
+            db::SessionType::Application => active_ms += ms,
+            db::SessionType::Idle => idle_ms += ms,
         }
     }
 
-    // The still-open session's duration isn't in `duration_seconds` yet (NULL until
-    // closed) -- add its elapsed time so far so "today" reflects live state.
-    if let Some((_, kind, started_at)) = engine.open_session_info() {
-        let elapsed = ((chrono::Utc::now().timestamp_millis() - started_at) / 1000).max(0);
-        match kind {
-            SessionKind::Active => active_seconds += elapsed,
-            SessionKind::Idle => idle_seconds += elapsed,
-        }
-    }
+    // The still-open session's duration isn't saved yet (NULL until closed), so add what
+    // has been counted on screen so far.
+    let (open_active_ms, open_idle_ms) = engine.open_live_ms();
+    active_ms += open_active_ms;
+    idle_ms += open_idle_ms;
+    let live_kind = engine.open_session_info().map(|(_, kind, _)| match kind {
+        SessionKind::Active => "ACTIVE",
+        SessionKind::Idle => "IDLE",
+    });
 
     Ok(TodaySummaryDto {
-        active_seconds,
-        idle_seconds,
-        tracked_seconds: active_seconds + idle_seconds,
+        active_ms,
+        idle_ms,
+        live_kind,
     })
 }
 

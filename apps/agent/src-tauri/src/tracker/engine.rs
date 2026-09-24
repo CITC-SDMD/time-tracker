@@ -110,6 +110,24 @@ impl<C: Clock> Engine<C> {
             .map(|o| (o.id.clone(), o.kind, o.started_wall.timestamp_millis()))
     }
 
+    /// `(active_ms, idle_ms)` of the open session as shown live on screen. An idle session
+    /// is stored back-dated to the last input, but on screen the idle counter starts at
+    /// one second when idle is noticed; the stretch before that still counts as active.
+    /// Once the idle session closes, the saved totals take over (they include that stretch
+    /// as idle).
+    pub fn open_live_ms(&self) -> (i64, i64) {
+        let Some(open) = &self.open else { return (0, 0) };
+        let now = self.clock.now_wall();
+        match open.kind {
+            SessionKind::Active => ((now - open.started_wall).num_milliseconds().max(0), 0),
+            SessionKind::Idle => {
+                let before_noticed = (open.display_from - open.started_wall).num_milliseconds().max(0);
+                let idle = (now - open.display_from).num_milliseconds().max(1000);
+                (before_noticed, idle)
+            }
+        }
+    }
+
     pub fn apply_settings(&mut self, settings: OfficeSettings) {
         self.settings = settings;
     }
@@ -288,6 +306,9 @@ impl<C: Clock> Engine<C> {
                     self.close_open(at_wall, false);
                     let idle_app_name = current_app.as_ref().map(|a| a.app_name.clone());
                     self.open_idle(at_wall, at_mono, idle_app_name);
+                    if let Some(idle) = &mut self.open {
+                        idle.display_from = now_wall; // the on-screen idle counter starts now
+                    }
                     self.candidate = None;
                 }
                 SessionKind::Idle if idle_seconds < self.settings.idle_limit_seconds => {
@@ -431,6 +452,7 @@ impl<C: Clock> Engine<C> {
             window_title,
             idle_app_name: None,
             started_wall: at_wall,
+            display_from: at_wall,
             started_mono: at_mono,
             last_checkpoint_mono: at_mono,
         });
@@ -462,6 +484,7 @@ impl<C: Clock> Engine<C> {
             window_title: None,
             idle_app_name,
             started_wall: at_wall,
+            display_from: at_wall,
             started_mono: at_mono,
             last_checkpoint_mono: at_mono,
         });
@@ -622,6 +645,30 @@ mod tests {
         assert_eq!(sessions[1].session_type, SessionType::Idle);
         assert_eq!(sessions[1].idle_app_name.as_deref(), Some("Chrome"));
         assert_eq!(sessions[2].session_type, SessionType::Application);
+    }
+
+    #[test]
+    fn live_idle_counter_starts_at_one_second_when_idle_is_noticed() {
+        let (mut engine, clock, provider) = engine_with(5, (Some(app("Chrome")), 0));
+        engine.start();
+        for _ in 0..5 {
+            clock.advance(Duration::from_secs(2));
+            engine.tick();
+        }
+        let (active_ms, idle_ms) = engine.open_live_ms();
+        assert!(active_ms >= 10_000);
+        assert_eq!(idle_ms, 0);
+
+        // Idle is noticed 8s after the last input: stored back-dated, shown from 1s.
+        provider.set(Some(app("Chrome")), 8);
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+        let (before_noticed_ms, idle_ms) = engine.open_live_ms();
+        assert_eq!(idle_ms, 1000);
+        assert_eq!(before_noticed_ms, 8000);
+
+        clock.advance(Duration::from_secs(3));
+        assert_eq!(engine.open_live_ms().1, 3000);
     }
 
     #[test]
