@@ -406,11 +406,20 @@ mod tests {
     const USER: &str = "1";
 
     fn engine() -> Arc<Mutex<Engine<FakeClock>>> {
+        engine_with_controls(300, None).0
+    }
+
+    /// An engine plus handles to move its clock and change what the "PC" is doing.
+    fn engine_with_controls(
+        idle_limit_seconds: u64,
+        foreground: Option<crate::platform::ForegroundApp>,
+    ) -> (Arc<Mutex<Engine<FakeClock>>>, Arc<FakeClock>, Arc<FakeActivityProvider>) {
         let clock = Arc::new(FakeClock::new(Utc::now()));
-        let provider = Arc::new(FakeActivityProvider::new((None, 0)));
+        let provider = Arc::new(FakeActivityProvider::new((foreground, 0)));
         let db = Db::open_in_memory_for_test().unwrap();
-        let settings = OfficeSettings { idle_limit_seconds: 300, title_mode: TitleMode::Full };
-        Arc::new(Mutex::new(Engine::new(clock, provider, db, settings, USER.into(), "dev".into())))
+        let settings = OfficeSettings { idle_limit_seconds, title_mode: TitleMode::Full };
+        let engine = Engine::new(clock.clone(), provider.clone(), db, settings, USER.into(), "dev".into());
+        (Arc::new(Mutex::new(engine)), clock, provider)
     }
 
     /// Queues `count` closed 5-second sessions for `user`, returning their ids in send order.
@@ -621,6 +630,109 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(600), "took {elapsed:?}");
         assert!(elapsed < Duration::from_millis(900), "took {elapsed:?}");
         assert_eq!(pending(&engine), 0);
+    }
+
+    #[tokio::test]
+    async fn the_reported_status_follows_active_idle_paused_and_stopped() {
+        use crate::tracker::testing::app;
+        let (engine, clock, provider) = engine_with_controls(5, Some(app("VSCode")));
+        let server = MockServer::start((0..4).map(|_| (200, ok_body(&[], &[], &[], NO_COMMANDS))).collect()).await;
+        let api = ApiClient::new(&server.root, "dev");
+        let report = |i: usize| body_of(&server.request(i))["status"].clone();
+
+        lock(&engine).start();
+        for _ in 0..3 {
+            clock.advance(Duration::from_secs(2));
+            lock(&engine).tick();
+        }
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+        assert_eq!(report(0)["state"], "ACTIVE");
+        assert_eq!(report(0)["currentApp"], "VSCode");
+        assert!(report(0)["trackingStartedAt"].is_string());
+
+        // No input for longer than the idle limit: the next tick moves to IDLE, in VSCode.
+        // (The first sync applied the server's limit of 420s from the mock reply.)
+        provider.set(Some(app("VSCode")), 500);
+        clock.advance(Duration::from_secs(2));
+        lock(&engine).tick();
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+        assert_eq!(report(1)["state"], "IDLE");
+        assert_eq!(report(1)["idleAppName"], "VSCode");
+
+        provider.set(Some(app("VSCode")), 0);
+        clock.advance(Duration::from_secs(2));
+        lock(&engine).tick();
+        lock(&engine).pause();
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+        assert_eq!(report(2)["state"], "PAUSED");
+
+        lock(&engine).resume();
+        clock.advance(Duration::from_secs(3));
+        lock(&engine).stop();
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+        assert_eq!(report(3)["state"], "NOT_TRACKING");
+        assert!(report(3)["trackingStartedAt"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_stop_order_from_the_server_stops_a_tracking_app() {
+        use crate::tracker::state::TrackingState;
+        use crate::tracker::testing::app;
+        let (engine, clock, _provider) = engine_with_controls(300, Some(app("VSCode")));
+        lock(&engine).start();
+        clock.advance(Duration::from_secs(4));
+        let commands = r#"{"stopTracking":true,"stopReason":"STARTED_ON_OTHER_PC","signOut":false}"#;
+        let server = MockServer::start(vec![(200, ok_body(&[], &[], &[], commands))]).await;
+        let api = ApiClient::new(&server.root, "dev");
+
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+
+        assert!(report.stop_tracking);
+        assert_eq!(report.stop_reason.as_deref(), Some("STARTED_ON_OTHER_PC"));
+        assert_eq!(lock(&engine).state(), TrackingState::NotTracking);
+        // What was recorded before the order is kept and still gets sent.
+        assert_eq!(pending(&engine), 1);
+    }
+
+    #[tokio::test]
+    async fn logout_flush_sends_everything_waiting_even_rows_backed_off_after_a_failure() {
+        let engine = engine();
+        let ids = queue(&engine, USER, 250);
+        // An earlier failed attempt left these rows backed off for a while.
+        for id in &ids {
+            lock(&engine).db().schedule_retry(id, "SERVER_ERROR", now_ms()).unwrap();
+        }
+        assert_eq!(pending(&engine), 250);
+        let server = MockServer::start(vec![
+            (200, ok_body(&ids[..100], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&ids[100..200], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&ids[200..], &[], &[], NO_COMMANDS)),
+        ])
+        .await;
+        let api = ApiClient::new(&server.root, "dev");
+        let handle = SyncHandle::default();
+
+        let report = flush(&handle, &engine, &api, "tok", USER, Duration::from_secs(30))
+            .await
+            .expect("finishes well inside the 30 second limit");
+
+        assert_eq!(report.outcome, Outcome::Ok);
+        assert_eq!(pending(&engine), 0);
+    }
+
+    #[tokio::test]
+    async fn logout_flush_offline_returns_quickly_and_keeps_the_data() {
+        let engine = engine();
+        queue(&engine, USER, 5);
+        let api = ApiClient::new(&dead_root().await, "dev");
+        let handle = SyncHandle::default();
+
+        let started = std::time::Instant::now();
+        let report = flush(&handle, &engine, &api, "tok", USER, Duration::from_secs(30)).await.unwrap();
+
+        assert_eq!(report.outcome, Outcome::Offline);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(pending(&engine), 5);
     }
 
     #[tokio::test]
