@@ -131,6 +131,8 @@ pnpm build:agent
 The installer is created in `apps/agent/src-tauri/target/release/bundle/nsis/`.
 Use the installed (release) build for test 0.11 (resource use). Dev builds use more CPU and memory.
 
+**API address:** the app talks to the server named by the `TRACKER_API_URL` build setting (the server root, no `/api/v1`), for example `$env:TRACKER_API_URL = "https://tracker.example.com"` before `pnpm build:agent`. If it is not set, the app uses `http://127.0.0.1:8000`, which is right for local development.
+
 ---
 
 ## Office server (Phase 1+)
@@ -278,9 +280,9 @@ sudo nginx -t && sudo systemctl reload nginx
 
 Certbot sets up auto-renewal via a systemd timer — no manual renewal needed.
 
-### 7. Scheduled jobs (retention pruning)
+### 7. Scheduled jobs
 
-Laravel's scheduler needs exactly one cron entry:
+The server keeps all data permanently (no retention pruning), so nothing needs the scheduler yet. If a scheduled job is added later, Laravel's scheduler needs exactly one cron entry:
 
 ```bash
 sudo crontab -e -u www-data
@@ -290,7 +292,7 @@ sudo crontab -e -u www-data
 * * * * * cd /var/www/time-tracker/apps/api && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-This drives `tracker:prune` (daily retention cleanup, `docs/DEVELOPMENT_PLAN.md` §8) and anything else later added to `routes/console.php`.
+This drives anything added to `routes/console.php`.
 
 ### 8. Firewall
 

@@ -20,8 +20,8 @@ These are fixed. Do not change them without asking the project owner.
 | Editing time | Employees **cannot edit or delete** their time. |
 | Meetings / no input | Shown as **"Idle (in Zoom)"** — idle, labeled with the app that was on screen. |
 | Logout | App **sends all unsent data first**. If offline: show *"You're offline, your data will be sent next time you log in"* and keep the data safely on the computer. |
-| Detailed session data | Kept **30 days**. |
-| Daily summaries | Kept **3 months**. |
+| Detailed session data | Kept **permanently** on the office server. |
+| Daily summaries | Kept **permanently** on the office server. |
 | Tracking on many PCs | **One computer at a time.** Starting on a second PC stops the first. |
 | Screenshots | **Not part of this project.** No screenshot feature, no screenshot storage. |
 | Productivity scores | **Never.** We show facts only. |
@@ -147,7 +147,7 @@ time-tracker/
 │       │   │   └── Requests/          # form request validation (AgentSyncRequest, etc.)
 │       │   ├── Models/                # User, EmployeeStatus, Session, DailySummary, Device, OfficeSetting, AuditLog
 │       │   ├── Services/              # SessionSyncService, SummaryService, TimelineService, HierarchyService
-│       │   └── Console/Commands/      # PruneOldData (retention cleanup, scheduled)
+│       │   └── Console/Commands/      # (none yet; no retention pruning, the server keeps all data)
 │       ├── database/
 │       │   ├── migrations/
 │       │   └── seeders/               # OfficeSettingsSeeder, first-OIC console command
@@ -402,7 +402,7 @@ CREATE TABLE sessions (                                 -- id = UUID made on the
   received_at       TIMESTAMP NOT NULL,
   INDEX idx_sessions_user_started (user_id, started_at),
   INDEX idx_sessions_day (day)
-  -- retention: rows with started_at older than 30 days deleted by a scheduled job (§8 Housekeeping)
+  -- retention: none. The office server keeps all rows permanently.
 );
 
 CREATE TABLE daily_summaries (
@@ -416,7 +416,7 @@ CREATE TABLE daily_summaries (
   first_activity_at   TIMESTAMP(3) NULL,
   last_activity_at    TIMESTAMP(3) NULL,
   PRIMARY KEY (user_id, day)
-  -- retention: rows older than 90 days deleted by a scheduled job
+  -- retention: none. The office server keeps all rows permanently.
 );
 
 CREATE TABLE devices (
@@ -445,7 +445,7 @@ CREATE TABLE audit_logs (
   details          JSON NULL,
   created_at       TIMESTAMP NOT NULL,
   INDEX idx_audit_created (created_at DESC)
-  -- retention: rows older than 365 days deleted by a scheduled job
+  -- retention: none. The office server keeps all rows permanently.
 );
 
 -- Sanctum's own migration creates `personal_access_tokens` (tokenable_id/type, token hash, abilities, expires_at).
@@ -453,7 +453,7 @@ CREATE TABLE audit_logs (
 
 **`app_key`:** process name in lowercase, without `.exe`, with any character other than `a-z 0-9 _` replaced by `_` (e.g. `code`, `chrome`). Safe as a JSON object key.
 
-**Retention (Laravel scheduler, replaces Firestore TTL):** an artisan command `php artisan tracker:prune` deletes `sessions` older than 30 days, `daily_summaries` older than 90 days, and `audit_logs` older than 365 days. Registered in `routes/console.php` (`Schedule::command('tracker:prune')->daily()`) and driven by one cron entry (`* * * * * php artisan schedule:run`) set up on the office server per `docs/SETUP.md`. Unlike Firestore TTL (best-effort, "usually within a day"), this runs on a known schedule and is easy to test directly (Test 4.5-equivalent: run the command, assert old rows are gone).
+**Retention:** none. The office server keeps `sessions`, `daily_summaries` and `audit_logs` permanently, so there is no prune command. Only the desktop app's local SQLite purges already-synced rows after 7 days (§7.4).
 
 **Database access:** MySQL listens only on `localhost` (or the private network if the DB is a separate host) — no public port. Only the Laravel app's DB user connects, with a password from `.env` (never committed). The desktop app and dashboard never get direct database credentials.
 
@@ -589,7 +589,7 @@ Other responses: `401` (token bad/expired – app shows "Please log in again"), 
 3. If `office_settings.window_title_mode = APP_ONLY`, set every `windowTitle` to `null`.
 4. `DB::transaction()` (wraps everything below; MySQL's row locks stand in for Firestore's transaction):
    1. `Session::whereIn('id', $ids)->lockForUpdate()->pluck('id')` — sessions that already exist → `duplicates`. New ones → `accepted`.
-   2. **One tracking PC rule:** load `employee_statuses` for this user with `lockForUpdate()`. If `state` is ACTIVE/IDLE and `device_id` is a different PC that synced in the last 5 minutes → this PC takes over (`device_id` = this one, `tracking_device_since` = now). The old PC gets `commands.stopTracking = true, stopReason: "STARTED_ON_OTHER_PC"` on its next sync, and its sessions starting after `tracking_device_since` are rejected (`OTHER_DEVICE_ACTIVE`).
+   2. **One tracking PC rule:** load `employee_statuses` for this user with `lockForUpdate()`. If `state` is ACTIVE/IDLE and `device_id` is a different PC that synced in the last 5 minutes → the PC whose `trackingStartedAt` is later wins (`device_id` = that one, `tracking_device_since` = its `trackingStartedAt`). If the sending PC started earlier, it is the one told to stop. The old PC gets `commands.stopTracking = true, stopReason: "STARTED_ON_OTHER_PC"` on its next sync, and its sessions starting after `tracking_device_since` are rejected (`OTHER_DEVICE_ACTIVE`).
    3. **Deactivated user:** sessions that started before `deactivated_at` are accepted. Newer ones are rejected. Respond with `commands.signOut = true`.
    4. Bulk-`insert()` the new sessions (catch a duplicate-key `QueryException` per row as a second safety net — see §10.2), upsert the `employee_statuses` row, and fold each new session into its daily summary (see below).
    5. A duplicate-key exception on insert means someone else's request beat this one to that row — treat it the same as step 4.1 finding it already existed (move it from `accepted` to `duplicates`) rather than failing the whole batch.
@@ -656,7 +656,7 @@ const activity = await invoke<CurrentActivity>("get_current_activity")
 - Takes up to 100 `PENDING` queue rows for the current user where `next_attempt_at ≤ now`, oldest first, and sends them with the current status.
 - `accepted` / `duplicates` → queue row `DONE`, session `SYNCED`.
 - `rejected` → queue row `FAILED`, session `REJECTED`, reason logged.
-- If a full batch of 100 succeeded, send the next batch straight away (up to 20 batches per cycle). This clears a big backlog after being offline.
+- If a full batch of 100 succeeded, send the next batch straight away, paced about 2.2 seconds apart to stay under the 30-per-minute rate limit, until nothing is waiting (with a safety cap of 300 batches per pass). This clears a big backlog after being offline without a pause.
 - Network error / `5xx` / `429` → wait and retry: 1, 2, 5, 10, then 30 minutes max. **Tracking is never affected.**
 - `401` → the Sanctum token is invalid or expired (no refresh step, unlike Firebase's ID/refresh token pair — see §9.2). Show "Please log in again" and keep the data.
 - `426` → show "Please update the app" and check for updates. Keep tracking locally.
@@ -831,7 +831,7 @@ PASS: only the API can reach the database.
 6. Middleware `EnsureManager` (any manager role), `EnsureOic` (settings, audit), and `EnsureSelfOrVisible($paramId)` (self, or `$paramId` in `HierarchyService::allDescendantIds()`).
 7. Routes: `POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
 8. Create account (`AdminEmployeeController@store`): validate the requested `role` is exactly one tier below the caller's own (§9.1) — otherwise `422`; create the `users` row (`manager_id` = caller) → audit log entry. If the email already exists → `409`. **Built as:** a real random temporary password, returned once in the response for the manager to hand over directly — `Password::sendResetLink()` needs a working reset-password page on the dashboard, which doesn't exist yet. Swap this for the emailed-link flow once that page is built; the interim behavior is otherwise equivalent (a one-time credential only the manager sees).
-9. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their tokens (`$user->tokens()->delete()`) so they can't keep using an already-issued agent token. Reactivate does the reverse (no need to reissue a token — they log in again). Both gated by `EnsureSelfOrVisible` — actually here it's *not* self, just visible — a manager can deactivate anyone in their descendant set, at any depth, not only direct reports.
+9. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their non-agent tokens (`$user->tokens()->where('name', 'not like', 'agent-%')->delete()`). Agent tokens are kept on purpose: the desktop app needs one to send the data recorded before deactivation (Test 4.15); every other route still returns 403 `ACCOUNT_DEACTIVATED`, and the sync route rejects sessions started after `deactivated_at` and tells the app to sign out. Reactivate does the reverse (no need to reissue a token). Both gated by `EnsureSelfOrVisible` — actually here it's *not* self, just visible — a manager can deactivate anyone in their descendant set, at any depth, not only direct reports.
 10. A manager cannot deactivate themselves, and the system refuses to leave zero `ACTIVE` `OIC` rows (`400`) — the OIC-equivalent of "last admin protection."
 11. `php artisan tracker:make-oic "Name" email@office.com` — the one-time console command that creates the first account directly as OIC (§9.2), since there's no dashboard yet to do it from. Every other account descends from this one through the normal create-a-direct-report flow.
 12. Dashboard: login page (posts to `/login`, Sanctum SPA cookie auth — no client SDK needed). After login call `/api/v1/me`. If the role isn't a manager role → sign out and show "This dashboard is for managers only." Route guard (Nuxt middleware) on every page.
@@ -1058,7 +1058,7 @@ PASS: within those numbers.
 2. Laravel `AgentSyncRequest` + `AgentController@sync`: `POST /api/v1/agent/sync`, exactly as in §10.1 (DB transaction, duplicates, one-PC rule, deactivated rule).
 3. `SummaryService`: add sessions into daily totals, splitting at midnight in the office timezone.
 4. Middleware: `throttle:agent-sync` rate limit, `CheckAgentVersion` (`X-Agent-Version` header vs `office_settings.min_agent_version`, `426` if too old).
-5. `php artisan tracker:prune` scheduled command (§8 Housekeeping) for retention (sessions 30 d, summaries 90 d, audit 365 d). Register the cron entry that drives Laravel's scheduler, and write the steps in `docs/SETUP.md`.
+5. (Removed: no server-side retention pruning. The office server keeps all data permanently.)
 6. Rust `sync/client.rs` + `sync/worker.rs` (§11.1): batching, retry wait times, 401 handling, commands, settings.
 7. Rust `auth.rs`: hold the Sanctum token from Credential Manager; no refresh step needed (§9.2) — just re-send it until a `401` says it's no longer valid.
 8. Detect "internet is back" (a successful `/health` call, checked every 30 s while offline) → sync now.
@@ -1070,8 +1070,7 @@ PASS: within those numbers.
     - bad sessions → rejected with the right reason;
     - midnight split;
     - one-PC takeover;
-    - deactivated user rule;
-    - `tracker:prune` actually deletes rows past retention and leaves newer ones.
+    - deactivated user rule.
 
 **Deliverables**
 - Sessions from the desktop app appear in MySQL within ~2 minutes (and ≤ 10 minutes for long sessions), with correct daily totals.
@@ -1175,6 +1174,25 @@ Test 4.18 [P] Rate limit
 Expected: after 30, responses are 429.
 PASS: limit works.
 ```
+
+**Phase 4 test results** (2026-09, against real MySQL and `php artisan serve`; 62 Laravel and 43 Rust tests pass)
+
+| Test | Result | How |
+|---|---|---|
+| 4.1, 4.2 | PASS | Real app. Sessions and daily totals matched. |
+| 4.3 | PASS | Server-side status transitions plus Rust worker test of status reports. |
+| 4.4 | PASS | Duplicates listed, totals unchanged. |
+| 4.5 | Open | Needs Wi-Fi off on a real PC. |
+| 4.6, 4.7 | PASS | API stopped, then MySQL stopped. Nothing lost or duplicated. |
+| 4.8 | Partly | Token ages checked live: accepted at 2 h, 1 d, 29 d; 401 at 31 d. The real 2-hour soak is open. |
+| 4.9, 4.10 | Partly | Rust tests cover the logout flush online and offline; 4.10 passed on the real app. Clicking Log out online is open. |
+| 4.11 | Partly | Server side (two devices) and Rust stop-order test pass. The on-screen notice on a second PC is open. |
+| 4.12–4.14 | PASS | Laravel tests. |
+| 4.15, 4.16 | PASS | Real app. |
+| 4.17 | PASS | Real app: 3,000 rows in about 4 min, then 5,000 rows in about 2 min 36 s; totals matched. |
+| 4.18 | PASS | 429 after 30 requests. |
+
+Known behaviour: at the end of an idle period the on-screen totals settle to the saved values, because saved idle time is back-dated to the last input. Tracked time does not change.
 
 ---
 
@@ -1318,7 +1336,7 @@ PASS: match.
 
 Test 6.7 [N] Dates
 1. Switch Today → Yesterday → a date 2 weeks ago → a date 2 months ago.
-Expected: correct data. Dates older than 30 days show totals only, with the note "Detailed timeline is kept for 30 days."
+Expected: correct data for every date, including full timelines for old dates.
 PASS: correct.
 
 Test 6.8 [S] Direct URL outside your hierarchy
@@ -1492,7 +1510,7 @@ Screenshots are **not part of this project** (decision: no paid screenshot stora
 ### Phase 11 — Reports
 
 **Tasks**
-1. Laravel `GET /api/v1/reports/daily?from&to&uid?` (manager, scoped to `HierarchyService::allDescendantIds()` same as §10's employee routes), built from `daily_summaries` only (max 92 days, to match retention).
+1. Laravel `GET /api/v1/reports/daily?from&to&uid?` (manager, scoped to `HierarchyService::allDescendantIds()` same as §10's employee routes), built from `daily_summaries` only (capped at 92 days per request to keep queries fast).
 2. Reports:
    - **Daily employee report:** one row per person per day (tracked / active / idle, first / last activity), limited to the caller's visible set;
    - **App usage report:** app totals for a date range, same scope;
@@ -1615,8 +1633,8 @@ PASS: within target.
 - [ ] **Local token storage:** Sanctum token in Windows Credential Manager, never in files or SQLite.
 - [ ] **Local SQLite:** stored in the user's own `%APPDATA%` (other Windows users can't read it); no passwords or tokens in it. Encryption is not in the MVP (the data is the employee's own activity).
 - [ ] **Update files:** served read-only from the office server's `/updates/` directory; only the GitHub release workflow can write to it (SSH deploy key, no public upload endpoint).
-- [ ] **Audit logs:** manager actions and timeline views recorded; kept 365 days; readable only by the OIC.
-- [ ] **Data retention:** scheduled `php artisan tracker:prune` deletes sessions (30 d), summaries (90 d), audit (365 d); tested in Phase 7.
+- [ ] **Audit logs:** manager actions and timeline views recorded; kept permanently; readable only by the OIC.
+- [ ] **Data retention:** the server keeps all data permanently (no pruning). Only the employee PC's local SQLite purges already-synced rows after 7 days.
 - [ ] **Logs:** no tokens, keys, passwords or window titles in logs.
 - [ ] **Code signing:** installer and exe signed; updater signature checked.
 - [ ] **Dependencies:** `pnpm audit`, `cargo audit`, and `composer audit` run locally on a regular cadence (no CI to run them automatically — see Phase 1 task 12).
@@ -1634,7 +1652,7 @@ PASS: within target.
 - **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, screenshots (never), websites (unless turned on later, with new consent).
 - **When:** only while tracking is on (the tray icon shows this). Nothing is tracked while paused, not tracking, locked or asleep.
 - **Who can see it:** your manager and whoever is above them in the hierarchy — for example a Developer's data is visible to their Team Leader, that Team Leader's Project Manager, and the OIC, but not to other teams (§9.1). You can always see your own data in the app.
-- **How long it's kept:** detailed activity 30 days, daily totals 3 months.
+- **How long it's kept:** permanently on the office server.
 
 **Safeguards**
 - No hidden mode. The tray icon is always visible while tracking.
@@ -1668,7 +1686,7 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] Laravel verifies Sanctum tokens/sessions and enforces roles **and hierarchy** on every route (§9.1).
 - [ ] Sync is idempotent (Test 4.4 passes).
 - [ ] Daily summaries are correct, including midnight splits.
-- [ ] The database is not reachable from outside the server; scheduled retention pruning is on and tested.
+- [ ] The database is not reachable from outside the server.
 - [ ] Rate limiting and input validation are on.
 - [ ] The office server is HTTPS-only with a valid, auto-renewing certificate.
 
