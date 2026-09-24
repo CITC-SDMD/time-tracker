@@ -3,7 +3,9 @@
 // Mounted under /api by bootstrap/app.php, so every route here is /api/v1/... —
 // matching the base URL in docs/DEVELOPMENT_PLAN.md §10.
 
+use App\Http\Controllers\Api\AdminAuditController;
 use App\Http\Controllers\Api\AdminEmployeeController;
+use App\Http\Controllers\Api\AdminSettingsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\MeController;
@@ -23,7 +25,12 @@ Route::prefix('v1')->group(function () {
             Route::patch('/admin/employees/{id}', [AdminEmployeeController::class, 'update']);
         });
 
-        // GET/PUT /admin/settings, GET /admin/audit (§10, OIC-only) land alongside the
-        // features that actually need them (office-wide settings, Phase 6's audit page).
+        // Office-wide, not hierarchy-scoped — OIC only, even for other manager roles
+        // (§10 Test 2.13).
+        Route::middleware('oic')->group(function () {
+            Route::get('/admin/settings', [AdminSettingsController::class, 'show']);
+            Route::put('/admin/settings', [AdminSettingsController::class, 'update']);
+            Route::get('/admin/audit', [AdminAuditController::class, 'index']);
+        });
     });
 });
