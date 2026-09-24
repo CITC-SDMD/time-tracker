@@ -65,6 +65,14 @@ export function useSync() {
       await listen('sync-status-changed', refresh),
     )
     await refresh()
+    // The login may have ended before this page was listening (e.g. right at startup, when
+    // the first sync got a 401), so no notice reached it: check the real state now.
+    if (status.value?.needsLogin) {
+      const { me, load } = useAuth()
+      await load()
+      if (!me.value)
+        await navigateTo('/login')
+    }
     // Every second while something is waiting (so the bar moves), every 5 seconds otherwise.
     timer = setInterval(() => {
       ticks += 1
