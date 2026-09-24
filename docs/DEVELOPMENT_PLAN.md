@@ -11,8 +11,8 @@ These are fixed. Do not change them without asking the project owner.
 | Topic | Decision |
 |---|---|
 | Who uses it | **One office only.** Internal tool, not a public product. No sign-up page. |
-| Accounts | An **Admin creates employee accounts** from the dashboard. |
-| Roles | **Admin** and **Employee** only. |
+| Accounts | A **manager creates accounts for their own direct reports** from the dashboard (§9.1) — not a single "Admin" role. |
+| Roles | An 8-role hierarchy, not just Admin/Employee — see §9.1. **OIC** → **Project Manager** → **Team Leader** → (**Lead Developer**, **Developer**, **Client Support**, **QA**, **System Analyst**). Everyone tracks their own time the same way; what differs is dashboard access and whose data you can see. |
 | Database | **MySQL/MariaDB only** (server, self-hosted on the office server). SQLite only on the employee's computer. |
 | Hosting | **Self-hosted on the office server**, reachable from the internet under a domain name (WFH employees are not on the office LAN). HTTPS via a reverse proxy (nginx) with a Let's Encrypt certificate. |
 | Platform | **Windows 10 / 11** first. |
@@ -37,7 +37,7 @@ We are building a time tracker for our office's work-from-home staff.
 - The app notices **which app is in front** (e.g. VS Code, Chrome) and **whether the person is idle**.
 - It saves this as **sessions** ("VS Code, 09:00–09:22") on the computer first, so nothing is lost when the internet drops.
 - Every 2 minutes it **sends new sessions** to our server (a **Laravel API**, self-hosted on the office server), which checks who is sending and saves them to **MySQL**.
-- Admins open a **web dashboard** to see who is working now, daily totals, which apps were used, and a timeline.
+- Managers (OIC, Project Managers, Team Leaders) open a **web dashboard** to see who is working now, daily totals, which apps were used, and a timeline — scoped to their own part of the org chart (§9.1).
 
 The system reports **facts** (time, apps, idle). It never calculates a "productivity %".
 
@@ -63,9 +63,9 @@ EMPLOYEE COMPUTER (Windows, anywhere with internet)
                     ┌────────────────────────────────┐
                     │ Office server (self-hosted)     │
                     │ nginx (TLS, Let's Encrypt)      │
-ADMIN BROWSER       │   Laravel API                   │
+MANAGER BROWSER      │   Laravel API                   │
 ┌──────────────┐    │   - checks login token          │
-│ Nuxt         │───►│   - checks role                 │───► MySQL
+│ Nuxt         │───►│   - checks role + hierarchy     │───► MySQL
 │ dashboard    │    │   - checks data                 │
 │ (static,     │    │   - saves / reads data          │
 │  served by   │    └────────────────────────────────┘
@@ -136,21 +136,21 @@ time-tracker/
 │   │       │   └── logging.rs
 │   │       ├── Cargo.toml
 │   │       └── tauri.conf.json
-│   ├── dashboard/              # Admin web dashboard (Nuxt)
+│   ├── dashboard/              # Manager dashboard (Nuxt) — OIC / Project Manager / Team Leader
 │   │   ├── app/pages/          # login, index, employees/[id], employees/manage, settings, audit
 │   │   └── nuxt.config.ts
 │   └── api/                    # Laravel API (PHP, its own Composer project — not a pnpm package)
 │       ├── app/
 │       │   ├── Http/
 │       │   │   ├── Controllers/Api/   # MeController, AgentController, EmployeeController, AdminController
-│       │   │   ├── Middleware/        # EnsureActiveUser, EnsureAdmin, EnsureSelfOrAdmin, CheckAgentVersion
+│       │   │   ├── Middleware/        # EnsureActiveUser, EnsureManager, EnsureSelfOrVisible, CheckAgentVersion
 │       │   │   └── Requests/          # form request validation (AgentSyncRequest, etc.)
 │       │   ├── Models/                # User, EmployeeStatus, Session, DailySummary, Device, OfficeSetting, AuditLog
-│       │   ├── Services/              # SessionSyncService, SummaryService, TimelineService
+│       │   ├── Services/              # SessionSyncService, SummaryService, TimelineService, HierarchyService
 │       │   └── Console/Commands/      # PruneOldData (retention cleanup, scheduled)
 │       ├── database/
 │       │   ├── migrations/
-│       │   └── seeders/               # OfficeSettingsSeeder, first-admin console command
+│       │   └── seeders/               # OfficeSettingsSeeder, first-OIC console command
 │       ├── routes/api.php
 │       ├── tests/                     # Pest/PHPUnit
 │       ├── .env.example
@@ -355,15 +355,22 @@ CREATE TABLE users (
   name                 VARCHAR(255) NOT NULL,
   email                VARCHAR(255) NOT NULL UNIQUE,
   password             VARCHAR(255) NOT NULL,          -- Laravel hashed (bcrypt/argon2id)
-  role                 ENUM('ADMIN','EMPLOYEE') NOT NULL,
+  role                 ENUM('OIC','PROJECT_MANAGER','TEAM_LEADER','LEAD_DEVELOPER',
+                             'DEVELOPER','CLIENT_SUPPORT','QA','SYSTEM_ANALYST') NOT NULL,
+  manager_id           BIGINT UNSIGNED NULL REFERENCES users(id),  -- self-referencing; NULL only for OIC
   status               ENUM('ACTIVE','DEACTIVATED') NOT NULL DEFAULT 'ACTIVE',
   deactivated_at       TIMESTAMP NULL,
   consent_version      INT NULL,
   consent_accepted_at  TIMESTAMP NULL,
   created_by           BIGINT UNSIGNED NULL REFERENCES users(id),
-  created_at, updated_at TIMESTAMP                     -- Laravel timestamps
+  created_at, updated_at TIMESTAMP,                    -- Laravel timestamps
+  INDEX idx_users_manager (manager_id)
 );
+```
 
+**The hierarchy (§9.1):** `OIC` → `PROJECT_MANAGER` → `TEAM_LEADER` → (`LEAD_DEVELOPER`, `DEVELOPER`, `CLIENT_SUPPORT`, `QA`, `SYSTEM_ANALYST`). `manager_id` must point at a user exactly one level up — enforced in the `AdminEmployeeController@store` Form Request, not a database constraint (MySQL `CHECK` can't reference another row's column). There is exactly one `OIC` row with `manager_id = NULL`; every other row has a `manager_id`.
+
+```sql
 CREATE TABLE employee_statuses (                       -- one live-status row per employee
   user_id                BIGINT UNSIGNED PRIMARY KEY REFERENCES users(id),
   state                  ENUM('ACTIVE','IDLE','PAUSED','AWAY','NOT_TRACKING') NOT NULL,
@@ -456,20 +463,37 @@ CREATE TABLE audit_logs (
 
 ## 9. Authentication and Authorization
 
-### 9.1 Roles
+### 9.1 Roles and hierarchy
 
-| Role | Can do |
-|---|---|
-| **EMPLOYEE** | Log in to the desktop app. Start / pause / stop own tracking. See own data. **Cannot** open the admin dashboard or see anyone else. |
-| **ADMIN** | Everything an employee can do, **plus:** use the dashboard, see all employees, add / deactivate employees, change roles, change office settings, read the audit log. |
+Every account has exactly one role, and (except the OIC) exactly one manager, forming a 4-level tree:
+
+```text
+OIC
+ └─ PROJECT_MANAGER (one or more)
+     └─ TEAM_LEADER (one or more per PM)
+         └─ LEAD_DEVELOPER, DEVELOPER, CLIENT_SUPPORT, QA, SYSTEM_ANALYST (any number per Team Leader)
+```
+
+Everyone — every role, including the OIC — logs into the **desktop app** the same way and tracks their own time the same way. What differs by role is **dashboard access** and **whose data you can see there**:
+
+| Role tier | Roles | Dashboard access | Can see |
+|---|---|---|---|
+| **Manager roles** | `OIC`, `PROJECT_MANAGER`, `TEAM_LEADER` | Yes | Their own data, **plus** everyone below them in the tree (their direct reports and all of *those* reports' reports, recursively). An OIC sees the whole office; a Team Leader sees just their own team. |
+| **Individual-contributor roles** | `LEAD_DEVELOPER`, `DEVELOPER`, `CLIENT_SUPPORT`, `QA`, `SYSTEM_ANALYST` | No | Only their own data (in the desktop app's own Today/history screens — same as the old "Employee" behavior). |
+
+Two things are **manager-role-wide but not hierarchy-scoped**, i.e. OIC-only rather than "any manager who can see that data": **office settings** (idle threshold, timezone, window title mode, minimum agent version, consent version) and the **audit log**. These are organization-wide, not per-team, so splitting them by hierarchy isn't worth the complexity yet — a Team Leader doesn't get a settings screen or an audit view, even for their own team. (Team-scoped audit/settings would be a reasonable later addition if it's ever needed — not in the MVP.)
+
+**Creating accounts:** a manager creates an account **one level below their own role**, as their own direct report (`manager_id` = the creator's id): an OIC creates Project Managers, a Project Manager creates Team Leaders, a Team Leader creates any of the five individual-contributor roles. Nobody creates an account two or more levels below themselves directly — an OIC doesn't hand-create a Developer; the Developer's Team Leader does. This keeps the tree's shape self-enforcing instead of needing separate validation for "is this a sane org chart."
+
+**Visibility check, in code terms:** `User::visibleTo(User $viewer): bool` is true when `target.id === viewer.id`, or when `viewer` holds a manager role and `target.id` is in `viewer.allDescendantIds()` (computed by loading `id, manager_id` for the whole `users` table — small, one office — and walking the tree in PHP; see `HierarchyService`). The same descendant set gates the employee list, summary/timeline access, and who a manager is allowed to deactivate or edit.
 
 ### 9.2 How login works
 
 - **Desktop app:** the Vue login screen sends email + password to Rust (`invoke("login")`). Rust calls `POST /api/v1/auth/login` on the Laravel API. Laravel checks the password (`Hash::check`) and, if it's correct and the user is `ACTIVE`, issues a **Sanctum personal access token** (`$user->createToken('agent-<deviceId>', ['agent'])`, expiring per `sanctum.expiration` — e.g. 30 days). Rust keeps that **token in Windows Credential Manager** and sends it as `Authorization: Bearer <token>` on every request. The Vue screens never hold the token. There is no separate "ID token" / "refresh token" split like Firebase had — the Sanctum token *is* the credential, and Laravel checks the user's live `status` on every request, so a deactivation takes effect immediately without any token-refresh dance.
-- **Dashboard:** Sanctum's **SPA authentication** (session cookie + CSRF, not a bearer token) — this works because the dashboard is served from the same domain as the API (§2). Login posts to `/login`; Laravel sets a session cookie; subsequent `/api/v1/...` calls are authenticated by that cookie automatically.
+- **Dashboard:** Sanctum's **SPA authentication** (session cookie + CSRF, not a bearer token) — this works because the dashboard is served from the same domain as the API (§2). Login posts to `/login`; Laravel sets a session cookie; subsequent `/api/v1/...` calls are authenticated by that cookie automatically. An individual-contributor account can technically log in (correct password), but every dashboard route then 403s per §9.1 — the login page itself shows "This dashboard is for managers only."
 - **Forgot password:** "Forgot password" button → Laravel's built-in password-reset flow (`Password::sendResetLink`), emailed via the SMTP relay configured in `.env` (see the Email row in §3 — **TODO** until a relay is chosen).
-- **First admin (one-time, manual):** run `php artisan tracker:make-admin "Name" email@office.com` (a small custom artisan command we write in Phase 2) — it creates the `users` row directly with `role = 'ADMIN'`, `status = 'ACTIVE'`, and a temporary password printed to the console (or an emailed reset link, if mail is configured). Write these steps in `docs/SETUP.md`.
-- **Adding employees:** an admin enters name + email in the dashboard. Laravel creates the `users` row with a random unusable password, then sends a password-reset email so the employee sets their own password (same mechanism as "Forgot password"). If mail isn't configured yet, the dashboard shows the reset link directly so the admin can send it manually.
+- **First OIC (one-time, manual):** run `php artisan tracker:make-oic "Name" email@office.com` (a small custom artisan command we write in Phase 2) — it creates the `users` row directly with `role = 'OIC'`, `manager_id = NULL`, `status = 'ACTIVE'`, and a temporary password printed to the console (or an emailed reset link, if mail is configured). Write these steps in `docs/SETUP.md`. Every other account is created through the normal manager-creates-a-direct-report flow, starting from this one OIC.
+- **Adding accounts:** a manager enters a name + email in the dashboard and picks a role — restricted by the UI (and re-checked server-side) to the one role tier below their own. Laravel creates the `users` row with a random unusable password and `manager_id` = the creator, then sends a password-reset email so the new person sets their own password (same mechanism as "Forgot password"). If mail isn't configured yet, the dashboard shows the reset link directly so the manager can send it manually.
 
 ### 9.3 What the Laravel API checks on every request
 
@@ -477,8 +501,8 @@ CREATE TABLE audit_logs (
 2. Sanctum resolves the token/cookie to a `User` via its own `personal_access_tokens` table (hashed lookup) or the session — built into the framework, no manual signature/JWKS handling needed.
 3. Token `expires_at` (if set) is in the future; otherwise `401`.
 4. Middleware `EnsureActiveUser` loads the authenticated user and requires `status = 'ACTIVE'` (with one exception for unsent data, see §10) — checked on every request, not cached, since it's a single indexed lookup on the same DB the request is already touching.
-5. Role check for the route (`EnsureAdmin` / `EnsureSelfOrAdmin` middleware, or a route-level `can:` check via a Laravel Policy).
-6. **The user id always comes from the authenticated session/token**, never the request body. Any `uid`, `userId`, `role` or `employeeId` field in the body is ignored by the Form Request's validation rules (not just unused — it's not even a recognized field). For `/employees/{id}/...` routes: ADMIN → any id. EMPLOYEE → only their own id, otherwise `403`.
+5. Role/hierarchy check for the route: `EnsureManager` (any of the three manager roles — gates dashboard routes generally), `EnsureOic` (settings, audit), or `EnsureSelfOrVisible($paramId)` (self, or `$paramId` is in the viewer's descendant set per §9.1) for the per-employee routes.
+6. **The user id always comes from the authenticated session/token**, never the request body. Any `uid`, `userId`, `role` or `employeeId` field in the body is ignored by the Form Request's validation rules (not just unused — it's not even a recognized field). For `/employees/{id}/...` routes: a manager → any id in their descendant set. Anyone → their own id. Otherwise `403`.
 
 ---
 
@@ -493,13 +517,13 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 | `GET /api/v1/me` | logged in | Own profile, role, office settings, whether consent is needed | `MeController@show` |
 | `POST /api/v1/me/consent` | logged in | Record consent `{ consentVersion }` | `MeController@acceptConsent` |
 | `POST /api/v1/agent/sync` | logged in (agent) | Sends status + up to 100 closed sessions. Gets back results + commands. | `AgentController@sync` |
-| `GET /api/v1/employees` | admin | List of employees with live status and today's totals | `EmployeeController@index` |
-| `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | admin, or self | Daily totals per day (max 31 days) | `EmployeeController@summary` |
-| `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | admin, or self | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
-| `POST /api/v1/admin/employees` | admin | Create employee `{ name, email, role }` | `AdminEmployeeController@store` |
-| `PATCH /api/v1/admin/employees/{id}` | admin | Change `name`, `role`, or `status` (deactivate / reactivate) | `AdminEmployeeController@update` |
-| `GET /api/v1/admin/settings` / `PUT` | admin | Read / change office settings | `AdminSettingsController` |
-| `GET /api/v1/admin/audit?cursor=` | admin | Audit log, newest first, 50 per page | `AdminAuditController@index` |
+| `GET /api/v1/employees` | manager | List of people in the caller's hierarchy (§9.1) with live status and today's totals | `EmployeeController@index` |
+| `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | self, or a manager whose hierarchy includes `{id}` | Daily totals per day (max 31 days) | `EmployeeController@summary` |
+| `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | self, or a manager whose hierarchy includes `{id}` | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
+| `POST /api/v1/admin/employees` | manager | Create a direct report `{ name, email, role }` — role must be exactly one tier below the caller's (§9.1) | `AdminEmployeeController@store` |
+| `PATCH /api/v1/admin/employees/{id}` | a manager whose hierarchy includes `{id}` | Change `name` or `status` (deactivate / reactivate); changing `role`/`manager_id` (re-parenting) is restricted to the direct manager only | `AdminEmployeeController@update` |
+| `GET /api/v1/admin/settings` / `PUT` | OIC only | Read / change office settings | `AdminSettingsController` |
+| `GET /api/v1/admin/audit?cursor=` | OIC only | Audit log, newest first, 50 per page | `AdminAuditController@index` |
 
 **Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the number of DB round-trips. A single session is just a batch of one.
 
@@ -592,8 +616,8 @@ Other responses: `401` (token bad/expired – app shows "Please log in again"), 
 - **Rate limiting:** Laravel's built-in `throttle` middleware, keyed by user id (`RateLimiter::for('agent-sync', fn ($request) => Limit::perMinute(30)->by($request->user()->id))` in `AppServiceProvider`). `/agent/sync`: 30 requests per minute. Other routes: 120 per minute.
 - **CORS:** not needed for the normal case — dashboard and API are same-origin (§2). Laravel's `config/cors.php` stays locked down (no origins allowed) unless a future need (e.g. a separate marketing site) requires opening it up.
 - **Timeline (`TimelineService`):** query `sessions` where `user_id = id`, `started_at ≥ dayStart − 11 min`, `started_at < dayEnd`, ordered by `started_at`. Clip to the day. Merge neighbouring pieces that have the same type and app and a gap of 5 seconds or less. Return segments `{ type, label, startedAt, endedAt, seconds }`, where `label` is e.g. `"Visual Studio Code"` or `"Idle (in Zoom)"`.
-- **Employee list:** `User::query()` (office size, so no pagination needed) with `with('employeeStatus')` and today's `daily_summaries` eager-loaded (two extra indexed queries, not N+1). Show "Offline" if `last_seen_at` is more than 5 minutes ago while the state says tracking.
-- **Audit log:** write an entry (via an `AuditLog::record(...)` helper, or a Laravel event listener on employee-changed events) when an admin creates, changes or deactivates an employee, changes settings, or opens an employee's timeline.
+- **Employee list:** `User::whereIn('id', $viewer->allDescendantIds())` (office size, so no pagination needed) with `with('employeeStatus')` and today's `daily_summaries` eager-loaded (two extra indexed queries, not N+1) — `allDescendantIds()` is the same `HierarchyService` walk used for the visibility check (§9.1), so the list and the per-employee 403 checks can never disagree about who's visible. Show "Offline" if `last_seen_at` is more than 5 minutes ago while the state says tracking.
+- **Audit log:** write an entry (via an `AuditLog::record(...)` helper, or a Laravel event listener on employee-changed events) when a manager creates, changes or deactivates an account, an OIC changes settings, or a manager opens someone's timeline. Only the OIC reads the log (§9.1); it isn't filtered by hierarchy since only one role ever sees it.
 - **Logging:** Laravel's default structured logging (`storage/logs/laravel.log`, or forward to syslog/journald) via the `Log` facade. Never log tokens, password hashes, or full window titles.
 
 ---
@@ -805,93 +829,109 @@ PASS: CI catches the error.
 **Tasks**
 1. `composer require laravel/sanctum`, publish its config/migration, run `php artisan migrate`.
 2. `config/sanctum.php`: set `expiration` (e.g. 30 days) for agent tokens; `SANCTUM_STATEFUL_DOMAINS` for the dashboard's cookie-based SPA auth (§9.2).
-3. Middleware `EnsureActiveUser`: after Sanctum resolves the user, require `status = 'ACTIVE'`. `401` if unauthenticated, `403 ACCOUNT_DEACTIVATED` if deactivated.
-4. Middleware/Policy helpers: `EnsureAdmin` and `EnsureSelfOrAdmin($paramId)` (route-model-bound or a simple middleware reading the route parameter).
-5. Routes: `POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
-6. Create employee (`AdminEmployeeController@store`): create the `users` row (random unusable password) → `Password::sendResetLink()` → audit log entry. If the email already exists → `409`.
-7. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their tokens (`$user->tokens()->delete()`) so they can't keep using an already-issued agent token. Reactivate does the reverse (no need to reissue a token — they log in again).
-8. An admin cannot deactivate themselves or remove the last admin (`400`).
-9. `php artisan tracker:make-admin "Name" email@office.com` — the one-time console command that creates the first admin directly (§9.2), since there's no dashboard yet to do it from.
-10. Dashboard: login page (posts to `/login`, Sanctum SPA cookie auth — no client SDK needed). After login call `/api/v1/me`. If not ADMIN → sign out and show "This dashboard is for admins only." Route guard (Nuxt middleware) on every page.
-11. Dashboard: `employees/manage` page — list, add, change role, deactivate / reactivate.
-12. Desktop app: login screen → `invoke("login")` → Rust calls `POST /api/v1/auth/login` → Sanctum token saved in Credential Manager → `/api/v1/me`.
-13. Desktop app: **consent screen** on first login (and whenever `consent_version` goes up). It lists exactly what is tracked (§16). Tracking can't start until it's accepted.
-14. Desktop app: "Forgot password" link (opens the dashboard's password-reset page in the system browser, since the desktop app has no mail-sending of its own).
-15. `docs/SETUP.md`: the one-time steps to create the first admin (`php artisan tracker:make-admin`) and the SMTP `.env` placeholder to fill in once a mail relay is chosen.
-16. Laravel feature tests (Pest/PHPUnit) for: login (correct/wrong password, deactivated user), role checks, self-or-admin checks, token revocation on deactivate.
+3. Migration: add `role`, `manager_id`, `status`, `deactivated_at`, `consent_version`, `consent_accepted_at`, `created_by` to `users` (§8).
+4. `app/Services/HierarchyService.php`: loads `id, manager_id` for all users once per request and exposes `allDescendantIds(User $of): array` and `isManagerRole(User $user): bool` (§9.1). Used everywhere a visibility or "can I manage this account" check is needed, so the list endpoint and the per-record 403 checks can never disagree.
+5. Middleware `EnsureActiveUser`: after Sanctum resolves the user, require `status = 'ACTIVE'`. `401` if unauthenticated, `403 ACCOUNT_DEACTIVATED` if deactivated.
+6. Middleware `EnsureManager` (any manager role), `EnsureOic` (settings, audit), and `EnsureSelfOrVisible($paramId)` (self, or `$paramId` in `HierarchyService::allDescendantIds()`).
+7. Routes: `POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
+8. Create account (`AdminEmployeeController@store`): validate the requested `role` is exactly one tier below the caller's own (§9.1) — otherwise `422`; create the `users` row (random unusable password, `manager_id` = caller) → `Password::sendResetLink()` → audit log entry. If the email already exists → `409`.
+9. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their tokens (`$user->tokens()->delete()`) so they can't keep using an already-issued agent token. Reactivate does the reverse (no need to reissue a token — they log in again). Both gated by `EnsureSelfOrVisible` — actually here it's *not* self, just visible — a manager can deactivate anyone in their descendant set, at any depth, not only direct reports.
+10. A manager cannot deactivate themselves, and the system refuses to leave zero `ACTIVE` `OIC` rows (`400`) — the OIC-equivalent of "last admin protection."
+11. `php artisan tracker:make-oic "Name" email@office.com` — the one-time console command that creates the first account directly as OIC (§9.2), since there's no dashboard yet to do it from. Every other account descends from this one through the normal create-a-direct-report flow.
+12. Dashboard: login page (posts to `/login`, Sanctum SPA cookie auth — no client SDK needed). After login call `/api/v1/me`. If the role isn't a manager role → sign out and show "This dashboard is for managers only." Route guard (Nuxt middleware) on every page.
+13. Dashboard: `employees/manage` page — list of the caller's visible accounts, add a direct report (role dropdown limited to the one tier below the caller), deactivate / reactivate.
+14. Desktop app: login screen → `invoke("login")` → Rust calls `POST /api/v1/auth/login` → Sanctum token saved in Credential Manager → `/api/v1/me`.
+15. Desktop app: **consent screen** on first login (and whenever `consent_version` goes up). It lists exactly what is tracked (§16). Tracking can't start until it's accepted.
+16. Desktop app: "Forgot password" link (opens the dashboard's password-reset page in the system browser, since the desktop app has no mail-sending of its own).
+17. `docs/SETUP.md`: the one-time steps to create the first OIC (`php artisan tracker:make-oic`) and the SMTP `.env` placeholder to fill in once a mail relay is chosen.
+18. Laravel feature tests (Pest/PHPUnit) for: login (correct/wrong password, deactivated user), `HierarchyService` (descendant sets at every tier, an individual contributor's empty descendant set), role-creation-one-tier-below enforcement, self-or-visible checks, token revocation on deactivate, last-OIC protection.
 
 **Deliverables**
-- Admin can log in to the dashboard and add employees.
-- Employees get an email (once mail is configured — otherwise the admin shares the reset link manually), set a password, log in to the desktop app and accept consent.
+- An OIC can log in to the dashboard, create a Project Manager, who creates a Team Leader, who creates individual contributors — the whole hierarchy buildable from the dashboard after the one-time `tracker:make-oic` step.
+- New accounts get an email (once mail is configured — otherwise the creating manager shares the reset link manually), set a password, log in to the desktop app and accept consent.
 
 **Tests**
 
 ```text
-Test 2.1 [N] Admin login
-1. Log in to the dashboard as the first admin.
+Test 2.1 [N] OIC login
+1. Run tracker:make-oic, then log in to the dashboard as that account.
 Expected: you see the dashboard.
 PASS: logged in.
 
-Test 2.2 [N] Add employee
-1. Dashboard → Manage → Add "Test Employee" with your second email address.
-2. Check that inbox (or, if mail isn't configured yet, copy the reset link the dashboard shows).
-3. Set a password via the link.
-4. Log in to the desktop app with it.
-Expected: link works (by email or manually), login works, consent screen shows.
-PASS: employee can log in.
+Test 2.2 [N] Build the hierarchy
+1. As OIC, create a Project Manager. Log in as them; create a Team Leader.
+   Log in as the Team Leader; create a Developer.
+2. Check each invite's inbox (or, if mail isn't configured yet, copy the reset
+   link the dashboard shows).
+3. Set a password via each link. Log in to the desktop app with the Developer account.
+Expected: every step works; the desktop login shows the consent screen.
+PASS: full 4-level chain works end to end.
 
-Test 2.3 [S] Employee can't use the dashboard
-1. Log in to the dashboard as the employee.
-Expected: "This dashboard is for admins only." and signed out.
-PASS: no employee data visible.
+Test 2.3 [S] Individual contributor can't use the dashboard
+1. Log in to the dashboard as the Developer from Test 2.2.
+Expected: "This dashboard is for managers only." and signed out.
+PASS: no data visible.
 
-Test 2.4 [S] Employee can't call admin APIs
-1. As the employee, grab the Sanctum token from the desktop app's dev log (or log in via curl: `curl -X POST <api>/api/v1/auth/login -d '{"email":...,"password":...}'`).
+Test 2.4 [S] Individual contributor can't call manager APIs
+1. As the Developer, grab the Sanctum token from the desktop app's dev log (or log in via curl: `curl -X POST <api>/api/v1/auth/login -d '{"email":...,"password":...}'`).
 2. curl -H "Authorization: Bearer <token>" <api>/api/v1/employees
 3. curl the same token to POST /api/v1/admin/employees
 Expected: 403 for both.
 PASS: both 403.
 
-Test 2.5 [S] Can't see other employees
-1. Create employees A and B.
-2. With A's token: GET /api/v1/employees/<B id>/summary?from=...&to=...
-Expected: 403.
-PASS: 403.
+Test 2.5 [S] Hierarchy scoping
+1. Create two separate Team Leaders (A and B) under the same PM, each with their own Developer.
+2. With Team Leader A's token: GET /api/v1/employees/<B's Developer id>/summary?from=...&to=...
+Expected: 403 (not in A's descendant set).
+3. With the shared PM's token, the same request:
+Expected: 200 (both Team Leaders and their Developers are in the PM's descendant set).
+PASS: A blocked, PM allowed.
 
-Test 2.6 [S] Fake role in the body is ignored
-1. With the employee's token, PATCH /api/v1/admin/employees/<own id> with {"role":"ADMIN"}.
-Expected: 403. Role is still EMPLOYEE in the database.
+Test 2.6 [S] Can only create one tier below yourself
+1. As a Team Leader, POST /api/v1/admin/employees with role "PROJECT_MANAGER".
+2. As a Team Leader, POST /api/v1/admin/employees with role "DEVELOPER".
+Expected: first request 422 (not one tier below Team Leader); second 201.
+PASS: only the correct tier is accepted.
+
+Test 2.7 [S] Fake role/manager in the body is ignored
+1. With a Developer's token, PATCH /api/v1/admin/employees/<own id> with {"role":"OIC","managerId":null}.
+Expected: 403 (Developer isn't in their own descendant set as a manager — actually not visible-as-manager at all; this route requires a manager role). Role and manager_id unchanged in the database.
 PASS: no change.
 
-Test 2.7 [S] Bad tokens
+Test 2.8 [S] Bad tokens
 1. Call /api/v1/me with no token, a random string, an expired token, and a token that was already revoked (deactivated user's old token).
 Expected: 401 each time.
 PASS: all 401.
 
-Test 2.8 [N] Deactivate
-1. Admin deactivates the employee.
-2. Employee tries to log in to the desktop app.
+Test 2.9 [N] Deactivate
+1. A Team Leader deactivates one of their Developers.
+2. That Developer tries to log in to the desktop app.
 Expected: login fails with "Your account is deactivated."
 PASS: can't log in.
 
-Test 2.9 [N] Consent required
-1. New employee logs in. Try to start tracking without accepting.
+Test 2.10 [N] Consent required
+1. New account logs in. Try to start tracking without accepting.
 Expected: impossible. Start is only available after accepting.
 PASS: consent_accepted_at is saved on the users row after accepting.
 
-Test 2.10 [S] Token not stored in plain files
+Test 2.11 [S] Token not stored in plain files
 1. After login, search %APPDATA% for the Sanctum token text.
 Expected: not found. It's in Windows Credential Manager.
 PASS: not in any file.
 
-Test 2.11 [N] Last admin protection
-1. As the only admin, try to deactivate yourself.
+Test 2.12 [N] Last OIC protection
+1. As the only OIC, try to deactivate yourself.
 Expected: error, nothing changes.
-PASS: still admin.
+PASS: still ACTIVE.
 
-Test 2.12 [N] Audit
-1. Open Dashboard → Audit.
-Expected: entries for "employee created", "employee deactivated".
+Test 2.13 [S] Settings and audit are OIC-only
+1. As a Project Manager (not OIC), GET /api/v1/admin/settings and GET /api/v1/admin/audit.
+Expected: 403 for both, even though a Project Manager is a manager role.
+PASS: both 403.
+
+Test 2.14 [N] Audit
+1. As OIC, open Dashboard → Audit.
+Expected: entries for every account created/deactivated across the whole hierarchy, not just the OIC's direct reports.
 PASS: entries present with correct names and times.
 ```
 
@@ -1121,7 +1161,7 @@ Expected: first four rejected with reasons; the 101-session request gets 400.
 PASS: nothing bad saved.
 
 Test 4.15 [S] Deactivated during work
-1. Employee tracks offline for 10 min. Admin deactivates them. Employee goes online.
+1. Someone tracks offline for 10 min. Their manager deactivates them. They go online.
 Expected: sessions from before deactivation are accepted; the app then signs out.
 PASS: correct sessions saved; no newer ones accepted.
 
@@ -1157,7 +1197,7 @@ PASS: limit works.
    - sync status ("All data sent" / "12 sessions waiting to send").
 2. **Settings screen:**
    - "What we track" (the same text as the consent screen);
-   - idle limit and title mode (read-only, set by admin);
+   - idle limit and title mode (read-only, set office-wide by the OIC);
    - launch at startup (on by default);
    - app version and "Check for updates";
    - "Open log folder";
@@ -1222,16 +1262,16 @@ PASS: within targets.
 
 ---
 
-### Phase 6 — Admin Dashboard
+### Phase 6 — Manager Dashboard
 
 **Tasks**
-1. Laravel routes/controllers: `GET /api/v1/employees`, `/employees/{id}/summary`, `/employees/{id}/timeline` (§10). Audit "viewed timeline".
+1. Laravel routes/controllers: `GET /api/v1/employees`, `/employees/{id}/summary`, `/employees/{id}/timeline` (§10), all scoped to the caller's `HierarchyService::allDescendantIds()` (§9.1). Audit "viewed timeline".
 2. **Overview page (`/`):**
-   - cards: tracking now / idle now / not tracking (includes offline);
-   - today's total tracked / active / idle for everyone;
-   - an employee table with Employee, Status, Tracked, Active, Idle, Current app, Last activity.
+   - cards: tracking now / idle now / not tracking (includes offline) — counted over the caller's visible set only, so an OIC's cards cover the whole office and a Team Leader's cover just their team;
+   - today's total tracked / active / idle, same scope;
+   - a table (Name, Role, Status, Tracked, Active, Idle, Current app, Last activity) of everyone in the caller's visible set.
    - Refresh every 60 s, only while the browser tab is visible.
-3. **Employee page (`/employees/[id]`):**
+3. **Employee page (`/employees/[id]`):** only reachable if `[id]` is in the caller's visible set (self included) —
    - date picker: Today / Yesterday / pick a date;
    - totals: tracked / active / idle;
    - app breakdown: top 5 apps + "Other", with times (`5h 02m`);
@@ -1240,42 +1280,44 @@ PASS: within targets.
 4. Build the timeline with plain HTML/CSS (divs with widths as percentages). No chart library.
 5. Time format helper: `7h 24m`, `33m`, `45s`.
 6. Show all times in the office timezone.
-7. **Settings page:** idle limit (1–30 min), window title mode, office timezone, minimum app version.
-8. **Audit page:** simple paginated list.
+7. **Settings page** (OIC only — §9.1; hidden from the nav for Project Managers and Team Leaders): idle limit (1–30 min), window title mode, office timezone, minimum app version.
+8. **Audit page** (OIC only): simple paginated list, covering the whole hierarchy.
 
 **Deliverables**
-- A working admin dashboard, deployed to dev.
+- A working manager dashboard, deployed to dev, correctly scoped at every tier of the hierarchy.
 
 **Tests**
 
 ```text
-Test 6.1 [N] Overview
-1. Have 2 employees: one tracking, one not.
-Expected: cards show 1 tracking, 1 not tracking; the table shows correct status and current app.
-PASS: correct within ~2 minutes.
+Test 6.1 [N] Overview, scoped
+1. Under one Team Leader, have 2 direct reports: one tracking, one not. Have another
+   Team Leader (different team) with their own tracking report.
+2. Log in as the first Team Leader.
+Expected: cards and table show only their own 2 reports — 1 tracking, 1 not — not the other team.
+PASS: correct within ~2 minutes, no cross-team leakage.
 
 Test 6.2 [N] Idle status
-1. Employee goes idle past the limit.
+1. Someone in the caller's visible set goes idle past the limit.
 Expected: status "Idle" within ~2 minutes.
 PASS: correct.
 
 Test 6.3 [N] Offline status
-1. Employee's PC loses internet while tracking.
+1. Someone's PC loses internet while tracking.
 Expected: after ~5 min the status shows "Offline (last seen HH:MM)".
 PASS: correct.
 
 Test 6.4 [D] Totals match
-1. Compare an employee's dashboard totals for today with the Today screen in their desktop app.
+1. Compare someone's dashboard totals for today (as seen by their manager) with the Today screen in their own desktop app.
 Expected: same (±2 min for sync delay).
 PASS: match.
 
 Test 6.5 [N] App breakdown
-1. Check the employee page.
+1. Check an employee page.
 Expected: app times add up to Active; the top 5 plus Other are shown.
 PASS: sums correct.
 
 Test 6.6 [N] Timeline
-1. Compare the timeline with the employee's own timeline.
+1. Compare the timeline (as seen by a manager) with that person's own timeline.
 Expected: same blocks in the same order; long sessions shown as one block (not 10-min pieces).
 PASS: match.
 
@@ -1284,24 +1326,37 @@ Test 6.7 [N] Dates
 Expected: correct data. Dates older than 30 days show totals only, with the note "Detailed timeline is kept for 30 days."
 PASS: correct.
 
-Test 6.8 [S] Direct URL as employee
-1. Log in as an employee and go to /employees/<other uid>.
-Expected: blocked (admin-only message / signed out).
+Test 6.8 [S] Direct URL outside your hierarchy
+1. Log in as a Team Leader and go to /employees/<id of someone on a different team>.
+Expected: blocked (403 / signed out of that view).
 PASS: no data shown.
 
-Test 6.9 [S] Deactivated admin
-1. Deactivate a second admin while they have the dashboard open.
+Test 6.8b [S] Individual contributor, direct URL
+1. Log in to the dashboard as an individual-contributor role (login itself already
+   rejected per Test 2.3, so this confirms the API route is independently guarded,
+   not just the login screen).
+2. curl the employees endpoint directly with their token.
+Expected: 403.
+PASS: no data shown.
+
+Test 6.9 [S] Deactivated manager
+1. Deactivate a Project Manager while they have the dashboard open.
 Expected: within 60 s their next request fails with 403 and they're signed out.
 PASS: access stops.
 
-Test 6.10 [P] Page speed
-1. Open the overview with all employees, then an employee's busy day.
+Test 6.10 [S] Settings/audit hidden from non-OIC managers
+1. Log in as a Project Manager or Team Leader.
+Expected: no Settings or Audit nav item; direct navigation to those routes 403s.
+PASS: only OIC reaches them.
+
+Test 6.11 [P] Page speed
+1. As OIC (largest visible set), open the overview with everyone, then someone's busy day.
 Expected: each loads in under 2 seconds.
 PASS: within target.
 
-Test 6.11 [P] Query count
+Test 6.12 [P] Query count
 1. Open the overview once with Laravel's query log/Debugbar (dev only) on.
-Expected: a small, constant number of queries regardless of employee count (eager-loaded, not N+1 — see §10.3).
+Expected: a small, constant number of queries regardless of how many people are in the caller's visible set (eager-loaded, not N+1 — see §10.3).
 PASS: no N+1 query pattern.
 ```
 
@@ -1337,7 +1392,7 @@ Expected: sessions only missing for the dead/asleep/locked times; no duplicates;
 PASS: local count = database count; totals match.
 
 Test 7.3 [S] Security sweep
-1. Repeat tests 2.4–2.7, 4.13, 4.14 and 6.8 against production.
+1. Repeat tests 2.4–2.8, 2.13, 4.13, 4.14, 6.8 and 6.8b against production.
 Expected: same results.
 PASS: all blocked.
 
@@ -1442,11 +1497,11 @@ Screenshots are **not part of this project** (decision: no paid screenshot stora
 ### Phase 11 — Reports
 
 **Tasks**
-1. Laravel `GET /api/v1/reports/daily?from&to&uid?` (admin), built from `daily_summaries` only (max 92 days, to match retention).
+1. Laravel `GET /api/v1/reports/daily?from&to&uid?` (manager, scoped to `HierarchyService::allDescendantIds()` same as §10's employee routes), built from `daily_summaries` only (max 92 days, to match retention).
 2. Reports:
-   - **Daily employee report:** one row per employee per day (tracked / active / idle, first / last activity);
-   - **App usage report:** app totals for a date range;
-   - **Team report:** everyone's totals for a date range.
+   - **Daily employee report:** one row per person per day (tracked / active / idle, first / last activity), limited to the caller's visible set;
+   - **App usage report:** app totals for a date range, same scope;
+   - **Team report:** everyone visible to the caller, totals for a date range.
 3. CSV export (the controller returns a `text/csv` response — Laravel's `StreamedResponse` for large ranges). Times as `HH:MM` and also as plain seconds.
 4. All days follow the office timezone setting.
 5. Dashboard `/reports` page with a date range, employee filter and "Download CSV".
@@ -1464,10 +1519,12 @@ Test 11.2 [N] CSV
 Expected: opens cleanly; one row per employee per day; numbers match the dashboard.
 PASS: correct.
 
-Test 11.3 [S] Employee access
-1. Call /api/v1/reports/daily with an employee token.
+Test 11.3 [S] Individual contributor access, and hierarchy scope
+1. Call /api/v1/reports/daily with an individual-contributor token.
 Expected: 403.
-PASS: 403.
+2. Call it with a Team Leader's token, requesting `uid` of someone outside their team.
+Expected: that person's rows are excluded (or 403 if `uid` was requested directly).
+PASS: both blocked.
 
 Test 11.4 [N] Timezone
 1. Change the office timezone in dev and re-run a report for a new day.
@@ -1549,9 +1606,9 @@ PASS: within target.
 
 ## 15. Security Checklist
 
-- [ ] **Laravel auth:** email/password only, hashed with bcrypt/argon2id. Password-reset emails for new accounts; admins never see passwords.
+- [ ] **Laravel auth:** email/password only, hashed with bcrypt/argon2id. Password-reset emails for new accounts; managers never see passwords.
 - [ ] **Token checks:** Sanctum token validated on every request (hashed lookup, not a raw string compare); `expires_at` enforced; revoked immediately on logout or deactivation (`$user->tokens()->delete()`).
-- [ ] **Authorization:** every route has a role check; `/employees/{id}` uses the self-or-admin check; covered by tests.
+- [ ] **Authorization:** every route has a role/hierarchy check; `/employees/{id}` uses the self-or-visible check (§9.1); settings and audit are OIC-only; covered by tests.
 - [ ] **Never trust the client:** the user id comes from the authenticated Sanctum token/session, role from the `users` table. Body fields like `uid`/`role` are ignored (not recognized by the Form Request).
 - [ ] **Deactivation works immediately:** `EnsureActiveUser` checks `status` on every request (no cache — it's one indexed lookup already alongside the auth check), and deactivation revokes all existing tokens.
 - [ ] **Input validation:** a Laravel Form Request on every endpoint that takes a body or query; size limits; max 100 sessions per sync.
@@ -1563,7 +1620,7 @@ PASS: within target.
 - [ ] **Local token storage:** Sanctum token in Windows Credential Manager, never in files or SQLite.
 - [ ] **Local SQLite:** stored in the user's own `%APPDATA%` (other Windows users can't read it); no passwords or tokens in it. Encryption is not in the MVP (the data is the employee's own activity).
 - [ ] **Update files:** served read-only from the office server's `/updates/` directory; only the GitHub release workflow can write to it (SSH deploy key, no public upload endpoint).
-- [ ] **Audit logs:** admin actions and timeline views recorded; kept 365 days.
+- [ ] **Audit logs:** manager actions and timeline views recorded; kept 365 days; readable only by the OIC.
 - [ ] **Data retention:** scheduled `php artisan tracker:prune` deletes sessions (30 d), summaries (90 d), audit (365 d); tested in Phase 7.
 - [ ] **Logs:** no tokens, keys, passwords or window titles in logs.
 - [ ] **Code signing:** installer and exe signed; updater signature checked.
@@ -1581,15 +1638,15 @@ PASS: within target.
 - **What is tracked:** start/stop/pause times; which app is in front and for how long; the window title (unless the office turned titles off); when you're idle (no mouse/keyboard for X minutes) and which app was on screen then.
 - **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, screenshots (never), websites (unless turned on later, with new consent).
 - **When:** only while tracking is on (the tray icon shows this). Nothing is tracked while paused, not tracking, locked or asleep.
-- **Who can see it:** office admins. You can see your own data in the app.
+- **Who can see it:** your manager and whoever is above them in the hierarchy — for example a Developer's data is visible to their Team Leader, that Team Leader's Project Manager, and the OIC, but not to other teams (§9.1). You can always see your own data in the app.
 - **How long it's kept:** detailed activity 30 days, daily totals 3 months.
 
 **Safeguards**
 - No hidden mode. The tray icon is always visible while tracking.
-- Window titles can be turned off office-wide (`APP_ONLY`). Admins should consider this if titles might contain private information (email subjects, document names).
-- Employees can pause.
+- Window titles can be turned off office-wide (`APP_ONLY`). The OIC should consider this if titles might contain private information (email subjects, document names).
+- Everyone can pause their own tracking.
 - No productivity scores.
-- Admins' views of employee timelines are logged.
+- Managers' views of other people's timelines are logged, and only the OIC can read that log.
 - Only the data needed is collected (no IP history, no hardware inventory beyond the computer name).
 
 **Legal note:** employee monitoring laws differ by country and region (for example consent, notice and data-protection rules). **Have the actual rules reviewed for every place where the office and its employees are located** before rolling this out. Don't assume one rule applies everywhere.
@@ -1613,7 +1670,7 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] Meets the §14 performance targets.
 
 **Backend**
-- [ ] Laravel verifies Sanctum tokens/sessions and enforces roles on every route.
+- [ ] Laravel verifies Sanctum tokens/sessions and enforces roles **and hierarchy** on every route (§9.1).
 - [ ] Sync is idempotent (Test 4.4 passes).
 - [ ] Daily summaries are correct, including midnight splits.
 - [ ] The database is not reachable from outside the server; scheduled retention pruning is on and tested.
@@ -1621,13 +1678,13 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] The office server is HTTPS-only with a valid, auto-renewing certificate.
 
 **Dashboard**
-- [ ] Admin-only login.
-- [ ] Overview with live status (tracking / idle / not tracking / offline) and today's totals.
-- [ ] Employee table: Employee, Status, Tracked, Active, Idle, Current app, Last activity.
-- [ ] Employee page: totals, app breakdown, timeline, session list.
+- [ ] Manager-only login (OIC / Project Manager / Team Leader); individual-contributor roles are rejected with a clear message.
+- [ ] Overview with live status (tracking / idle / not tracking / offline) and today's totals, scoped to the caller's hierarchy.
+- [ ] Employee table: Name, Role, Status, Tracked, Active, Idle, Current app, Last activity.
+- [ ] Employee page: totals, app breakdown, timeline, session list — reachable only within the caller's hierarchy.
 - [ ] Today / Yesterday / pick a date.
-- [ ] Manage employees (add, change role, deactivate) and office settings.
-- [ ] Audit log.
+- [ ] Add a direct report (role locked to one tier below the caller) and deactivate/reactivate anyone in the caller's hierarchy.
+- [ ] Office settings and audit log, both OIC-only.
 
 **Process**
 - [ ] All test plans for Phases 0–8 pass.
@@ -1648,7 +1705,7 @@ The MVP is complete when **all** of these are true on the release build:
 4. **Phase 2** — Login, users, roles, consent.
 5. **Phase 4** — Sync to MySQL.
 6. **Phase 5** — Employee screens.
-7. **Phase 6** — Admin dashboard.
+7. **Phase 6** — Manager dashboard.
 8. **Phase 7** — Pilot week + fixes.
 9. **Phase 8** — Installer + updates → **MVP done.**
 10. **Phase 11** — Reports (the most useful next step for an office).

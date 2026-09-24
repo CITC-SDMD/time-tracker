@@ -27,14 +27,10 @@ return new class extends Migration
             $table->timestamp('created_at')->nullable();
         });
 
-        Schema::create('sessions', function (Blueprint $table) {
-            $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
-            $table->string('ip_address', 45)->nullable();
-            $table->text('user_agent')->nullable();
-            $table->longText('payload');
-            $table->integer('last_activity')->index();
-        });
+        // No database-backed PHP session table here: `sessions` is our own domain table
+        // (tracking sessions, docs/DEVELOPMENT_PLAN.md §8) and the two would collide.
+        // SESSION_DRIVER is `file` instead (see .env) — fine for a single app server,
+        // and Sanctum's cookie-based SPA auth (§9.2) doesn't care which driver backs it.
     }
 
     /**
@@ -44,6 +40,5 @@ return new class extends Migration
     {
         Schema::dropIfExists('users');
         Schema::dropIfExists('password_reset_tokens');
-        Schema::dropIfExists('sessions');
     }
 };

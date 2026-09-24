@@ -67,9 +67,12 @@ php artisan key:generate
 Edit `.env`: set `DB_DATABASE=tracker_dev`, `DB_USERNAME=tracker`, `DB_PASSWORD=<what you picked above>` (`DB_CONNECTION=mysql`, `DB_HOST=127.0.0.1`, `DB_PORT=3306` are already right from `.env.example`).
 
 ```powershell
-php artisan migrate
+php artisan migrate --seed
+php artisan tracker:make-oic "Your Name" you@example.com
 php artisan serve
 ```
+
+Write down the temporary password `tracker:make-oic` prints — that's the only account that exists until you create Project Managers, Team Leaders, and so on from the dashboard (docs/DEVELOPMENT_PLAN.md §9.1-§9.2).
 
 `http://127.0.0.1:8000/health` should return `{"ok":true,"version":"dev"}`. Quality checks: `vendor\bin\pint --test` (formatting) and `php artisan test`.
 
@@ -208,7 +211,7 @@ MAIL_FROM_ADDRESS=tracker@yourcompany.com
 
 ```bash
 php artisan migrate --seed
-php artisan tracker:make-admin "Your Name" you@yourcompany.com
+php artisan tracker:make-oic "Your Name" you@yourcompany.com
 ```
 
 Write down the temporary password it prints — use it for the first dashboard login, then change it.

@@ -30,6 +30,11 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
+            // Individual-contributor by default — tests opt into a manager role
+            // explicitly via the state helpers below, so a plain factory call never
+            // accidentally creates someone with dashboard access.
+            'role' => 'DEVELOPER',
+            'status' => 'ACTIVE',
         ];
     }
 
@@ -41,5 +46,31 @@ class UserFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
         ]);
+    }
+
+    public function oic(): static
+    {
+        return $this->state(fn () => ['role' => 'OIC', 'manager_id' => null]);
+    }
+
+    public function projectManager(?User $reportsTo = null): static
+    {
+        return $this->state(fn () => ['role' => 'PROJECT_MANAGER', 'manager_id' => $reportsTo?->id]);
+    }
+
+    public function teamLeader(?User $reportsTo = null): static
+    {
+        return $this->state(fn () => ['role' => 'TEAM_LEADER', 'manager_id' => $reportsTo?->id]);
+    }
+
+    /** Any individual-contributor role — LEAD_DEVELOPER/DEVELOPER/CLIENT_SUPPORT/QA/SYSTEM_ANALYST. */
+    public function individualContributor(?User $reportsTo = null, string $role = 'DEVELOPER'): static
+    {
+        return $this->state(fn () => ['role' => $role, 'manager_id' => $reportsTo?->id]);
+    }
+
+    public function deactivated(): static
+    {
+        return $this->state(fn () => ['status' => 'DEACTIVATED', 'deactivated_at' => now()]);
     }
 }
