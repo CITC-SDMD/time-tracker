@@ -1,8 +1,23 @@
 <script setup lang="ts">
 const { state, summary, resumedNotice, error, start, pause, resume, stop } = useTracking()
 const { me, refresh, logout } = useAuth()
+const { status: sync, notice } = useSync()
+const loginNotice = useState<string | null>('loginNotice', () => null)
 
 const loggingOut = ref(false)
+
+const syncLabel = computed(() => {
+  const s = sync.value
+  if (!s)
+    return null
+  if (s.needsLogin)
+    return 'Please log in again'
+  if (s.upgradeRequired)
+    return 'Please update the app'
+  if (!s.online)
+    return s.pendingCount > 0 ? `Offline · ${s.pendingCount} waiting to send` : 'Offline'
+  return s.pendingCount > 0 ? 'Sync pending' : 'All data sent'
+})
 
 // Best effort: picks up a raised consent version. The route guard then sends the person
 // to the consent screen if needed.
@@ -15,7 +30,10 @@ onMounted(async () => {
 async function signOut() {
   loggingOut.value = true
   try {
-    await logout()
+    const result = await logout()
+    loginNotice.value = result.synced
+      ? null
+      : 'You\'re offline, your data will be sent next time you log in.'
     await navigateTo('/login')
   }
   finally {
@@ -48,10 +66,23 @@ function formatSeconds(seconds: number | undefined) {
           class="text-slate-500 underline disabled:opacity-50"
           @click="signOut"
         >
-          Log out
+          {{ loggingOut ? 'Sending your data…' : 'Log out' }}
         </button>
       </p>
+      <p
+        v-if="syncLabel"
+        class="mt-1 text-xs text-slate-500"
+      >
+        {{ syncLabel }}
+      </p>
     </header>
+
+    <p
+      v-if="notice"
+      class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
+    >
+      {{ notice }}
+    </p>
 
     <p
       v-if="resumedNotice"

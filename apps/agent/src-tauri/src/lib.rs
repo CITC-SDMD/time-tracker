@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod logging;
 mod platform;
+mod sync;
 #[cfg(test)]
 mod testutil;
 mod tracker;
@@ -30,6 +31,7 @@ pub fn run() {
             commands::get_session,
             commands::refresh_me,
             commands::accept_consent,
+            commands::get_sync_status,
             commands::start_tracking,
             commands::pause_tracking,
             commands::resume_tracking,
@@ -69,12 +71,22 @@ pub fn run() {
             let auto_resumed = engine.recover_on_startup(may_track);
 
             let engine = Arc::new(Mutex::new(engine));
+            let sync = sync::worker::SyncHandle::default();
+            let logged_in = session.is_some();
             app.manage(commands::AppState {
                 engine: engine.clone(),
                 api,
+                sync: sync.clone(),
                 session: Mutex::new(session),
                 _log_guard: log_guard,
             });
+
+            // Sync worker (docs §11.1): every 2 minutes while logged in, on demand, and
+            // /health polling while offline. A first pass right after startup.
+            sync::worker::spawn(app.handle().clone(), sync.clone());
+            if logged_in {
+                sync.trigger();
+            }
 
             // Tick loop: every 2s, independent of window visibility (task 4).
             let tick_engine = engine.clone();

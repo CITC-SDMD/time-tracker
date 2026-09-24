@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { login } = useAuth()
+const notice = useState<string | null>('loginNotice', () => null)
 
 const email = ref('')
 const password = ref('')
@@ -32,6 +33,13 @@ async function submit() {
         Log in with your office account.
       </p>
     </header>
+
+    <p
+      v-if="notice"
+      class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
+    >
+      {{ notice }}
+    </p>
 
     <form
       class="space-y-3"

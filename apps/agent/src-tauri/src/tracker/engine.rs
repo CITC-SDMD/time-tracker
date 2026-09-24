@@ -30,6 +30,21 @@ pub struct Engine<C: Clock> {
     settings: OfficeSettings,
     user_id: String,
     device_id: String,
+    /// When this tracking run began; survives pause/lock, cleared by stop. The server
+    /// uses it to decide which PC "started later" under the one-PC rule (docs §10.1).
+    tracking_started: Option<DateTime<Utc>>,
+}
+
+/// What the sync worker reports as the live status (docs §10.1 request `status`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusSnapshot {
+    /// ACTIVE | IDLE | PAUSED | AWAY | NOT_TRACKING
+    pub state: &'static str,
+    pub current_app: Option<String>,
+    pub idle_app_name: Option<String>,
+    /// Start of the open session, when there is one.
+    pub since: Option<DateTime<Utc>>,
+    pub tracking_started_at: Option<DateTime<Utc>>,
 }
 
 impl<C: Clock> Engine<C> {
@@ -53,6 +68,26 @@ impl<C: Clock> Engine<C> {
             settings,
             user_id,
             device_id,
+            tracking_started: None,
+        }
+    }
+
+    pub fn status_snapshot(&self) -> StatusSnapshot {
+        let (state, current_app, idle_app_name) = match (self.state, self.open.as_ref()) {
+            (TrackingState::Tracking, Some(o)) if o.kind == SessionKind::Idle => {
+                ("IDLE", None, o.idle_app_name.clone())
+            }
+            (TrackingState::Tracking, open) => ("ACTIVE", open.and_then(|o| o.app_name.clone()), None),
+            (TrackingState::Paused, _) => ("PAUSED", None, None),
+            (TrackingState::Away, _) => ("AWAY", None, None),
+            (TrackingState::NotTracking, _) => ("NOT_TRACKING", None, None),
+        };
+        StatusSnapshot {
+            state,
+            current_app,
+            idle_app_name,
+            since: self.open.as_ref().map(|o| o.started_wall),
+            tracking_started_at: self.tracking_started,
         }
     }
 
@@ -82,6 +117,9 @@ impl<C: Clock> Engine<C> {
     /// Switches which user new sessions are recorded under (login). Refused while a
     /// session is being tracked, so one session never straddles two users.
     pub fn set_user(&mut self, user_id: &str) -> bool {
+        if self.user_id == user_id {
+            return true; // same person logging back in mid-run (e.g. after "Please log in again")
+        }
         if self.state != TrackingState::NotTracking {
             return false;
         }
@@ -123,6 +161,7 @@ impl<C: Clock> Engine<C> {
         let now_wall = self.clock.now_wall();
         self.close_open(now_wall, false);
         self.state = TrackingState::NotTracking;
+        self.tracking_started = None;
         self.candidate = None;
         self.last_tick_mono = None;
         self.last_tick_wall = None;
@@ -189,6 +228,7 @@ impl<C: Clock> Engine<C> {
         self.candidate = None;
         let now_wall = self.clock.now_wall();
         let now_mono = self.clock.now_mono();
+        self.tracking_started.get_or_insert(now_wall);
         self.open_for_current_activity(now_wall, now_mono);
         self.last_tick_mono = Some(now_mono);
         self.last_tick_wall = Some(now_wall);
@@ -756,6 +796,32 @@ mod tests {
 
         assert_eq!(engine.state(), TrackingState::NotTracking);
         assert_eq!(engine.db().get_app_state("was_tracking").as_deref(), Some("no"));
+    }
+
+    #[test]
+    fn status_snapshot_follows_the_state_machine() {
+        let (mut engine, clock, provider) = engine_with(300, (Some(app("VSCode")), 0));
+        let snapshot = engine.status_snapshot();
+        assert_eq!(snapshot.state, "NOT_TRACKING");
+        assert!(snapshot.tracking_started_at.is_none());
+
+        engine.start();
+        let snapshot = engine.status_snapshot();
+        assert_eq!(snapshot.state, "ACTIVE");
+        assert_eq!(snapshot.current_app.as_deref(), Some("VSCode"));
+        let started = snapshot.tracking_started_at.expect("set when tracking begins");
+
+        engine.pause();
+        assert_eq!(engine.status_snapshot().state, "PAUSED");
+        clock.advance(Duration::from_secs(5));
+        provider.set(Some(app("VSCode")), 0);
+        engine.resume();
+        // Pausing does not restart "tracking started at": the one-PC rule compares run starts.
+        assert_eq!(engine.status_snapshot().tracking_started_at, Some(started));
+
+        engine.stop();
+        assert_eq!(engine.status_snapshot().state, "NOT_TRACKING");
+        assert!(engine.status_snapshot().tracking_started_at.is_none());
     }
 
     #[test]

@@ -106,6 +106,8 @@ impl Db {
             Self::configure(&conn)?;
             let db = Self { conn };
             db.migrate(Some(db_path))?;
+            // Tell the server on the next sync that this PC's history was lost (`dbReset`).
+            db.set_app_state("db_reset_pending", "1")?;
             return Ok(db);
         }
 
@@ -410,6 +412,95 @@ impl Db {
             |row| row.get(0),
         )
     }
+
+    /// Up to `limit` rows for this user that are due, oldest first (docs §11.1). Rows of
+    /// any other user are never returned: they wait for that user to log in again.
+    pub fn fetch_ready_queue(
+        &self,
+        user_id: &str,
+        limit: usize,
+        now_ms: i64,
+    ) -> rusqlite::Result<Vec<QueueRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT entity_id, payload FROM sync_queue
+             WHERE user_id = ?1 AND status = 'PENDING' AND next_attempt_at <= ?2
+             ORDER BY id LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![user_id, now_ms, limit as i64], |row| {
+            Ok(QueueRow {
+                entity_id: row.get(0)?,
+                payload: row.get(1)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Server has the session (accepted or already had it): queue row `DONE`, session `SYNCED`.
+    pub fn mark_synced(&self, entity_id: &str) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE sync_queue SET status = 'DONE', last_error = NULL WHERE entity_id = ?1",
+            params![entity_id],
+        )?;
+        tx.execute(
+            "UPDATE sessions SET sync_status = 'SYNCED' WHERE id = ?1",
+            params![entity_id],
+        )?;
+        tx.commit()
+    }
+
+    /// Server refused the session for good: queue row `FAILED`, session `REJECTED`.
+    pub fn mark_rejected(&self, entity_id: &str, reason: &str) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE sync_queue SET status = 'FAILED', last_error = ?2 WHERE entity_id = ?1",
+            params![entity_id, reason],
+        )?;
+        tx.execute(
+            "UPDATE sessions SET sync_status = 'REJECTED' WHERE id = ?1",
+            params![entity_id],
+        )?;
+        tx.commit()
+    }
+
+    /// A send failed for a temporary reason: try again after the backoff for this row's
+    /// attempt count (docs §11.1: 1, 2, 5, 10, then 30 minutes).
+    pub fn schedule_retry(&self, entity_id: &str, error: &str, now_ms: i64) -> rusqlite::Result<()> {
+        let attempts: i64 = self.conn.query_row(
+            "SELECT attempts FROM sync_queue WHERE entity_id = ?1",
+            params![entity_id],
+            |row| row.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE sync_queue
+             SET attempts = attempts + 1, last_attempt_at = ?2, next_attempt_at = ?3, last_error = ?4
+             WHERE entity_id = ?1",
+            params![entity_id, now_ms, now_ms + retry_delay_ms(attempts), error],
+        )?;
+        Ok(())
+    }
+
+    /// "The internet is back": make everything due right now instead of waiting out backoff.
+    pub fn make_pending_due(&self, user_id: &str, now_ms: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE sync_queue SET next_attempt_at = ?2 WHERE user_id = ?1 AND status = 'PENDING'",
+            params![user_id, now_ms],
+        )?;
+        Ok(())
+    }
+}
+
+/// One row of `sync_queue` waiting to be sent.
+#[derive(Debug, Clone)]
+pub struct QueueRow {
+    pub entity_id: String,
+    pub payload: String,
+}
+
+/// Wait before retrying a row that has failed `attempts` times so far.
+pub fn retry_delay_ms(attempts: i64) -> i64 {
+    const MINUTES: [i64; 5] = [1, 2, 5, 10, 30];
+    MINUTES[attempts.clamp(0, 4) as usize] * 60_000
 }
 
 #[cfg(test)]
@@ -463,6 +554,60 @@ mod tests {
         assert_eq!(db.adopt_placeholder_user("77").unwrap(), 0);
         assert_eq!(db.pending_count("77").unwrap(), 0);
         assert_eq!(db.pending_count("42").unwrap(), 1);
+    }
+
+    #[test]
+    fn queue_only_returns_this_users_due_rows_oldest_first() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        let first = closed_session(&db, "1");
+        let _other_user = closed_session(&db, "2");
+        let second = closed_session(&db, "1");
+
+        let ready = db.fetch_ready_queue("1", 100, i64::MAX).unwrap();
+        assert_eq!(
+            ready.iter().map(|r| r.entity_id.as_str()).collect::<Vec<_>>(),
+            vec![first.as_str(), second.as_str()]
+        );
+        assert_eq!(db.fetch_ready_queue("1", 1, i64::MAX).unwrap().len(), 1);
+        assert!(db.fetch_ready_queue("1", 100, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn synced_and_rejected_rows_leave_the_queue_and_mark_the_session() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        let ok = closed_session(&db, "1");
+        let bad = closed_session(&db, "1");
+
+        db.mark_synced(&ok).unwrap();
+        db.mark_rejected(&bad, "TOO_OLD").unwrap();
+
+        assert_eq!(db.pending_count("1").unwrap(), 0);
+        let rows = db.sessions_for_range("1", 0, 10_000).unwrap();
+        let status = |id: &str| rows.iter().find(|r| r.id == id).unwrap().sync_status.clone();
+        assert_eq!(status(&ok), "SYNCED");
+        assert_eq!(status(&bad), "REJECTED");
+    }
+
+    #[test]
+    fn retries_back_off_1_2_5_10_then_30_minutes_and_can_be_made_due_again() {
+        assert_eq!(
+            (0..7).map(|a| retry_delay_ms(a) / 60_000).collect::<Vec<_>>(),
+            vec![1, 2, 5, 10, 30, 30, 30]
+        );
+
+        let db = Db::open_in_memory_for_test().unwrap();
+        let id = closed_session(&db, "1");
+        let now = 1_000_000;
+
+        db.schedule_retry(&id, "offline", now).unwrap();
+        assert!(db.fetch_ready_queue("1", 10, now + 59_000).unwrap().is_empty());
+        assert_eq!(db.fetch_ready_queue("1", 10, now + 60_000).unwrap().len(), 1);
+
+        db.schedule_retry(&id, "offline", now).unwrap(); // second failure: 2 minutes
+        assert!(db.fetch_ready_queue("1", 10, now + 119_000).unwrap().is_empty());
+
+        db.make_pending_due("1", now).unwrap();
+        assert_eq!(db.fetch_ready_queue("1", 10, now).unwrap().len(), 1);
     }
 
     #[test]
