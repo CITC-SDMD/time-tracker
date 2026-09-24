@@ -13,7 +13,8 @@ These are fixed. Do not change them without asking the project owner.
 | Who uses it | **One office only.** Internal tool, not a public product. No sign-up page. |
 | Accounts | An **Admin creates employee accounts** from the dashboard. |
 | Roles | **Admin** and **Employee** only. |
-| Database | **Firestore only** (server). SQLite only on the employee's computer. |
+| Database | **MySQL/MariaDB only** (server, self-hosted on the office server). SQLite only on the employee's computer. |
+| Hosting | **Self-hosted on the office server**, reachable from the internet under a domain name (WFH employees are not on the office LAN). HTTPS via a reverse proxy (nginx) with a Let's Encrypt certificate. |
 | Platform | **Windows 10 / 11** first. |
 | Pause | Employees **can pause** tracking. |
 | Editing time | Employees **cannot edit or delete** their time. |
@@ -35,7 +36,7 @@ We are building a time tracker for our office's work-from-home staff.
 - Employees install a small **desktop app** (Windows). They log in and press **Start**.
 - The app notices **which app is in front** (e.g. VS Code, Chrome) and **whether the person is idle**.
 - It saves this as **sessions** ("VS Code, 09:00–09:22") on the computer first, so nothing is lost when the internet drops.
-- Every 2 minutes it **sends new sessions** to our server (a **Cloudflare Worker**), which checks who is sending and saves them to **Firestore**.
+- Every 2 minutes it **sends new sessions** to our server (a **Laravel API**, self-hosted on the office server), which checks who is sending and saves them to **MySQL**.
 - Admins open a **web dashboard** to see who is working now, daily totals, which apps were used, and a timeline.
 
 The system reports **facts** (time, apps, idle). It never calculates a "productivity %".
@@ -45,7 +46,7 @@ The system reports **facts** (time, apps, idle). It never calculates a "producti
 ## 2. Architecture
 
 ```text
-EMPLOYEE COMPUTER (Windows)
+EMPLOYEE COMPUTER (Windows, anywhere with internet)
 ┌───────────────────────────────────────────────┐
 │  Desktop app (Tauri)                          │
 │  ┌──────────────┐     ┌─────────────────────┐ │
@@ -59,22 +60,27 @@ EMPLOYEE COMPUTER (Windows)
 └──────────────────────────────────┼────────────┘
                                    │ HTTPS, every 2 min
                                    ▼
-                    ┌──────────────────────────┐
-ADMIN BROWSER       │ Cloudflare Worker (API)  │
-┌──────────────┐    │ - checks login token     │
-│ Nuxt         │───►│ - checks role            │───► Firestore
-│ dashboard    │    │ - checks data            │
-└──────────────┘    │ - saves / reads data     │
-                    └──────────────────────────┘
-        Firebase Authentication = who you are (login)
+                    ┌────────────────────────────────┐
+                    │ Office server (self-hosted)     │
+                    │ nginx (TLS, Let's Encrypt)      │
+ADMIN BROWSER       │   Laravel API                   │
+┌──────────────┐    │   - checks login token          │
+│ Nuxt         │───►│   - checks role                 │───► MySQL
+│ dashboard    │    │   - checks data                 │
+│ (static,     │    │   - saves / reads data          │
+│  served by   │    └────────────────────────────────┘
+│  same nginx) │
+└──────────────┘
+        Laravel Sanctum = who you are (login)
 ```
 
 **Key rules**
 
-1. **Only the Worker talks to Firestore.** The desktop app and dashboard never touch Firestore directly. Firestore security rules block all direct access.
+1. **Only Laravel talks to MySQL.** The desktop app and dashboard never touch the database directly; MySQL is bound to localhost/the private network, not exposed to the internet.
 2. **The Rust engine does the tracking and the syncing.** The Vue screens only display and send button clicks. This means tracking and syncing keep running when the window is hidden.
 3. **Local first.** Everything is saved in SQLite before it is sent.
-4. **The server never trusts the app** about who the user is or what role they have. It reads that from the login token and the `users` document.
+4. **The server never trusts the app** about who the user is or what role they have. It reads that from the Sanctum token and the `users` row.
+5. **Dashboard and API share one domain.** The Nuxt dashboard is built as static files and served by the same nginx as the API (API under `/api/v1/...`). Same-origin means no CORS to configure and Sanctum's cookie-based SPA auth works without extra setup.
 
 ---
 
@@ -86,14 +92,15 @@ ADMIN BROWSER       │ Cloudflare Worker (API)  │
 | Local storage | SQLite via `rusqlite` (bundled) | |
 | Rust crates | `windows` (Win32 APIs), `rusqlite`, `tokio`, `reqwest` (rustls), `serde`, `uuid` (v7), `keyring`, `tracing` + `tracing-appender`, `chrono` + `chrono-tz` | |
 | Tauri plugins | `single-instance`, `autostart`, `updater`, `notification`, tray icon (built in) | |
-| Server | Cloudflare Workers, TypeScript, **Hono** (tiny router made for Workers), **zod** (input checks), **jose** (token checks) | Hono is chosen because it is small, typed and standard on Workers. It is not a Node server. |
-| Login | Firebase Authentication (email + password) | |
-| Database | Firestore (via its REST API from the Worker) | The Firebase Admin SDK does not run on Workers, so we call the REST API with a service account. |
-| Dashboard | Nuxt 4 (SPA mode), Vue 3, TypeScript, Tailwind, Firebase JS SDK (login only) | Hosted on Cloudflare (Workers static assets or Pages). |
-| Tooling | pnpm workspaces, Wrangler, Firebase CLI, Tauri CLI, GitHub | |
-| App updates | Cloudflare R2 (installer + update files only) | Stays inside R2's free tier (10 GB); we keep only the last 3 versions (~10–15 MB each). |
+| Server | **Laravel 11** (PHP 8.3+), self-hosted on the office server | A conventional Laravel app, not serverless. `php artisan serve` for local dev; PHP-FPM + nginx in production. |
+| Login | **Laravel Sanctum** — personal access tokens for the desktop agent, cookie-based SPA session for the dashboard | Both issued by the same Laravel app; no third-party auth provider. |
+| Database | **MySQL 8 / MariaDB**, on the same office server (or a private-network DB host) | Laravel's query builder / Eloquent ORM. Not exposed to the internet — only Laravel connects to it. |
+| Dashboard | Nuxt 4 (SPA mode, `nuxt generate`), Vue 3, TypeScript, Tailwind | Built as static files, served by the **same nginx** as the API (same origin as the Laravel app — no separate hosting, no CORS). |
+| Tooling | pnpm workspaces (agent + dashboard), Composer (API), Tauri CLI, GitHub | |
+| App updates | Installer + `latest.json` served as static files from the office server (nginx), uploaded by the release workflow over SSH | Keep only the last 3 versions on disk. |
+| Mail | Laravel Mail via an SMTP relay (**TODO:** no relay chosen yet — see `docs/SETUP.md` for the placeholder `.env` settings to fill in) | Used for password-reset links and employee invites. |
 
-**Important:** The desktop app must be built and tested on a **real Windows 10/11 machine** (or Windows VM). The Worker and dashboard can be developed on any OS.
+**Important:** The desktop app must be built and tested on a **real Windows 10/11 machine** (or Windows VM). The Laravel API and dashboard can be developed on any OS (Laravel via Docker/Sail or a local PHP install; MySQL via Docker or a local install).
 
 ---
 
@@ -123,7 +130,7 @@ time-tracker/
 │   │       │   │   ├── mod.rs          # open, migrations, integrity check
 │   │       │   │   └── migrations/     # 001_init.sql, ...
 │   │       │   ├── sync/
-│   │       │   │   ├── client.rs       # HTTP calls to the Worker
+│   │       │   │   ├── client.rs       # HTTP calls to the Laravel API
 │   │       │   │   └── worker.rs       # background sync loop
 │   │       │   ├── auth.rs             # login, token refresh, Credential Manager
 │   │       │   └── logging.rs
@@ -132,33 +139,35 @@ time-tracker/
 │   ├── dashboard/              # Admin web dashboard (Nuxt)
 │   │   ├── app/pages/          # login, index, employees/[id], employees/manage, settings, audit
 │   │   └── nuxt.config.ts
-│   └── worker/                 # Cloudflare Worker API
-│       ├── src/
-│       │   ├── index.ts        # Hono app + routes
-│       │   ├── middleware/     # auth.ts, rateLimit.ts, agentVersion.ts
-│       │   ├── routes/         # me.ts, agent.ts, employees.ts, admin.ts
-│       │   └── lib/
-│       │       ├── firebaseAuth.ts   # verify ID tokens
-│       │       ├── googleToken.ts    # service account → access token
-│       │       ├── firestore.ts      # small REST client
-│       │       ├── summaries.ts      # add sessions into daily totals
-│       │       ├── timeline.ts       # merge chunks for display
-│       │       └── audit.ts
-│       ├── test/
-│       └── wrangler.toml
+│   └── api/                    # Laravel API (PHP, its own Composer project — not a pnpm package)
+│       ├── app/
+│       │   ├── Http/
+│       │   │   ├── Controllers/Api/   # MeController, AgentController, EmployeeController, AdminController
+│       │   │   ├── Middleware/        # EnsureActiveUser, EnsureAdmin, EnsureSelfOrAdmin, CheckAgentVersion
+│       │   │   └── Requests/          # form request validation (AgentSyncRequest, etc.)
+│       │   ├── Models/                # User, EmployeeStatus, Session, DailySummary, Device, OfficeSetting, AuditLog
+│       │   ├── Services/              # SessionSyncService, SummaryService, TimelineService
+│       │   └── Console/Commands/      # PruneOldData (retention cleanup, scheduled)
+│       ├── database/
+│       │   ├── migrations/
+│       │   └── seeders/               # OfficeSettingsSeeder, first-admin console command
+│       ├── routes/api.php
+│       ├── tests/                     # Pest/PHPUnit
+│       ├── .env.example
+│       └── composer.json
 ├── packages/
-│   └── shared/                 # TS types + zod schemas used by worker, dashboard, agent UI
+│   └── shared/                 # TS types used by the dashboard and agent UI (API request/response shapes)
 │       └── src/ (api.ts, session.ts, roles.ts)
-├── firebase/
-│   ├── firestore.rules         # deny everything
-│   ├── firestore.indexes.json
-│   └── firebase.json
 ├── docs/
-│   └── DEVELOPMENT_PLAN.md     # this file
-├── .github/workflows/          # CI: lint, typecheck, test, build
+│   ├── DEVELOPMENT_PLAN.md     # this file
+│   ├── SETUP.md
+│   └── RELEASE.md
+├── .github/workflows/          # CI: lint, typecheck, test (JS), phpunit + composer (API), build (agent)
 ├── pnpm-workspace.yaml
 └── package.json
 ```
+
+**Note:** `apps/api` is a normal Laravel app with its own `composer.json` — it is not part of the pnpm workspace. Request/response **validation** lives in Laravel Form Requests (PHP), not zod; `packages/shared` now only holds the TypeScript **types** that mirror those shapes, kept in sync by hand (or generated later if that becomes worth automating).
 
 ---
 
@@ -277,8 +286,8 @@ All times are **UTC milliseconds** (integers).
 
 ```sql
 CREATE TABLE sessions (
-  id               TEXT PRIMARY KEY,         -- UUID v7, made on the PC. Also the Firestore doc id.
-  user_id          TEXT NOT NULL,            -- Firebase uid of the logged-in employee
+  id               TEXT PRIMARY KEY,         -- UUID v7, made on the PC. Also the sessions.id primary key on the server.
+  user_id          TEXT NOT NULL,            -- Laravel users.id of the logged-in employee (sent as a string)
   device_id        TEXT NOT NULL,            -- this PC (UUID saved in app_state on first run)
   session_type     TEXT NOT NULL CHECK (session_type IN ('APPLICATION','IDLE')),
   app_name         TEXT,                     -- friendly name, e.g. "Visual Studio Code" (APPLICATION)
@@ -336,80 +345,112 @@ CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 ---
 
-## 8. Firestore Design
+## 8. Database Design (MySQL)
 
-There is only one office, so there is no `organizations` level.
+There is only one office, so there is no `organizations` table. All times are stored in UTC (`TIMESTAMP` columns); Laravel converts to the office timezone for display. Table names are Laravel's default snake_case plurals; models are singular (`User`, `EmployeeStatus`, `Session`, `DailySummary`, `Device`, `OfficeSetting`, `AuditLog`).
 
-```text
-users/{uid}
-  name, email
-  role: "ADMIN" | "EMPLOYEE"
-  status: "ACTIVE" | "DEACTIVATED"
-  deactivatedAt: timestamp | null
-  consentVersion: number | null, consentAcceptedAt: timestamp | null
-  createdAt, createdBy
+```sql
+CREATE TABLE users (
+  id                   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name                 VARCHAR(255) NOT NULL,
+  email                VARCHAR(255) NOT NULL UNIQUE,
+  password             VARCHAR(255) NOT NULL,          -- Laravel hashed (bcrypt/argon2id)
+  role                 ENUM('ADMIN','EMPLOYEE') NOT NULL,
+  status               ENUM('ACTIVE','DEACTIVATED') NOT NULL DEFAULT 'ACTIVE',
+  deactivated_at       TIMESTAMP NULL,
+  consent_version      INT NULL,
+  consent_accepted_at  TIMESTAMP NULL,
+  created_by           BIGINT UNSIGNED NULL REFERENCES users(id),
+  created_at, updated_at TIMESTAMP                     -- Laravel timestamps
+);
 
-status/{uid}                              # one live-status doc per employee
-  state: "ACTIVE" | "IDLE" | "PAUSED" | "AWAY" | "NOT_TRACKING"
-  currentApp: string | null, idleAppName: string | null
-  deviceId, agentVersion
-  since: timestamp                         # when this state began
-  lastSeenAt: timestamp                    # server time of last sync
-  clockSkewSeconds: number                 # PC clock minus server clock
-  trackingDeviceSince: timestamp           # when this device took over tracking
+CREATE TABLE employee_statuses (                       -- one live-status row per employee
+  user_id                BIGINT UNSIGNED PRIMARY KEY REFERENCES users(id),
+  state                  ENUM('ACTIVE','IDLE','PAUSED','AWAY','NOT_TRACKING') NOT NULL,
+  current_app            VARCHAR(128) NULL,
+  idle_app_name          VARCHAR(128) NULL,
+  device_id              CHAR(36) NULL,
+  agent_version          VARCHAR(32) NULL,
+  since                  TIMESTAMP NOT NULL,            -- when this state began
+  last_seen_at           TIMESTAMP NOT NULL,             -- server time of last sync
+  clock_skew_seconds     INT NOT NULL DEFAULT 0,         -- PC clock minus server clock
+  tracking_device_since  TIMESTAMP NULL                  -- when this device took over tracking
+);
 
-sessions/{sessionId}                      # sessionId = UUID made on the PC
-  uid, deviceId
-  type: "APPLICATION" | "IDLE"
-  appName, appKey, processName, windowTitle, idleAppName
-  startedAt, endedAt: timestamp
-  durationSeconds: number
-  day: "YYYY-MM-DD"                        # office-timezone day of startedAt
-  clockChanged: bool
-  receivedAt: timestamp
-  expireAt: timestamp                      # endedAt + 30 days (TTL)
+CREATE TABLE sessions (                                 -- id = UUID made on the PC (idempotency key)
+  id                CHAR(36) PRIMARY KEY,
+  user_id           BIGINT UNSIGNED NOT NULL REFERENCES users(id),
+  device_id         CHAR(36) NOT NULL,
+  type              ENUM('APPLICATION','IDLE') NOT NULL,
+  app_name          VARCHAR(128) NULL,
+  app_key           VARCHAR(128) NULL,
+  process_name      VARCHAR(128) NULL,
+  window_title      VARCHAR(512) NULL,
+  idle_app_name     VARCHAR(128) NULL,
+  started_at        TIMESTAMP(3) NOT NULL,
+  ended_at          TIMESTAMP(3) NOT NULL,
+  duration_seconds  INT NOT NULL,
+  day               DATE NOT NULL,                       -- office-timezone day of started_at
+  clock_changed     BOOLEAN NOT NULL DEFAULT 0,
+  received_at       TIMESTAMP NOT NULL,
+  INDEX idx_sessions_user_started (user_id, started_at),
+  INDEX idx_sessions_day (day)
+  -- retention: rows with started_at older than 30 days deleted by a scheduled job (§8 Housekeeping)
+);
 
-dailySummaries/{uid}_{YYYY-MM-DD}
-  uid, day
-  trackedSeconds, activeSeconds, idleSeconds
-  apps: { [appKey]: seconds }              # active seconds per app
-  appNames: { [appKey]: "Visual Studio Code" }
-  firstActivityMs, lastActivityMs: number  # epoch ms (so min/max transforms work)
-  expireAt: timestamp                      # day + 90 days (TTL)
+CREATE TABLE daily_summaries (
+  user_id             BIGINT UNSIGNED NOT NULL REFERENCES users(id),
+  day                 DATE NOT NULL,
+  tracked_seconds     INT NOT NULL DEFAULT 0,
+  active_seconds      INT NOT NULL DEFAULT 0,
+  idle_seconds        INT NOT NULL DEFAULT 0,
+  apps                JSON NOT NULL DEFAULT ('{}'),        -- { appKey: seconds } — active seconds per app
+  app_names           JSON NOT NULL DEFAULT ('{}'),        -- { appKey: "Visual Studio Code" }
+  first_activity_at   TIMESTAMP(3) NULL,
+  last_activity_at    TIMESTAMP(3) NULL,
+  PRIMARY KEY (user_id, day)
+  -- retention: rows older than 90 days deleted by a scheduled job
+);
 
-devices/{deviceId}
-  uid, computerName, agentVersion, firstSeenAt, lastSeenAt
+CREATE TABLE devices (
+  id              CHAR(36) PRIMARY KEY,
+  user_id         BIGINT UNSIGNED NOT NULL REFERENCES users(id),
+  computer_name   VARCHAR(255) NULL,
+  agent_version   VARCHAR(32) NULL,
+  first_seen_at   TIMESTAMP NOT NULL,
+  last_seen_at    TIMESTAMP NOT NULL
+);
 
-settings/office
-  timezone: "e.g. Asia/Manila"             # defines what "a day" is
-  idleThresholdSeconds: 300
-  windowTitleMode: "FULL" | "APP_ONLY"     # default FULL
-  minAgentVersion: "1.0.0"
-  consentVersion: 1
+CREATE TABLE office_settings (                          -- single row, id = 1
+  id                       TINYINT PRIMARY KEY DEFAULT 1,
+  timezone                 VARCHAR(64) NOT NULL,         -- e.g. "Asia/Manila" — defines what "a day" is
+  idle_threshold_seconds   INT NOT NULL DEFAULT 300,
+  window_title_mode        ENUM('FULL','APP_ONLY') NOT NULL DEFAULT 'FULL',
+  min_agent_version        VARCHAR(32) NOT NULL,
+  consent_version          INT NOT NULL DEFAULT 1
+);
 
-auditLogs/{autoId}
-  actorUid, action, targetUid, details, at
-  expireAt                                  # at + 365 days
+CREATE TABLE audit_logs (
+  id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  actor_user_id    BIGINT UNSIGNED NOT NULL REFERENCES users(id),
+  action           VARCHAR(64) NOT NULL,
+  target_user_id   BIGINT UNSIGNED NULL REFERENCES users(id),
+  details          JSON NULL,
+  created_at       TIMESTAMP NOT NULL,
+  INDEX idx_audit_created (created_at DESC)
+  -- retention: rows older than 365 days deleted by a scheduled job
+);
+
+-- Sanctum's own migration creates `personal_access_tokens` (tokenable_id/type, token hash, abilities, expires_at).
 ```
 
-**`appKey`:** process name in lowercase, without `.exe`, with any character other than `a-z 0-9 _` replaced by `_` (e.g. `code`, `chrome`). This is safe as a Firestore map key.
+**`app_key`:** process name in lowercase, without `.exe`, with any character other than `a-z 0-9 _` replaced by `_` (e.g. `code`, `chrome`). Safe as a JSON object key.
 
-**Indexes (`firestore.indexes.json`)**
-- `sessions`: `uid ASC, startedAt ASC`
-- `auditLogs`: `at DESC`
+**Retention (Laravel scheduler, replaces Firestore TTL):** an artisan command `php artisan tracker:prune` deletes `sessions` older than 30 days, `daily_summaries` older than 90 days, and `audit_logs` older than 365 days. Registered in `routes/console.php` (`Schedule::command('tracker:prune')->daily()`) and driven by one cron entry (`* * * * * php artisan schedule:run`) set up on the office server per `docs/SETUP.md`. Unlike Firestore TTL (best-effort, "usually within a day"), this runs on a known schedule and is easy to test directly (Test 4.5-equivalent: run the command, assert old rows are gone).
 
-**TTL policies (retention):** turn on Firestore TTL for `sessions.expireAt`, `dailySummaries.expireAt` and `auditLogs.expireAt`. Firestore deletes expired docs automatically, usually within a day or so after they expire.
+**Database access:** MySQL listens only on `localhost` (or the private network if the DB is a separate host) — no public port. Only the Laravel app's DB user connects, with a password from `.env` (never committed). The desktop app and dashboard never get direct database credentials.
 
-**Security rules (`firestore.rules`):** deny everything. Only the Worker (service account) can read or write.
-
-```text
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} { allow read, write: if false; }
-  }
-}
-```
+**Idempotency without Firestore's "document must not exist" precondition:** `sessions.id` is a `PRIMARY KEY`. Laravel checks which of the incoming UUIDs already exist (`whereIn('id', $ids)->pluck('id')`) inside a DB transaction, inserts only the new ones, and treats a duplicate-key error on insert as a second safety net (race between two concurrent syncs). See §10.2.
 
 ---
 
@@ -424,42 +465,43 @@ service cloud.firestore {
 
 ### 9.2 How login works
 
-- **Desktop app:** the Vue login screen sends email + password to Rust (`invoke("login")`). Rust calls Firebase's REST sign-in (`accounts:signInWithPassword`). Rust keeps the **refresh token in Windows Credential Manager** and gets new ID tokens itself (`securetoken.googleapis.com`). The Vue screens never hold tokens. The app has no Firebase SDK.
-- **Dashboard:** Firebase JS SDK, email + password.
-- **Forgot password:** "Forgot password" button → Firebase password-reset email.
-- **First admin (one-time, manual):** create the user in the Firebase console, then create `users/{uid}` in the Firestore console with `role: "ADMIN"`, `status: "ACTIVE"`. Write these steps in `docs/SETUP.md`.
-- **Adding employees:** an admin enters name + email in the dashboard. The Worker creates the Firebase user (Identity Toolkit admin API with a random password), creates `users/{uid}`, and sends a Firebase password-reset email so the employee sets their own password.
+- **Desktop app:** the Vue login screen sends email + password to Rust (`invoke("login")`). Rust calls `POST /api/v1/auth/login` on the Laravel API. Laravel checks the password (`Hash::check`) and, if it's correct and the user is `ACTIVE`, issues a **Sanctum personal access token** (`$user->createToken('agent-<deviceId>', ['agent'])`, expiring per `sanctum.expiration` — e.g. 30 days). Rust keeps that **token in Windows Credential Manager** and sends it as `Authorization: Bearer <token>` on every request. The Vue screens never hold the token. There is no separate "ID token" / "refresh token" split like Firebase had — the Sanctum token *is* the credential, and Laravel checks the user's live `status` on every request, so a deactivation takes effect immediately without any token-refresh dance.
+- **Dashboard:** Sanctum's **SPA authentication** (session cookie + CSRF, not a bearer token) — this works because the dashboard is served from the same domain as the API (§2). Login posts to `/login`; Laravel sets a session cookie; subsequent `/api/v1/...` calls are authenticated by that cookie automatically.
+- **Forgot password:** "Forgot password" button → Laravel's built-in password-reset flow (`Password::sendResetLink`), emailed via the SMTP relay configured in `.env` (see the Email row in §3 — **TODO** until a relay is chosen).
+- **First admin (one-time, manual):** run `php artisan tracker:make-admin "Name" email@office.com` (a small custom artisan command we write in Phase 2) — it creates the `users` row directly with `role = 'ADMIN'`, `status = 'ACTIVE'`, and a temporary password printed to the console (or an emailed reset link, if mail is configured). Write these steps in `docs/SETUP.md`.
+- **Adding employees:** an admin enters name + email in the dashboard. Laravel creates the `users` row with a random unusable password, then sends a password-reset email so the employee sets their own password (same mechanism as "Forgot password"). If mail isn't configured yet, the dashboard shows the reset link directly so the admin can send it manually.
 
-### 9.3 What the Worker checks on every request
+### 9.3 What the Laravel API checks on every request
 
-1. `Authorization: Bearer <Firebase ID token>` exists.
-2. Token signature is valid, checked with `jose` against Google's public keys (`https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com`). Keys are cached using their `Cache-Control` time.
-3. `aud` = our Firebase project ID. `iss` = `https://securetoken.google.com/<projectId>`. `exp` is in the future. `sub` is not empty.
-4. Load `users/{sub}`. It must exist and be `ACTIVE` (with one exception for unsent data, see §10). Cache it in memory for 60 seconds.
-5. Role check for the route.
-6. **The uid always comes from the token.** Any `uid`, `role` or `employeeId` in the request body is ignored. For `/employees/:id/...` routes: ADMIN → any id. EMPLOYEE → only their own id, otherwise 403.
+1. `Authorization: Bearer <Sanctum token>` header (agent) or a valid session cookie + CSRF token (dashboard).
+2. Sanctum resolves the token/cookie to a `User` via its own `personal_access_tokens` table (hashed lookup) or the session — built into the framework, no manual signature/JWKS handling needed.
+3. Token `expires_at` (if set) is in the future; otherwise `401`.
+4. Middleware `EnsureActiveUser` loads the authenticated user and requires `status = 'ACTIVE'` (with one exception for unsent data, see §10) — checked on every request, not cached, since it's a single indexed lookup on the same DB the request is already touching.
+5. Role check for the route (`EnsureAdmin` / `EnsureSelfOrAdmin` middleware, or a route-level `can:` check via a Laravel Policy).
+6. **The user id always comes from the authenticated session/token**, never the request body. Any `uid`, `userId`, `role` or `employeeId` field in the body is ignored by the Form Request's validation rules (not just unused — it's not even a recognized field). For `/employees/{id}/...` routes: ADMIN → any id. EMPLOYEE → only their own id, otherwise `403`.
 
 ---
 
-## 10. API Design (Cloudflare Worker)
+## 10. API Design (Laravel)
 
-Base URL: `https://api.<your-domain>`. All responses are JSON. Errors look like `{ "error": { "code": "FORBIDDEN", "message": "..." } }`.
+Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look like `{ "error": { "code": "FORBIDDEN", "message": "..." } }` (a custom exception renderer in `app/Exceptions/Handler.php` maps Laravel's default error shapes to this format).
 
-| Method & path | Who | Purpose |
-|---|---|---|
-| `GET /health` | anyone | `{ ok: true, version }` |
-| `GET /api/v1/me` | logged in | Own profile, role, office settings, whether consent is needed |
-| `POST /api/v1/me/consent` | logged in | Record consent `{ consentVersion }` |
-| `POST /api/v1/agent/sync` | logged in (agent) | Sends status + up to 100 closed sessions. Gets back results + commands. |
-| `GET /api/v1/employees` | admin | List of employees with live status and today's totals |
-| `GET /api/v1/employees/:id/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | admin, or self | Daily totals per day (max 31 days) |
-| `GET /api/v1/employees/:id/timeline?day=YYYY-MM-DD&cursor=` | admin, or self | Merged timeline segments for one day (max 500 per page) |
-| `POST /api/v1/admin/employees` | admin | Create employee `{ name, email, role }` |
-| `PATCH /api/v1/admin/employees/:id` | admin | Change `name`, `role`, or `status` (deactivate / reactivate) |
-| `GET /api/v1/admin/settings` / `PUT` | admin | Read / change office settings |
-| `GET /api/v1/admin/audit?cursor=` | admin | Audit log, newest first, 50 per page |
+| Method & path | Who | Purpose | Laravel piece |
+|---|---|---|---|
+| `GET /health` | anyone | `{ ok: true, version }` | plain route, no controller |
+| `POST /api/v1/auth/login` | anyone | Email + password → Sanctum token (agent) | `AuthController@login` |
+| `GET /api/v1/me` | logged in | Own profile, role, office settings, whether consent is needed | `MeController@show` |
+| `POST /api/v1/me/consent` | logged in | Record consent `{ consentVersion }` | `MeController@acceptConsent` |
+| `POST /api/v1/agent/sync` | logged in (agent) | Sends status + up to 100 closed sessions. Gets back results + commands. | `AgentController@sync` |
+| `GET /api/v1/employees` | admin | List of employees with live status and today's totals | `EmployeeController@index` |
+| `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | admin, or self | Daily totals per day (max 31 days) | `EmployeeController@summary` |
+| `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | admin, or self | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
+| `POST /api/v1/admin/employees` | admin | Create employee `{ name, email, role }` | `AdminEmployeeController@store` |
+| `PATCH /api/v1/admin/employees/{id}` | admin | Change `name`, `role`, or `status` (deactivate / reactivate) | `AdminEmployeeController@update` |
+| `GET /api/v1/admin/settings` / `PUT` | admin | Read / change office settings | `AdminSettingsController` |
+| `GET /api/v1/admin/audit?cursor=` | admin | Audit log, newest first, 50 per page | `AdminAuditController@index` |
 
-**Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the Firestore cost. A single session is just a batch of one.
+**Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the number of DB round-trips. A single session is just a batch of one.
 
 ### 10.1 `POST /api/v1/agent/sync`
 
@@ -507,56 +549,52 @@ Response `200`:
 }
 ```
 
-Other responses: `401` (token bad/expired – refresh and retry once), `403 ACCOUNT_DEACTIVATED`, `426 UPGRADE_REQUIRED`, `429` (too many requests – wait), `5xx` (retry later).
+Other responses: `401` (token bad/expired – app shows "Please log in again"), `403 ACCOUNT_DEACTIVATED`, `426 UPGRADE_REQUIRED`, `429` (too many requests – wait), `5xx` (retry later).
 
-**Validation (zod, in `packages/shared`)** — a session is **rejected** (not retried) if:
+**Validation (a Laravel Form Request, `AgentSyncRequest`)** — a session is **rejected** (not retried) if:
 - `id` is not a UUID, or `type` is not one of the two values;
 - `endedAt ≤ startedAt`, or `durationSeconds` is not 1–660, or it differs from `endedAt − startedAt` by more than 5 seconds;
 - `endedAt` is more than 10 minutes in the future (server time);
 - `startedAt` is older than 30 days (`TOO_OLD`);
 - text fields are too long (`appName`/`processName` 128, `windowTitle` 512).
-- more than 100 sessions in the request → the whole request gets `400`.
+- more than 100 sessions in the request → the whole request gets `400` (the Form Request's top-level rule).
 
-**What the Worker does, step by step**
-1. Check the auth header, rate limit, and agent version (`426` if below `settings.minAgentVersion`).
-2. Validate the body.
-3. If `windowTitleMode = APP_ONLY`, set every `windowTitle` to `null`.
-4. Firestore transaction:
-   1. `beginTransaction`.
-   2. `batchGet`: all `sessions/{id}` in the request + `status/{uid}`.
-   3. Sessions that already exist → `duplicates`. New ones → `accepted`.
-   4. **One tracking PC rule:** if `status.state` is ACTIVE/IDLE and `status.deviceId` is a different PC that synced in the last 5 minutes → this PC takes over (`deviceId` = this one, `trackingDeviceSince` = now). The old PC gets `commands.stopTracking = true, stopReason: "STARTED_ON_OTHER_PC"` on its next sync, and its sessions starting after `trackingDeviceSince` are rejected (`OTHER_DEVICE_ACTIVE`).
-   5. **Deactivated user:** sessions that started before `deactivatedAt` are accepted. Newer ones are rejected. Respond with `commands.signOut = true`.
-   6. `commit` writes: create each new session (with precondition `exists: false`), update `status/{uid}`, and add each new session into its daily summary (see below).
-   7. If the commit fails with `ABORTED` (a clash), retry the whole transaction once.
+**What `AgentController@sync` does, step by step**
+1. Middleware already checked the auth token, rate limit, and agent version (`426` if below `office_settings.min_agent_version`).
+2. `AgentSyncRequest` validates the body; invalid → `422`/`400` before the controller runs.
+3. If `office_settings.window_title_mode = APP_ONLY`, set every `windowTitle` to `null`.
+4. `DB::transaction()` (wraps everything below; MySQL's row locks stand in for Firestore's transaction):
+   1. `Session::whereIn('id', $ids)->lockForUpdate()->pluck('id')` — sessions that already exist → `duplicates`. New ones → `accepted`.
+   2. **One tracking PC rule:** load `employee_statuses` for this user with `lockForUpdate()`. If `state` is ACTIVE/IDLE and `device_id` is a different PC that synced in the last 5 minutes → this PC takes over (`device_id` = this one, `tracking_device_since` = now). The old PC gets `commands.stopTracking = true, stopReason: "STARTED_ON_OTHER_PC"` on its next sync, and its sessions starting after `tracking_device_since` are rejected (`OTHER_DEVICE_ACTIVE`).
+   3. **Deactivated user:** sessions that started before `deactivated_at` are accepted. Newer ones are rejected. Respond with `commands.signOut = true`.
+   4. Bulk-`insert()` the new sessions (catch a duplicate-key `QueryException` per row as a second safety net — see §10.2), upsert the `employee_statuses` row, and fold each new session into its daily summary (see below).
+   5. A duplicate-key exception on insert means someone else's request beat this one to that row — treat it the same as step 4.1 finding it already existed (move it from `accepted` to `duplicates`) rather than failing the whole batch.
 5. Return the response.
 
-**Adding a session into daily summaries (`lib/summaries.ts`):**
+**Adding a session into daily summaries (`SummaryService`):**
 - Work out which office-timezone day(s) the session covers. If it crosses midnight, split the seconds between the two days.
-- For each day, update `dailySummaries/{uid}_{day}` using Firestore field transforms:
-  - `increment` `trackedSeconds`, plus `activeSeconds` **or** `idleSeconds`;
-  - APPLICATION: `increment apps.<appKey>` and set `appNames.<appKey>`;
-  - `minimum firstActivityMs`, `maximum lastActivityMs`;
-  - set `expireAt` = day + 90 days.
-- Because only **new** sessions are added (step 4.3), a repeated upload never counts twice.
+- For each day, upsert `daily_summaries` (composite key `user_id, day`) inside the same transaction, with the row locked (`lockForUpdate()`):
+  - add to `tracked_seconds`, plus `active_seconds` **or** `idle_seconds`;
+  - APPLICATION: read-modify-write the `apps` JSON column (`apps[appKey] += seconds`) and set `app_names[appKey]`;
+  - `first_activity_at = LEAST(first_activity_at, new value)`, `last_activity_at = GREATEST(...)` (plain SQL `LEAST`/`GREATEST`, MySQL's equivalent of Firestore's `minimum`/`maximum` transforms).
+- Because only **new** sessions are folded in (step 4.1), a repeated upload never counts twice.
 
 ### 10.2 Idempotency (no duplicates) — summary
 
 1. The PC creates a UUID for every session. The UUID never changes, even across retries.
-2. That UUID is the Firestore document ID (`sessions/{uuid}`).
-3. Inside a transaction, the Worker checks which UUIDs already exist. It creates only the missing ones, and only those are added to the totals.
+2. That UUID is the `sessions.id` primary key on the server.
+3. Inside a DB transaction, Laravel checks which UUIDs already exist (row-locked) and inserts only the missing ones; only those are folded into the totals.
 4. Duplicates are reported back as `duplicates`. The app treats them like `accepted` (mark as sent).
-5. The creates also use the precondition "document must not exist", as a second safety net.
+5. The primary key itself is the second safety net: a race that slips past the existence check still can't insert two rows with the same id — the loser's insert raises a duplicate-key error, which the controller catches and reclassifies as a duplicate instead of an error.
 
-### 10.3 Other Worker details
+### 10.3 Other Laravel details
 
-- **Firestore access (`lib/googleToken.ts`, `lib/firestore.ts`):** sign a JWT with the service account's private key (`jose`, RS256), exchange it at `https://oauth2.googleapis.com/token` for an access token (scope `https://www.googleapis.com/auth/datastore`), and cache it until 5 minutes before it expires. `firestore.ts` only needs: `get`, `batchGet`, `runQuery`, `beginTransaction`, `commit`, and helpers to convert JS values to and from Firestore's REST format.
-- **Rate limiting:** Cloudflare Workers Rate Limiting binding, keyed by uid. `/agent/sync`: 30 requests per minute. Other routes: 120 per minute.
-- **CORS:** allow only the dashboard's origin. (The desktop app calls from Rust, so it needs no CORS.)
-- **Timeline (`lib/timeline.ts`):** query `sessions` where `uid == id`, `startedAt ≥ dayStart − 11 min`, `startedAt < dayEnd`, ordered by `startedAt`. Clip to the day. Merge neighbouring pieces that have the same type and app and a gap of 5 seconds or less. Return segments `{ type, label, startedAt, endedAt, seconds }`, where `label` is e.g. `"Visual Studio Code"` or `"Idle (in Zoom)"`.
-- **Employee list:** read all `users` (office size, so fine), then `batchGet` their `status` docs and today's `dailySummaries`. Show "Offline" if `lastSeenAt` is more than 5 minutes ago while the state says tracking.
-- **Audit log:** write an entry when an admin creates, changes or deactivates an employee, changes settings, or opens an employee's timeline.
-- **Logging:** `console.log` structured JSON (Workers Logs). Never log tokens, keys, or full window titles.
+- **Rate limiting:** Laravel's built-in `throttle` middleware, keyed by user id (`RateLimiter::for('agent-sync', fn ($request) => Limit::perMinute(30)->by($request->user()->id))` in `AppServiceProvider`). `/agent/sync`: 30 requests per minute. Other routes: 120 per minute.
+- **CORS:** not needed for the normal case — dashboard and API are same-origin (§2). Laravel's `config/cors.php` stays locked down (no origins allowed) unless a future need (e.g. a separate marketing site) requires opening it up.
+- **Timeline (`TimelineService`):** query `sessions` where `user_id = id`, `started_at ≥ dayStart − 11 min`, `started_at < dayEnd`, ordered by `started_at`. Clip to the day. Merge neighbouring pieces that have the same type and app and a gap of 5 seconds or less. Return segments `{ type, label, startedAt, endedAt, seconds }`, where `label` is e.g. `"Visual Studio Code"` or `"Idle (in Zoom)"`.
+- **Employee list:** `User::query()` (office size, so no pagination needed) with `with('employeeStatus')` and today's `daily_summaries` eager-loaded (two extra indexed queries, not N+1). Show "Offline" if `last_seen_at` is more than 5 minutes ago while the state says tracking.
+- **Audit log:** write an entry (via an `AuditLog::record(...)` helper, or a Laravel event listener on employee-changed events) when an admin creates, changes or deactivates an employee, changes settings, or opens an employee's timeline.
+- **Logging:** Laravel's default structured logging (`storage/logs/laravel.log`, or forward to syslog/journald) via the `Log` facade. Never log tokens, password hashes, or full window titles.
 
 ---
 
@@ -596,7 +634,7 @@ const activity = await invoke<CurrentActivity>("get_current_activity")
 - `rejected` → queue row `FAILED`, session `REJECTED`, reason logged.
 - If a full batch of 100 succeeded, send the next batch straight away (up to 20 batches per cycle). This clears a big backlog after being offline.
 - Network error / `5xx` / `429` → wait and retry: 1, 2, 5, 10, then 30 minutes max. **Tracking is never affected.**
-- `401` → refresh the token and retry once. If refreshing fails → show "Please log in again" and keep the data.
+- `401` → the Sanctum token is invalid or expired (no refresh step, unlike Firebase's ID/refresh token pair — see §9.2). Show "Please log in again" and keep the data.
 - `426` → show "Please update the app" and check for updates. Keep tracking locally.
 - `commands.stopTracking` → stop and show the reason. `commands.signOut` → sign out (after the sync).
 - Save `settings` from the response into `app_state`.
@@ -702,29 +740,28 @@ PASS: within those numbers.
 ### Phase 1 — Project Foundation
 
 **Tasks**
-1. Create the monorepo (§4): `pnpm-workspace.yaml`, root `package.json` scripts: `dev:agent`, `dev:dashboard`, `dev:worker`, `lint`, `typecheck`, `test`.
+1. Create the monorepo (§4): `pnpm-workspace.yaml`, root `package.json` scripts: `dev:agent`, `dev:dashboard`, `lint`, `typecheck`, `test`.
 2. Move the spike into the final `apps/agent` structure.
 3. Create `apps/dashboard` (Nuxt 4, `ssr: false`, Tailwind).
-4. Create `apps/worker` (Hono, `wrangler.toml` with `dev` and `production` environments). Add `GET /health`.
-5. Create `packages/shared` with the zod schemas and TS types from §10.
+4. Create `apps/api` (`composer create-project laravel/laravel`). Install Sanctum (`composer require laravel/sanctum`). Add `GET /health`.
+5. Create `packages/shared` with the TS types from §10 (request/response shapes — no zod; validation now lives in Laravel Form Requests, see §10.1).
 6. TypeScript `strict: true` everywhere. ESLint + Prettier with a shared config.
-7. Rust: `cargo fmt`, `cargo clippy -- -D warnings`.
-8. Create **two Firebase projects**: `tracker-dev` and `tracker-prod`. Turn on Email/Password auth and Firestore in both. (We use a real dev project instead of emulators, so the auth code has no special test mode.)
-9. Create a Google service account with the "Cloud Datastore User" role for each project. Store its email and private key as Wrangler secrets (`wrangler secret put GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`). **Never commit them.**
-10. Deploy `firestore.rules` (deny all) and `firestore.indexes.json` with the Firebase CLI.
+7. Rust: `cargo fmt`, `cargo clippy -- -D warnings`. PHP: Laravel Pint (`vendor/bin/pint`) + PHPStan/Larastan.
+8. Set up **two databases**: `tracker_dev` and `tracker_prod` (MySQL 8/MariaDB), either local for dev or both on the office server. Run `php artisan migrate` to create the schema from §8.
+9. Add `office_settings` seeder with defaults (timezone, idle 300 s, `FULL` titles, `min_agent_version`, `consent_version` = 1); run `php artisan db:seed`.
+10. **Office server setup** (see `docs/SETUP.md` for the full walkthrough): a Linux VM/box reachable on the internet under a domain (or subdomain) you control; nginx as reverse proxy + static file server; PHP-FPM; MySQL bound to `localhost`; a Let's Encrypt certificate (`certbot`) so the API and dashboard are HTTPS-only, matching the "public domain + reverse proxy" decision in §0.
 11. Config:
-    - agent build: `API_BASE_URL`, `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID` (public values, no secrets);
-    - dashboard: `NUXT_PUBLIC_API_BASE`, `NUXT_PUBLIC_FIREBASE_*`;
-    - worker `wrangler.toml` vars: `FIREBASE_PROJECT_ID`, `DASHBOARD_ORIGIN`.
+    - agent build: `API_BASE_URL` (e.g. `https://tracker.example.com/api/v1`) — no other public keys needed, since Sanctum has no client-side SDK key;
+    - dashboard: `NUXT_PUBLIC_API_BASE`;
+    - API `.env`: `APP_KEY` (generated by `php artisan key:generate`, never committed), `DB_*`, `MAIL_*` (**TODO placeholder** — no SMTP relay chosen yet, see §3), `SANCTUM_STATEFUL_DOMAINS` (the dashboard's domain).
     - Add `.env.example` files. Put `.env*` (except examples) in `.gitignore`.
-12. Restrict the Firebase Web API key in Google Cloud Console to the Identity Toolkit and Token Service APIs.
-13. GitHub Actions: lint, typecheck, tests, and `cargo clippy` + `cargo test` on `windows-latest`.
-14. **Start getting a Windows code-signing certificate now** (it can take weeks). Options: Azure Trusted Signing (cheapest, if the company qualifies) or an OV certificate from a certificate authority.
-15. Write `docs/SETUP.md`: how to install, run and deploy each part.
+12. GitHub Actions: lint, typecheck, JS tests, `cargo clippy` + `cargo test` on `windows-latest`, and `composer install` + `phpunit`/`pest` for `apps/api`.
+13. **Start getting a Windows code-signing certificate now** (it can take weeks). Options: Azure Trusted Signing (cheapest, if the company qualifies) or an OV certificate from a certificate authority.
+14. Write `docs/SETUP.md`: how to install, run and deploy each part, including the office server provisioning steps from task 10.
 
 **Deliverables**
-- A repo where `pnpm install && pnpm lint && pnpm typecheck && pnpm test` pass.
-- The Worker is deployed to dev and `/health` works.
+- A repo where `pnpm install && pnpm lint && pnpm typecheck && pnpm test` pass, and `apps/api`'s `composer install && php artisan test` passes.
+- The Laravel API is deployed to the office server (or a dev subdomain) and `/health` works over HTTPS.
 - The dashboard runs locally and shows a placeholder page.
 
 **Tests**
@@ -732,28 +769,28 @@ PASS: within those numbers.
 ```text
 Test 1.1 [N] Fresh setup
 1. Clone the repo into a new folder. Follow docs/SETUP.md.
-Expected: everything installs and runs.
+Expected: everything installs and runs (JS apps via pnpm, API via composer + artisan).
 PASS: all three apps start without undocumented steps.
 
 Test 1.2 [N] Quality checks
-1. Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `cargo clippy`.
+1. Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `cargo clippy`, `vendor/bin/pint --test`, `php artisan test`.
 Expected: all pass.
 PASS: 0 errors.
 
-Test 1.3 [N] Worker health
-1. Open https://<dev-worker>/health.
-Expected: {"ok":true,...}
-PASS: 200 response.
+Test 1.3 [N] API health
+1. Open https://<dev-domain>/health.
+Expected: {"ok":true,...}, valid HTTPS certificate (no browser warning).
+PASS: 200 response, TLS padlock shown.
 
 Test 1.4 [S] No secrets in git
-1. Run `git grep -i "private_key\|BEGIN PRIVATE"`.
-Expected: no results (except docs mentioning the variable names).
-PASS: no real keys in the repo.
+1. Run `git grep -i "APP_KEY=base64\|DB_PASSWORD=\|BEGIN PRIVATE"`.
+Expected: no results (except docs/.env.example mentioning the variable names with placeholder values).
+PASS: no real secrets in the repo.
 
-Test 1.5 [S] Firestore is locked
-1. In the browser console of any page, use the Firebase JS SDK to read `users`.
-Expected: permission denied.
-PASS: direct access is blocked.
+Test 1.5 [S] Database is not reachable from outside
+1. From a machine that is not the office server, try to connect to the MySQL port (3306) on the server's public IP.
+Expected: connection refused/times out.
+PASS: only the API can reach the database.
 
 Test 1.6 [N] CI
 1. Push a branch with a lint error.
@@ -766,26 +803,26 @@ PASS: CI catches the error.
 ### Phase 2 — Login, Users and Roles
 
 **Tasks**
-1. Worker `lib/firebaseAuth.ts`: verify ID tokens (§9.3) with `jose`. Cache the keys.
-2. Worker `lib/googleToken.ts` + `lib/firestore.ts` (§10.3).
-3. Worker middleware `auth.ts`: token → `users/{uid}` → attach `{ uid, role, status }` to the request. 401 if the token is bad. 403 if the user is missing or deactivated.
-4. Helper `requireRole("ADMIN")` and `requireSelfOrAdmin(paramId)`.
-5. Routes: `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
-6. Create employee: Identity Toolkit admin API → create user → `users/{uid}` → send password-reset email → audit log entry. If the email already exists → `409`.
-7. Deactivate: set `status: DEACTIVATED`, `deactivatedAt`, and disable the Firebase user (so they can't get new tokens). Reactivate does the reverse.
+1. `composer require laravel/sanctum`, publish its config/migration, run `php artisan migrate`.
+2. `config/sanctum.php`: set `expiration` (e.g. 30 days) for agent tokens; `SANCTUM_STATEFUL_DOMAINS` for the dashboard's cookie-based SPA auth (§9.2).
+3. Middleware `EnsureActiveUser`: after Sanctum resolves the user, require `status = 'ACTIVE'`. `401` if unauthenticated, `403 ACCOUNT_DEACTIVATED` if deactivated.
+4. Middleware/Policy helpers: `EnsureAdmin` and `EnsureSelfOrAdmin($paramId)` (route-model-bound or a simple middleware reading the route parameter).
+5. Routes: `POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
+6. Create employee (`AdminEmployeeController@store`): create the `users` row (random unusable password) → `Password::sendResetLink()` → audit log entry. If the email already exists → `409`.
+7. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their tokens (`$user->tokens()->delete()`) so they can't keep using an already-issued agent token. Reactivate does the reverse (no need to reissue a token — they log in again).
 8. An admin cannot deactivate themselves or remove the last admin (`400`).
-9. Seed `settings/office` with defaults (timezone, idle 300 s, FULL titles, minAgentVersion, consentVersion 1).
-10. Dashboard: login page (Firebase JS SDK). After login call `/me`. If not ADMIN → sign out and show "This dashboard is for admins only." Route guard on every page.
+9. `php artisan tracker:make-admin "Name" email@office.com` — the one-time console command that creates the first admin directly (§9.2), since there's no dashboard yet to do it from.
+10. Dashboard: login page (posts to `/login`, Sanctum SPA cookie auth — no client SDK needed). After login call `/api/v1/me`. If not ADMIN → sign out and show "This dashboard is for admins only." Route guard (Nuxt middleware) on every page.
 11. Dashboard: `employees/manage` page — list, add, change role, deactivate / reactivate.
-12. Desktop app: login screen → `invoke("login")` → Rust REST sign-in → refresh token saved in Credential Manager → `/me`.
-13. Desktop app: **consent screen** on first login (and whenever `consentVersion` goes up). It lists exactly what is tracked (§16). Tracking can't start until it's accepted.
-14. Desktop app: "Forgot password" link.
-15. `docs/SETUP.md`: the one-time steps to create the first admin.
-16. Worker unit tests (vitest) for: token checks (expired, wrong audience, wrong issuer, bad signature), role checks, self-or-admin checks.
+12. Desktop app: login screen → `invoke("login")` → Rust calls `POST /api/v1/auth/login` → Sanctum token saved in Credential Manager → `/api/v1/me`.
+13. Desktop app: **consent screen** on first login (and whenever `consent_version` goes up). It lists exactly what is tracked (§16). Tracking can't start until it's accepted.
+14. Desktop app: "Forgot password" link (opens the dashboard's password-reset page in the system browser, since the desktop app has no mail-sending of its own).
+15. `docs/SETUP.md`: the one-time steps to create the first admin (`php artisan tracker:make-admin`) and the SMTP `.env` placeholder to fill in once a mail relay is chosen.
+16. Laravel feature tests (Pest/PHPUnit) for: login (correct/wrong password, deactivated user), role checks, self-or-admin checks, token revocation on deactivate.
 
 **Deliverables**
 - Admin can log in to the dashboard and add employees.
-- Employees get an email, set a password, log in to the desktop app and accept consent.
+- Employees get an email (once mail is configured — otherwise the admin shares the reset link manually), set a password, log in to the desktop app and accept consent.
 
 **Tests**
 
@@ -797,10 +834,10 @@ PASS: logged in.
 
 Test 2.2 [N] Add employee
 1. Dashboard → Manage → Add "Test Employee" with your second email address.
-2. Check that inbox.
-3. Set a password via the email link.
+2. Check that inbox (or, if mail isn't configured yet, copy the reset link the dashboard shows).
+3. Set a password via the link.
 4. Log in to the desktop app with it.
-Expected: email arrives, login works, consent screen shows.
+Expected: link works (by email or manually), login works, consent screen shows.
 PASS: employee can log in.
 
 Test 2.3 [S] Employee can't use the dashboard
@@ -809,25 +846,25 @@ Expected: "This dashboard is for admins only." and signed out.
 PASS: no employee data visible.
 
 Test 2.4 [S] Employee can't call admin APIs
-1. As the employee, copy the ID token (desktop app dev log, or sign in with the SDK in a scratch page).
-2. curl -H "Authorization: Bearer <token>" <worker>/api/v1/employees
+1. As the employee, grab the Sanctum token from the desktop app's dev log (or log in via curl: `curl -X POST <api>/api/v1/auth/login -d '{"email":...,"password":...}'`).
+2. curl -H "Authorization: Bearer <token>" <api>/api/v1/employees
 3. curl the same token to POST /api/v1/admin/employees
 Expected: 403 for both.
 PASS: both 403.
 
 Test 2.5 [S] Can't see other employees
 1. Create employees A and B.
-2. With A's token: GET /api/v1/employees/<B uid>/summary?from=...&to=...
+2. With A's token: GET /api/v1/employees/<B id>/summary?from=...&to=...
 Expected: 403.
 PASS: 403.
 
 Test 2.6 [S] Fake role in the body is ignored
-1. With the employee's token, PATCH /api/v1/admin/employees/<own uid> with {"role":"ADMIN"}.
-Expected: 403. Role is still EMPLOYEE in Firestore.
+1. With the employee's token, PATCH /api/v1/admin/employees/<own id> with {"role":"ADMIN"}.
+Expected: 403. Role is still EMPLOYEE in the database.
 PASS: no change.
 
 Test 2.7 [S] Bad tokens
-1. Call /api/v1/me with no token, a random string, an expired token, and a token from another Firebase project.
+1. Call /api/v1/me with no token, a random string, an expired token, and a token that was already revoked (deactivated user's old token).
 Expected: 401 each time.
 PASS: all 401.
 
@@ -840,10 +877,10 @@ PASS: can't log in.
 Test 2.9 [N] Consent required
 1. New employee logs in. Try to start tracking without accepting.
 Expected: impossible. Start is only available after accepting.
-PASS: consentAcceptedAt is saved in users/{uid} after accepting.
+PASS: consent_accepted_at is saved on the users row after accepting.
 
 Test 2.10 [S] Token not stored in plain files
-1. After login, search %APPDATA% for the refresh token text.
+1. After login, search %APPDATA% for the Sanctum token text.
 Expected: not found. It's in Windows Credential Manager.
 PASS: not in any file.
 
@@ -979,46 +1016,47 @@ PASS: within those numbers.
 
 ---
 
-### Phase 4 — Worker Sync and Firestore
+### Phase 4 — API Sync and Database
 
 **Tasks**
-1. `packages/shared`: zod schema for the sync request/response (§10.1).
-2. Worker `routes/agent.ts`: `POST /api/v1/agent/sync`, exactly as in §10.1 (transaction, duplicates, one-PC rule, deactivated rule).
-3. `lib/summaries.ts`: add sessions into daily totals, splitting at midnight in the office timezone.
-4. Middleware: rate limit (Workers Rate Limiting binding), `X-Agent-Version` check (`426`).
-5. Firestore TTL policies on `expireAt` (sessions 30 d, summaries 90 d, audit 365 d). Set them in the console or with `gcloud`, and write the steps in `docs/SETUP.md`.
-6. Rust `sync/client.rs` + `sync/worker.rs` (§11.1): batching, retry wait times, 401 refresh, commands, settings.
-7. Rust `auth.rs`: refresh the ID token 5 minutes before it expires.
+1. `packages/shared`: TS types for the sync request/response (§10.1) — matched against the Laravel Form Request's validation rules by hand.
+2. Laravel `AgentSyncRequest` + `AgentController@sync`: `POST /api/v1/agent/sync`, exactly as in §10.1 (DB transaction, duplicates, one-PC rule, deactivated rule).
+3. `SummaryService`: add sessions into daily totals, splitting at midnight in the office timezone.
+4. Middleware: `throttle:agent-sync` rate limit, `CheckAgentVersion` (`X-Agent-Version` header vs `office_settings.min_agent_version`, `426` if too old).
+5. `php artisan tracker:prune` scheduled command (§8 Housekeeping) for retention (sessions 30 d, summaries 90 d, audit 365 d). Register the cron entry that drives Laravel's scheduler, and write the steps in `docs/SETUP.md`.
+6. Rust `sync/client.rs` + `sync/worker.rs` (§11.1): batching, retry wait times, 401 handling, commands, settings.
+7. Rust `auth.rs`: hold the Sanctum token from Credential Manager; no refresh step needed (§9.2) — just re-send it until a `401` says it's no longer valid.
 8. Detect "internet is back" (a successful `/health` call, checked every 30 s while offline) → sync now.
 9. `logout` command (§6.3): stop, sync with a 30 s limit, then sign out or show the offline message. Data stays tied to the user id.
 10. When a user logs in on a PC that holds unsent data from **another** user: keep it; it is sent when that user logs in again.
-11. Worker tests (vitest):
+11. Laravel feature tests (Pest/PHPUnit):
     - valid batch → accepted;
     - same batch twice → second time all `duplicates`, totals unchanged;
     - bad sessions → rejected with the right reason;
     - midnight split;
     - one-PC takeover;
-    - deactivated user rule.
+    - deactivated user rule;
+    - `tracker:prune` actually deletes rows past retention and leaves newer ones.
 
 **Deliverables**
-- Sessions from the desktop app appear in Firestore within ~2 minutes (and ≤ 10 minutes for long sessions), with correct daily totals.
+- Sessions from the desktop app appear in MySQL within ~2 minutes (and ≤ 10 minutes for long sessions), with correct daily totals.
 
 **Tests**
 
 ```text
-Test 4.1 [N] Sessions reach Firestore
+Test 4.1 [N] Sessions reach the database
 1. Track 5 minutes across 2 apps. Wait 3 min.
-2. Open the Firestore console → sessions.
+2. Query the database (`php artisan tinker` → `Session::latest()->take(10)->get()`, or any MySQL client).
 Expected: the same sessions (same ids) as the local debug page.
 PASS: all present, local rows marked SYNCED.
 
 Test 4.2 [N] Daily summary
-1. After 4.1, open dailySummaries/<uid>_<today>.
-Expected: trackedSeconds = sum of sessions; apps per app correct.
+1. After 4.1, query `daily_summaries` for that user_id/today.
+Expected: tracked_seconds = sum of sessions; apps per app correct.
 PASS: matches within 1 s.
 
 Test 4.3 [N] Live status
-1. Start tracking. Look at status/<uid> in Firestore. Go idle past the limit. Pause. Stop.
+1. Start tracking. Query `employee_statuses` for that user_id. Go idle past the limit. Pause. Stop.
 Expected: state changes ACTIVE → IDLE → PAUSED → NOT_TRACKING, each within ~2 min.
 PASS: all states seen.
 
@@ -1030,28 +1068,28 @@ PASS: no double count.
 Test 4.5 [F] Offline then online
 1. Wi-Fi off. Track for 30 min. Wi-Fi on.
 Expected: within ~1 minute of reconnecting, all sessions upload. Totals correct.
-PASS: count in Firestore = count locally; no duplicates.
+PASS: count in the database = count locally; no duplicates.
 
-Test 4.6 [F] Worker down
-1. Point the app at a wrong API URL (dev build) or deploy a Worker that returns 500.
-2. Track 10 minutes. Restore the Worker.
-Expected: tracking continues; the app shows "Sync pending"; data uploads once the Worker is back.
+Test 4.6 [F] API down
+1. Point the app at a wrong API URL (dev build), or stop PHP-FPM / nginx on the dev server.
+2. Track 10 minutes. Restore the API.
+Expected: tracking continues; the app shows "Sync pending"; data uploads once the API is back.
 PASS: nothing lost.
 
-Test 4.7 [F] Firestore failure
-1. In the dev project, temporarily remove the service account's Firestore role.
-2. Track 5 minutes. Put the role back.
-Expected: Worker returns 5xx; the app retries later; data arrives after the fix.
+Test 4.7 [F] Database failure
+1. In dev, temporarily stop MySQL (or revoke the Laravel DB user's privileges).
+2. Track 5 minutes. Restore the database.
+Expected: API returns 5xx; the app retries later; data arrives after the fix.
 PASS: nothing lost, nothing duplicated.
 
-Test 4.8 [F] Token expiry
-1. Leave the app tracking for 2+ hours (tokens last 1 hour).
-Expected: syncing continues without asking to log in.
+Test 4.8 [F] Token still valid after hours
+1. Leave the app tracking for 2+ hours.
+Expected: syncing continues without asking to log in (Sanctum tokens don't need refreshing — see §9.2).
 PASS: no 401 errors that stop syncing.
 
 Test 4.9 [N] Logout online
 1. Track 3 min. Log out right away.
-Expected: "Sending your data…" then signed out. All sessions in Firestore.
+Expected: "Sending your data…" then signed out. All sessions in the database.
 PASS: 0 pending sessions.
 
 Test 4.10 [F] Logout offline
@@ -1059,7 +1097,7 @@ Test 4.10 [F] Logout offline
 Expected: "You're offline, your data will be sent next time you log in." Signed out.
 2. Wi-Fi on. Log in as the same user.
 Expected: the data uploads.
-PASS: sessions appear in Firestore after re-login.
+PASS: sessions appear in the database after re-login.
 
 Test 4.11 [N] Two computers
 1. Start tracking on PC 1. Then start tracking on PC 2 with the same account.
@@ -1073,8 +1111,8 @@ Expected: time is split between two daily summaries.
 PASS: yesterday + today = total session time.
 
 Test 4.13 [S] Upload for someone else
-1. With employee A's token, send a sync whose body includes "uid": "<B uid>".
-Expected: the extra field is ignored; sessions are saved under A.
+1. With employee A's token, send a sync whose body includes "uid": "<B id>".
+Expected: the extra field is ignored (not a recognized Form Request field); sessions are saved under A.
 PASS: nothing written for B.
 
 Test 4.14 [S] Bad data
@@ -1088,7 +1126,7 @@ Expected: sessions from before deactivation are accepted; the app then signs out
 PASS: correct sessions saved; no newer ones accepted.
 
 Test 4.16 [F] Old app version
-1. Set settings/office.minAgentVersion higher than the installed version.
+1. Set office_settings.min_agent_version higher than the installed version.
 Expected: the app shows "Please update the app" and keeps tracking locally.
 PASS: no data lost; syncs after the update.
 
@@ -1187,7 +1225,7 @@ PASS: within targets.
 ### Phase 6 — Admin Dashboard
 
 **Tasks**
-1. Worker routes: `GET /api/v1/employees`, `/employees/:id/summary`, `/employees/:id/timeline` (§10). Audit "viewed timeline".
+1. Laravel routes/controllers: `GET /api/v1/employees`, `/employees/{id}/summary`, `/employees/{id}/timeline` (§10). Audit "viewed timeline".
 2. **Overview page (`/`):**
    - cards: tracking now / idle now / not tracking (includes offline);
    - today's total tracked / active / idle for everyone;
@@ -1261,10 +1299,10 @@ Test 6.10 [P] Page speed
 Expected: each loads in under 2 seconds.
 PASS: within target.
 
-Test 6.11 [P] Firestore reads
-1. Open the overview once and check the Firestore usage tab.
-Expected: about 3 reads per employee per refresh.
-PASS: no unexpected big numbers.
+Test 6.11 [P] Query count
+1. Open the overview once with Laravel's query log/Debugbar (dev only) on.
+Expected: a small, constant number of queries regardless of employee count (eager-loaded, not N+1 — see §10.3).
+PASS: no N+1 query pattern.
 ```
 
 ---
@@ -1276,13 +1314,13 @@ Most of these were tested in earlier phases. This phase repeats them **together,
 **Tasks**
 1. Build a release version and install it on 2–3 real employee PCs (a pilot) for 1 week.
 2. Run the full edge-case list (§13) on the release build.
-3. Check Worker logs for errors and slow requests. Fix the top issues.
-4. Check Firestore usage against §14.
+3. Check Laravel logs (`storage/logs/laravel.log`) for errors and slow requests (`php artisan pail` or a query-time log during the pilot). Fix the top issues.
+4. Check database size and query numbers against §14.
 5. Go through the security checklist (§15). Write down anything not done and why.
-6. Test a restore: export Firestore (`gcloud firestore export`) to a bucket, and write down how to restore it.
+6. Test a restore: back up MySQL (`mysqldump`) to a separate location, and write down how to restore it (`mysql < backup.sql` into a scratch database, verify row counts).
 
 **Deliverables**
-- A pilot report: bugs found and fixed, resource numbers, Firestore costs.
+- A pilot report: bugs found and fixed, resource numbers, office server load (CPU/memory/disk on the server itself, not just the client PCs).
 - The security checklist completed.
 
 **Tests**
@@ -1296,7 +1334,7 @@ PASS: matches.
 Test 7.2 [F] Everything breaks
 1. During one tracked hour: turn Wi-Fi off/on 3 times, kill the app once, sleep the PC once, lock it once.
 Expected: sessions only missing for the dead/asleep/locked times; no duplicates; everything synced in the end.
-PASS: local count = Firestore count; totals match.
+PASS: local count = database count; totals match.
 
 Test 7.3 [S] Security sweep
 1. Repeat tests 2.4–2.7, 4.13, 4.14 and 6.8 against production.
@@ -1304,8 +1342,8 @@ Expected: same results.
 PASS: all blocked.
 
 Test 7.4 [D] Duplicates check
-1. Run a small script comparing session ids across Firestore and the local DBs.
-Expected: every local SYNCED id is in Firestore exactly once.
+1. Run a small script comparing session ids across the server database and the local DBs.
+Expected: every local SYNCED id is in the `sessions` table exactly once.
 PASS: 0 missing, 0 extra.
 
 Test 7.5 [P] One-week resources
@@ -1314,7 +1352,7 @@ Expected: within §14 targets.
 PASS: all within targets.
 
 Test 7.6 [F] Restore drill
-1. Export the dev Firestore. Delete a test collection. Restore it.
+1. Back up the dev database (`mysqldump`). Drop a test table. Restore it.
 Expected: data back.
 PASS: restore works and the steps are written down.
 ```
@@ -1327,12 +1365,12 @@ PASS: restore works and the steps are written down.
 1. Tauri NSIS installer, **per-user install** (no admin rights needed). App name, icon, version.
 2. Sign the installer and the exe with the code-signing certificate from Phase 1.
 3. Uninstaller: removes the app and the autostart entry. Offer "Also delete local data" (unticked by default). Warn if there's unsent data.
-4. Updater: `tauri-plugin-updater`. Generate the updater key pair; keep the **private key only in GitHub Secrets**. Host `latest.json` + installers in an R2 bucket that is publicly readable **only for the update files** (custom domain `updates.<your-domain>`). Keep only the last 3 versions so storage stays inside the free tier.
+4. Updater: `tauri-plugin-updater`. Generate the updater key pair; keep the **private key only in GitHub Secrets**. Host `latest.json` + installers as static files on the office server, served by the same nginx (e.g. `https://<your-domain>/updates/`), **write-only from the release workflow** (uploaded over SSH/`rsync` with a deploy key — not a public upload endpoint). Keep only the last 3 versions on disk.
 5. Check for updates at startup and every 6 hours. Install only when **not tracking**, or when the user clicks "Update now" (which stops tracking cleanly first). Resume tracking after restarting if it was on.
-6. Database migrations run at startup with a backup first (§7.4). If a migration fails → restore the backup and show an error.
-7. GitHub Actions release workflow: on tag `v*` → build on `windows-latest` → sign → upload to R2 → update `latest.json` → delete versions older than the last 3.
-8. Worker: `minAgentVersion` (§10.1) forces very old versions to update.
-9. `docs/RELEASE.md`: how to release, and how to roll back (point `latest.json` at the previous version).
+6. Database migrations run at startup with a backup first (§7.4 — this is the SQLite backup on the employee's PC; the server's own `php artisan migrate` for the MySQL schema is a separate, manual release step, see `docs/RELEASE.md`). If a local migration fails → restore the backup and show an error.
+7. GitHub Actions release workflow: on tag `v*` → build on `windows-latest` → sign → `rsync`/`scp` the installer and updated `latest.json` to the office server's `/updates/` directory over SSH (deploy key stored in GitHub Secrets) → delete versions older than the last 3.
+8. Laravel: `office_settings.min_agent_version` (§10.1) forces very old versions to update.
+9. `docs/RELEASE.md`: how to release (including running `php artisan migrate` on the office server for any API-side schema changes), and how to roll back (point `latest.json` at the previous version).
 
 **Deliverables**
 - A signed installer. Automatic updates work. The release process is written down.
@@ -1404,12 +1442,12 @@ Screenshots are **not part of this project** (decision: no paid screenshot stora
 ### Phase 11 — Reports
 
 **Tasks**
-1. Worker `GET /api/v1/reports/daily?from&to&uid?` (admin), built from `dailySummaries` only (max 92 days, to match retention).
+1. Laravel `GET /api/v1/reports/daily?from&to&uid?` (admin), built from `daily_summaries` only (max 92 days, to match retention).
 2. Reports:
    - **Daily employee report:** one row per employee per day (tracked / active / idle, first / last activity);
    - **App usage report:** app totals for a date range;
    - **Team report:** everyone's totals for a date range.
-3. CSV export (the Worker returns `text/csv`). Times as `HH:MM` and also as plain seconds.
+3. CSV export (the controller returns a `text/csv` response — Laravel's `StreamedResponse` for large ranges). Times as `HH:MM` and also as plain seconds.
 4. All days follow the office timezone setting.
 5. Dashboard `/reports` page with a date range, employee filter and "Download CSV".
 
@@ -1462,9 +1500,9 @@ PASS: within target.
 | 12 | Lock screen | Session closed at lock. Status AWAY. Resumes on unlock. |
 | 13 | Internet disconnects | Tracking unaffected. Queue grows. The UI says "waiting to send". |
 | 14 | Internet reconnects | Detected within ~30 s; the queue sends in batches of 100. |
-| 15 | Worker unavailable | Retries at 1, 2, 5, 10, then every 30 min. Nothing lost. |
-| 16 | Firestore unavailable | The Worker returns 5xx; the transaction saves nothing half-done; the app retries. |
-| 17 | Firebase token expires | Rust refreshes it automatically. If the refresh fails (password changed, account disabled): "Please log in again", data kept. |
+| 15 | API unavailable | Retries at 1, 2, 5, 10, then every 30 min. Nothing lost. |
+| 16 | Database unavailable | The API returns 5xx; the DB transaction saves nothing half-done; the app retries. |
+| 17 | Sanctum token invalid/revoked | No refresh step (§9.2) — the app shows "Please log in again" (password changed, account disabled, or token expired per `sanctum.expiration`), data kept. |
 | 18 | System clock changed | Durations use the monotonic clock, so they stay correct. The session is flagged `clockChanged`. The server rejects future-dated sessions and records the clock skew in the status doc. |
 | 19 | Logs out | Sends data first. If offline: shows the offline message, keeps the data, sends it on next login. |
 | 20 | Different person logs in on the same PC | Each person's unsent data stays tied to their user id and only goes up with their own token. |
@@ -1498,39 +1536,40 @@ PASS: within target.
 | Tick cost | < 5 ms per tick |
 | `tracker.db` size | < 20 MB normally (synced rows deleted after 7 days) |
 | Network | < 2 MB per employee per day |
-| Worker requests | ≈ 1 every 2 min while logged in → **~250 per employee per 8-hour day** |
-| Firestore writes | ≈ 1 status + new sessions + 1 summary per sync → **~600–900 per employee per day** |
-| Firestore reads | ≈ 1 per new session (duplicate check) + dashboard views |
+| API requests | ≈ 1 every 2 min while logged in → **~250 per employee per 8-hour day** |
+| DB writes | ≈ 1 status upsert + new session inserts + 1 summary upsert per sync → **~600–900 per employee per day** |
+| DB reads | ≈ 1 per new session (existence check) + dashboard queries |
 | Dashboard pages | Load in < 2 s |
 
-**Cost note:** Firestore's free tier is 20,000 writes and 50,000 reads per day. That covers about 20 employees. Beyond that the cost is very small (cents per day for a normal office). The dashboard only refreshes while its tab is visible, to keep reads down.
+**Cost note:** unlike Firestore, there's no per-operation cost on a self-hosted MySQL instance — the only cost is the office server itself. At this write volume (a few hundred small writes per employee per day) a modest VM handles dozens of employees comfortably; watch disk I/O and connection count if the office grows much larger, and add an index or a read replica before it becomes a problem, not after. The dashboard only refreshes while its tab is visible, to keep query load down.
 
-**What keeps it light:** no network polling for activity (only one sync every 2 minutes); Windows calls that take microseconds; SQLite writes only when a session closes plus a tiny update every 30 s; dashboard totals read from ready-made summaries.
+**What keeps it light:** no network polling for activity (only one sync every 2 minutes); Windows calls that take microseconds; SQLite writes only when a session closes plus a tiny update every 30 s; dashboard totals read from ready-made summaries, not recomputed from raw sessions.
 
 ---
 
 ## 15. Security Checklist
 
-- [ ] **Firebase Auth:** email/password only. Password-reset emails for new accounts; admins never see passwords.
-- [ ] **Token checks:** signature, `aud`, `iss`, `exp` checked on every request. Google keys cached with their `Cache-Control` time.
-- [ ] **Authorization:** every route has a role check; `/employees/:id` uses the self-or-admin check; covered by tests.
-- [ ] **Never trust the client:** uid comes from the token, role from Firestore. Body fields like `uid`/`role` are ignored.
-- [ ] **Deactivation works immediately:** user doc checked on every request (60 s cache), and the Firebase user is disabled.
-- [ ] **Input validation:** zod on every request body and query; size limits; max 100 sessions per sync.
-- [ ] **Rate limiting:** per uid on all API routes.
-- [ ] **Secrets:** service account key only in Wrangler secrets; updater private key only in GitHub Secrets; nothing secret in the desktop app or the dashboard (the Firebase Web API key is public by design, but restricted to the auth APIs).
-- [ ] **Firestore rules:** deny all; tested (Test 1.5).
-- [ ] **HTTPS only:** Workers and the dashboard are HTTPS; Rust `reqwest` uses rustls with certificate checks on.
-- [ ] **CORS:** only the dashboard origin.
-- [ ] **Local token storage:** refresh token in Windows Credential Manager, never in files or SQLite.
+- [ ] **Laravel auth:** email/password only, hashed with bcrypt/argon2id. Password-reset emails for new accounts; admins never see passwords.
+- [ ] **Token checks:** Sanctum token validated on every request (hashed lookup, not a raw string compare); `expires_at` enforced; revoked immediately on logout or deactivation (`$user->tokens()->delete()`).
+- [ ] **Authorization:** every route has a role check; `/employees/{id}` uses the self-or-admin check; covered by tests.
+- [ ] **Never trust the client:** the user id comes from the authenticated Sanctum token/session, role from the `users` table. Body fields like `uid`/`role` are ignored (not recognized by the Form Request).
+- [ ] **Deactivation works immediately:** `EnsureActiveUser` checks `status` on every request (no cache — it's one indexed lookup already alongside the auth check), and deactivation revokes all existing tokens.
+- [ ] **Input validation:** a Laravel Form Request on every endpoint that takes a body or query; size limits; max 100 sessions per sync.
+- [ ] **Rate limiting:** per user id on all API routes (`throttle` middleware).
+- [ ] **Secrets:** `.env` on the office server only (never committed) — `APP_KEY`, DB credentials, mail credentials; updater private key only in GitHub Secrets; the SSH deploy key for the release workflow scoped to just the `/updates/` upload; nothing secret in the desktop app or the dashboard.
+- [ ] **Database not exposed:** MySQL bound to `localhost`/private network, no public port; tested (Test 1.5).
+- [ ] **HTTPS only:** nginx terminates TLS (Let's Encrypt, auto-renewed), redirects HTTP → HTTPS, HSTS header set; Laravel forces the HTTPS scheme in generated URLs; Rust `reqwest` uses rustls with certificate checks on.
+- [ ] **CORS:** dashboard and API are same-origin, so `config/cors.php` stays closed (no origins allowed).
+- [ ] **Local token storage:** Sanctum token in Windows Credential Manager, never in files or SQLite.
 - [ ] **Local SQLite:** stored in the user's own `%APPDATA%` (other Windows users can't read it); no passwords or tokens in it. Encryption is not in the MVP (the data is the employee's own activity).
-- [ ] **R2:** only used for app update files; public read for those files only; uploads only from the GitHub release workflow.
+- [ ] **Update files:** served read-only from the office server's `/updates/` directory; only the GitHub release workflow can write to it (SSH deploy key, no public upload endpoint).
 - [ ] **Audit logs:** admin actions and timeline views recorded; kept 365 days.
-- [ ] **Data retention:** TTL on sessions (30 d), summaries (90 d), audit (365 d); tested in Phase 7.
+- [ ] **Data retention:** scheduled `php artisan tracker:prune` deletes sessions (30 d), summaries (90 d), audit (365 d); tested in Phase 7.
 - [ ] **Logs:** no tokens, keys, passwords or window titles in logs.
 - [ ] **Code signing:** installer and exe signed; updater signature checked.
-- [ ] **Dependencies:** `pnpm audit` and `cargo audit` in CI.
-- [ ] **Backups:** Firestore export schedule set up and a restore tested.
+- [ ] **Dependencies:** `pnpm audit`, `cargo audit`, and `composer audit` in CI.
+- [ ] **Server hardening:** firewall only exposes 443 (and 22 for admin SSH, key-only, ideally IP-restricted); `APP_DEBUG=false` and `APP_ENV=production` on the live server; OS security updates kept current.
+- [ ] **Backups:** scheduled `mysqldump` to a separate location (off the office server) and a restore tested.
 - [ ] **Transparency:** consent screen, tray icon always visible while tracking, "What we track" page.
 
 ---
@@ -1574,11 +1613,12 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] Meets the §14 performance targets.
 
 **Backend**
-- [ ] Worker verifies Firebase tokens and enforces roles on every route.
+- [ ] Laravel verifies Sanctum tokens/sessions and enforces roles on every route.
 - [ ] Sync is idempotent (Test 4.4 passes).
 - [ ] Daily summaries are correct, including midnight splits.
-- [ ] Firestore direct access is blocked; TTL retention is on.
+- [ ] The database is not reachable from outside the server; scheduled retention pruning is on and tested.
 - [ ] Rate limiting and input validation are on.
+- [ ] The office server is HTTPS-only with a valid, auto-renewing certificate.
 
 **Dashboard**
 - [ ] Admin-only login.
@@ -1603,10 +1643,10 @@ The MVP is complete when **all** of these are true on the release build:
 ## 18. Recommended Development Order
 
 1. **Phase 0** — Windows spike. *Stop here if anything fails.*
-2. **Phase 1** — Repo, tooling, Firebase projects, Worker `/health`. **Order the code-signing certificate.**
+2. **Phase 1** — Repo, tooling, office server provisioning, Laravel API `/health`. **Order the code-signing certificate.**
 3. **Phase 3** — Tracking engine, offline only. (Can run alongside Phase 2; it doesn't need the server.)
 4. **Phase 2** — Login, users, roles, consent.
-5. **Phase 4** — Sync to Firestore.
+5. **Phase 4** — Sync to MySQL.
 6. **Phase 5** — Employee screens.
 7. **Phase 6** — Admin dashboard.
 8. **Phase 7** — Pilot week + fixes.

@@ -5,6 +5,8 @@
   "scripts": {
     "dev:agent": "pnpm --filter agent tauri dev",
     "build:agent": "pnpm --filter agent tauri build",
+    "dev:dashboard": "pnpm --filter dashboard dev",
+    "build:dashboard": "pnpm --filter dashboard generate",
     "typecheck": "pnpm -r typecheck"
   }
 }
