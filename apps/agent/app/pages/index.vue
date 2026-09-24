@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const { state, clock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
 const { me, refresh, logout } = useAuth()
-const { status: sync, notice, dismissNotice } = useSync()
+const { status: sync, notice, progress, dismissNotice } = useSync()
 const loginNotice = useState<string | null>('loginNotice', () => null)
 
 const loggingOut = ref(false)
@@ -67,6 +67,26 @@ async function signOut() {
       >
         {{ syncLabel }}
       </p>
+      <div
+        v-if="progress && sync?.online"
+        class="mt-2"
+      >
+        <div
+          class="h-2 overflow-hidden rounded bg-slate-200"
+          role="progressbar"
+          :aria-valuenow="progress.percent"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <div
+            class="h-full bg-slate-700 transition-all duration-500"
+            :style="{ width: `${progress.percent}%` }"
+          />
+        </div>
+        <p class="mt-1 text-xs text-slate-500">
+          Sending {{ progress.sent.toLocaleString() }} of {{ progress.total.toLocaleString() }} ({{ progress.percent }}%)
+        </p>
+      </div>
     </header>
 
     <p
