@@ -1273,6 +1273,25 @@ Expected: hidden < 1% average; open < 3%.
 PASS: within targets.
 ```
 
+**Phase 5 test results** (2026-09, dev build; 54 Rust tests pass, agent typecheck and lint clean)
+
+| Test | Result | How |
+|---|---|---|
+| 5.1 | PASS | Start, Pause, Resume, Stop: status, buttons and tray colour update each time. |
+| 5.2 | PASS | Current app changes within about 2 s of switching (engine ticks every 2 s). |
+| 5.3, 5.4 | PASS | Totals, app list and timeline match the sessions list; idle blocks grey and labelled "Idle (in X)". |
+| 5.5 | Open | Needs a reboot while tracking, on an installed build (Launch at startup is only turned on by default in installed builds). |
+| 5.6 | PASS | Window hides to tray, tracking continues, tray menu items follow the state. |
+| 5.7 | PASS | Settings shows office idle limit and title mode; "What we track" matches §16. |
+| 5.8 | Open | Needs Wi-Fi off on a real PC. |
+| 5.9 | Open | Needs a release build and CPU measurements. |
+| Tray Quit | PASS | Asks "Stop tracking and quit?", Cancel keeps running, "Stop and quit" stops, sends, exits. |
+
+Built differently from the task list:
+- "Check for updates" is shown but disabled until the Phase 8 updater exists.
+- The counter Reset button is a testing aid and appears in dev builds only.
+- The live idle counter starts at 00:00:01 when idle is noticed; when the idle stretch ends the totals settle to the saved (back-dated) values.
+
 ---
 
 ### Phase 6 — Manager Dashboard
