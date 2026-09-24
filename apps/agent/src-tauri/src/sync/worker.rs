@@ -21,6 +21,9 @@ use crate::tracker::load_office_settings;
 pub const BATCH_SIZE: usize = 100;
 pub const MAX_BATCHES_PER_CYCLE: usize = 20;
 const NORMAL_INTERVAL: Duration = Duration::from_secs(120);
+/// After a full 20-batch pass with more waiting: a pass uses 20 of the server's 30
+/// requests per minute, so wait out that minute rather than the full 2.
+const BACKLOG_INTERVAL: Duration = Duration::from_secs(65);
 const OFFLINE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +46,8 @@ pub struct CycleReport {
     pub stop_tracking: bool,
     pub stop_reason: Option<String>,
     pub sign_out: bool,
+    /// The pass hit its 20-batch cap with more still waiting.
+    pub more_waiting: bool,
     /// The state that was reported to the server in the last request.
     pub reported_state: &'static str,
 }
@@ -76,6 +81,7 @@ where
         stop_tracking: false,
         stop_reason: None,
         sign_out: false,
+        more_waiting: false,
         reported_state: "NOT_TRACKING",
     };
 
@@ -135,6 +141,7 @@ where
                 if rows.len() < BATCH_SIZE {
                     break;
                 }
+                report.more_waiting = batch == MAX_BATCHES_PER_CYCLE - 1;
             }
             Err(err) => {
                 report.outcome = match &err {
@@ -300,9 +307,16 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
     tauri::async_runtime::spawn(async move {
         let mut offline = false;
         let mut last_reported_state = "";
+        let mut backlog_left = false;
 
         loop {
-            let wait = if offline { OFFLINE_HEALTH_INTERVAL } else { NORMAL_INTERVAL };
+            let wait = if offline {
+                OFFLINE_HEALTH_INTERVAL
+            } else if backlog_left {
+                BACKLOG_INTERVAL
+            } else {
+                NORMAL_INTERVAL
+            };
             tokio::select! {
                 _ = handle.notify.notified() => {}
                 _ = tokio::time::sleep(wait) => {}
@@ -344,6 +358,7 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
                 last_reported_state = report.reported_state;
             }
             offline = report.outcome == Outcome::Offline;
+            backlog_left = report.more_waiting;
 
             let status = handle.update(|s| {
                 s.online = report.outcome != Outcome::Offline;
@@ -593,6 +608,25 @@ mod tests {
         assert_eq!(server.request_count(), MAX_BATCHES_PER_CYCLE);
         assert_eq!(report.sent, 2000);
         assert_eq!(pending(&engine), 1000);
+        assert!(report.more_waiting, "the worker should come back sooner than 2 minutes");
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_empties_the_queue_is_not_marked_as_having_more_waiting() {
+        let engine = engine();
+        let ids = queue(&engine, USER, 200);
+        let server = MockServer::start(vec![
+            (200, ok_body(&ids[..100], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&ids[100..], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&[], &[], &[], NO_COMMANDS)),
+        ])
+        .await;
+        let api = ApiClient::new(&server.root, "dev");
+
+        let report = sync_cycle(&engine, &api, "tok", USER).await;
+
+        assert!(!report.more_waiting);
+        assert_eq!(pending(&engine), 0);
     }
 
     #[tokio::test]
