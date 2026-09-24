@@ -1,10 +1,15 @@
 <script setup lang="ts">
-const { state, clock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
-const { me, refresh, logout } = useAuth()
+const { state, summary, timeline, status, clock, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
+const { me, refresh } = useAuth()
 const { status: sync, notice, progress, dismissNotice } = useSync()
-const loginNotice = useState<string | null>('loginNotice', () => null)
 
-const loggingOut = ref(false)
+const STATUS_STYLE: Record<StatusKey, string> = {
+  ACTIVE: 'bg-green-500',
+  IDLE: 'bg-amber-500',
+  PAUSED: 'bg-blue-500',
+  AWAY: 'bg-slate-400',
+  NOT_TRACKING: 'bg-slate-400',
+}
 
 const syncLabel = computed(() => {
   const s = sync.value
@@ -15,8 +20,8 @@ const syncLabel = computed(() => {
   if (s.upgradeRequired)
     return 'Please update the app'
   if (!s.online)
-    return s.pendingCount > 0 ? `Offline · ${s.pendingCount} waiting to send` : 'Offline'
-  return s.pendingCount > 0 ? 'Sync pending' : 'All data sent'
+    return s.pendingCount > 0 ? `Offline · ${s.pendingCount.toLocaleString()} waiting to send` : 'Offline'
+  return s.pendingCount > 0 ? `${s.pendingCount.toLocaleString()} ${s.pendingCount === 1 ? 'session' : 'sessions'} waiting to send` : 'All data sent'
 })
 
 // Best effort: picks up a raised consent version. The route guard then sends the person
@@ -26,67 +31,25 @@ onMounted(async () => {
   if (me.value?.consentRequired)
     await navigateTo('/consent')
 })
-
-async function signOut() {
-  loggingOut.value = true
-  try {
-    const result = await logout()
-    loginNotice.value = result.synced
-      ? null
-      : 'You\'re offline, your data will be sent next time you log in.'
-    await navigateTo('/login')
-  }
-  finally {
-    loggingOut.value = false
-  }
-}
 </script>
 
 <template>
-  <main class="mx-auto max-w-md space-y-4 p-4">
-    <header>
-      <h1 class="text-lg font-semibold">
-        Time Tracker
-      </h1>
-      <p class="text-sm text-slate-500">
-        Closing this window hides it to the tray; tracking keeps running.
-      </p>
-      <p class="mt-1 flex items-center justify-between text-sm">
-        <span>{{ me?.name }}</span>
-        <button
-          :disabled="loggingOut"
-          class="text-slate-500 underline disabled:opacity-50"
-          @click="signOut"
-        >
-          {{ loggingOut ? 'Sending your data…' : 'Log out' }}
-        </button>
-      </p>
-      <p
-        v-if="syncLabel"
-        class="mt-1 text-xs text-slate-500"
-      >
-        {{ syncLabel }}
-      </p>
-      <div
-        v-if="progress && sync?.online"
-        class="mt-2"
-      >
-        <div
-          class="h-2 overflow-hidden rounded bg-slate-200"
-          role="progressbar"
-          :aria-valuenow="progress.percent"
-          aria-valuemin="0"
-          aria-valuemax="100"
-        >
-          <div
-            class="h-full bg-slate-700 transition-all duration-500"
-            :style="{ width: `${progress.percent}%` }"
-          />
-        </div>
-        <p class="mt-1 text-xs text-slate-500">
-          Sending {{ progress.sent.toLocaleString() }} of {{ progress.total.toLocaleString() }} ({{ progress.percent }}%)
+  <main class="mx-auto max-w-md space-y-3 p-4">
+    <header class="flex items-center justify-between">
+      <div>
+        <h1 class="text-lg font-semibold">
+          Time Tracker
+        </h1>
+        <p class="text-sm text-slate-500">
+          {{ me?.name }}
         </p>
       </div>
+      <NuxtLink
+        to="/settings"
+        class="text-sm text-slate-500 underline"
+      >
+        Settings
+      </NuxtLink>
     </header>
 
     <p
@@ -101,7 +64,6 @@ async function signOut() {
         Dismiss
       </button>
     </p>
-
     <p
       v-if="resumedNotice"
       class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
@@ -116,38 +78,69 @@ async function signOut() {
     </p>
 
     <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-2 text-sm font-medium text-slate-500">
-        Status
-      </h2>
-      <p class="text-2xl font-semibold">
-        {{ state?.state ?? '…' }}
+      <div class="flex items-center gap-3">
+        <span
+          class="inline-block h-4 w-4 rounded-full"
+          :class="STATUS_STYLE[status]"
+        />
+        <p
+          class="text-2xl font-semibold"
+          data-testid="status"
+        >
+          {{ STATUS_LABEL[status] }}
+        </p>
+        <p
+          v-if="workClock"
+          class="ml-auto text-right"
+        >
+          <span class="block font-mono text-lg tabular-nums">{{ workClock }}</span>
+          <span class="block text-xs text-slate-500">this work period</span>
+        </p>
+      </div>
+
+      <p
+        v-if="summary?.currentApp && status === 'ACTIVE'"
+        class="mt-3 truncate text-sm"
+        :title="summary.currentTitle ?? summary.currentApp"
+      >
+        <span class="font-medium">{{ summary.currentApp }}</span>
+        <span
+          v-if="summary.currentTitle"
+          class="text-slate-500"
+        > · {{ summary.currentTitle }}</span>
+      </p>
+      <p
+        v-else-if="status === 'IDLE'"
+        class="mt-3 text-sm text-slate-500"
+      >
+        No keyboard or mouse use.
       </p>
 
       <div class="mt-4 flex gap-2">
         <button
           v-if="state?.state === 'NOT_TRACKING'"
-          class="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
+          class="rounded bg-slate-900 px-4 py-2 text-sm text-white"
           @click="start"
         >
           Start
         </button>
         <button
           v-if="state?.state === 'TRACKING'"
-          class="rounded bg-slate-200 px-3 py-1.5 text-sm"
+          class="rounded bg-slate-200 px-4 py-2 text-sm"
           @click="pause"
         >
           Pause
         </button>
         <button
           v-if="state?.state === 'PAUSED'"
-          class="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
+          class="rounded bg-slate-900 px-4 py-2 text-sm text-white"
           @click="resume"
         >
           Resume
         </button>
         <button
           v-if="state?.state === 'TRACKING' || state?.state === 'PAUSED'"
-          class="rounded bg-slate-200 px-3 py-1.5 text-sm"
+          class="rounded bg-slate-200 px-4 py-2 text-sm"
           @click="stop"
         >
           Stop
@@ -189,11 +182,65 @@ async function signOut() {
       </dl>
     </section>
 
-    <NuxtLink
-      to="/debug"
-      class="block text-center text-sm text-slate-500 underline"
-    >
-      Debug: today's sessions
-    </NuxtLink>
+    <section class="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 class="mb-2 text-sm font-medium text-slate-500">
+        Apps today
+      </h2>
+      <p
+        v-if="!summary?.apps.length"
+        class="text-sm text-slate-500"
+      >
+        No apps recorded yet.
+      </p>
+      <ul
+        v-else
+        class="max-h-40 space-y-1 overflow-y-auto text-sm"
+      >
+        <li
+          v-for="app in summary.apps"
+          :key="app.name"
+          class="flex justify-between gap-2"
+        >
+          <span class="truncate">{{ app.name }}</span>
+          <span class="shrink-0 tabular-nums text-slate-500">{{ formatDuration(app.seconds) }}</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 class="mb-2 text-sm font-medium text-slate-500">
+        Timeline
+      </h2>
+      <TimelineBar :segments="timeline" />
+    </section>
+
+    <footer>
+      <p
+        v-if="syncLabel"
+        class="text-center text-xs text-slate-500"
+      >
+        {{ syncLabel }}
+      </p>
+      <div
+        v-if="progress && sync?.online"
+        class="mt-2"
+      >
+        <div
+          class="h-2 overflow-hidden rounded bg-slate-200"
+          role="progressbar"
+          :aria-valuenow="progress.percent"
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <div
+            class="h-full bg-slate-700 transition-all duration-500"
+            :style="{ width: `${progress.percent}%` }"
+          />
+        </div>
+        <p class="mt-1 text-center text-xs text-slate-500">
+          Sending {{ progress.sent.toLocaleString() }} of {{ progress.total.toLocaleString() }} ({{ progress.percent }}%)
+        </p>
+      </div>
+    </footer>
   </main>
 </template>

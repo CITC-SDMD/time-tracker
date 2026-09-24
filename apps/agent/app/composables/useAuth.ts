@@ -65,5 +65,23 @@ export function useAuth() {
     return result
   }
 
-  return { me, load, login, acceptConsent, refresh, logout }
+  const loginNotice = useState<string | null>('loginNotice', () => null)
+  const signingOut = useState('signingOut', () => false)
+
+  /** Log out (sending what is waiting first), then go to the login screen. */
+  async function signOut() {
+    signingOut.value = true
+    try {
+      const result = await logout()
+      loginNotice.value = result.synced
+        ? null
+        : 'You\'re offline, your data will be sent next time you log in.'
+      await navigateTo('/login')
+    }
+    finally {
+      signingOut.value = false
+    }
+  }
+
+  return { me, load, login, acceptConsent, refresh, logout, signOut, signingOut }
 }
