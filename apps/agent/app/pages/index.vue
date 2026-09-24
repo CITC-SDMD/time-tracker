@@ -3,6 +3,9 @@ const { state, summary, timeline, status, clock, workClock, resumedNotice, error
 const { me, refresh } = useAuth()
 const { status: sync, notice, progress, dismissNotice } = useSync()
 
+// The counter Reset is a testing aid: only dev builds show it.
+const isDev = import.meta.dev
+
 const STATUS_STYLE: Record<StatusKey, string> = {
   ACTIVE: 'bg-green-500',
   IDLE: 'bg-amber-500',
@@ -152,7 +155,7 @@ onMounted(async () => {
       <h2 class="mb-2 flex items-center justify-between text-sm font-medium text-slate-500">
         <span>Today</span>
         <button
-          v-if="state?.state === 'NOT_TRACKING'"
+          v-if="isDev && state?.state === 'NOT_TRACKING'"
           class="text-xs font-normal underline"
           title="Sets these counters back to 00:00:00. Nothing is deleted."
           @click="resetCounters"
