@@ -1,9 +1,14 @@
 <script setup lang="ts">
-// Phase 0 spike screen: shows what the Rust layer detects, live.
-const { activity, events, logPath, error } = useActivity()
+// Phase 3: drives the local tracking engine directly, since there's no login screen
+// yet (Phase 2 desktop-side work) to gate this behind.
+const { state, summary, resumedNotice, error, start, pause, resume, stop } = useTracking()
 
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString()
+function formatSeconds(seconds: number | undefined) {
+  if (seconds === undefined)
+    return '—'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}m ${s}s`
 }
 </script>
 
@@ -11,88 +16,91 @@ function formatTime(iso: string) {
   <main class="mx-auto max-w-md space-y-4 p-4">
     <header>
       <h1 class="text-lg font-semibold">
-        Time Tracker — Phase 0 spike
+        Time Tracker
       </h1>
       <p class="text-sm text-slate-500">
-        Live readout from the Rust layer. Closing this window hides it to the tray.
+        Closing this window hides it to the tray; tracking keeps running.
       </p>
     </header>
 
+    <p
+      v-if="resumedNotice"
+      class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
+    >
+      Tracking resumed after the app restarted.
+    </p>
+    <p
+      v-if="error"
+      class="text-sm text-red-600"
+    >
+      {{ error }}
+    </p>
+
     <section class="rounded-lg border border-slate-200 bg-white p-4">
       <h2 class="mb-2 text-sm font-medium text-slate-500">
-        Current activity
+        Status
       </h2>
-      <p
-        v-if="error"
-        class="text-sm text-red-600"
-      >
-        {{ error }}
+      <p class="text-2xl font-semibold">
+        {{ state?.state ?? '…' }}
       </p>
-      <dl
-        v-else-if="activity"
-        class="grid grid-cols-[7rem_1fr] gap-y-1 text-sm"
-      >
+
+      <div class="mt-4 flex gap-2">
+        <button
+          v-if="state?.state === 'NOT_TRACKING'"
+          class="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
+          @click="start"
+        >
+          Start
+        </button>
+        <button
+          v-if="state?.state === 'TRACKING'"
+          class="rounded bg-slate-200 px-3 py-1.5 text-sm"
+          @click="pause"
+        >
+          Pause
+        </button>
+        <button
+          v-if="state?.state === 'PAUSED'"
+          class="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
+          @click="resume"
+        >
+          Resume
+        </button>
+        <button
+          v-if="state?.state === 'TRACKING' || state?.state === 'PAUSED'"
+          class="rounded bg-slate-200 px-3 py-1.5 text-sm"
+          @click="stop"
+        >
+          Stop
+        </button>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 class="mb-2 text-sm font-medium text-slate-500">
+        Today
+      </h2>
+      <dl class="grid grid-cols-[7rem_1fr] gap-y-1 text-sm">
         <dt class="text-slate-500">
-          Application
+          Tracked
         </dt>
-        <dd class="font-medium">
-          {{ activity.application ?? '—' }}
-        </dd>
+        <dd>{{ formatSeconds(summary?.trackedSeconds) }}</dd>
         <dt class="text-slate-500">
-          Process
+          Active
         </dt>
-        <dd>{{ activity.processName || '—' }}</dd>
-        <dt class="text-slate-500">
-          Window title
-        </dt>
-        <dd class="break-words">
-          {{ activity.windowTitle || '—' }}
-        </dd>
+        <dd>{{ formatSeconds(summary?.activeSeconds) }}</dd>
         <dt class="text-slate-500">
           Idle
         </dt>
-        <dd>{{ activity.idleSeconds }} s</dd>
+        <dd>{{ formatSeconds(summary?.idleSeconds) }}</dd>
       </dl>
-      <p
-        v-else
-        class="text-sm text-slate-500"
-      >
-        Loading…
-      </p>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-2 text-sm font-medium text-slate-500">
-        System events (lock, sleep, …)
-      </h2>
-      <ul
-        v-if="events.length"
-        class="space-y-1 text-sm"
-      >
-        <li
-          v-for="(e, i) in events"
-          :key="i"
-          class="flex justify-between"
-        >
-          <span class="font-medium">{{ e.kind }}</span>
-          <span class="text-slate-500">{{ formatTime(e.at) }}</span>
-        </li>
-      </ul>
-      <p
-        v-else
-        class="text-sm text-slate-500"
-      >
-        None yet. Try Win+L, or sleep the PC.
-      </p>
-    </section>
-
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-1 text-sm font-medium text-slate-500">
-        Background log file
-      </h2>
-      <p class="break-all font-mono text-xs">
-        {{ logPath || '…' }}
-      </p>
-    </section>
+    <NuxtLink
+      to="/debug"
+      class="block text-center text-sm text-slate-500 underline"
+    >
+      Debug: today's sessions
+    </NuxtLink>
   </main>
 </template>

@@ -1,10 +1,17 @@
 mod commands;
+mod db;
+mod logging;
 mod platform;
-mod spike;
+mod tracker;
+
+use std::sync::{Arc, Mutex};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+
+use tracker::clock::SystemClock;
+use tracker::engine::Engine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,12 +21,90 @@ pub fn run() {
             show_main_window(app);
         }))
         .invoke_handler(tauri::generate_handler![
-            commands::get_current_activity,
-            commands::get_recent_events,
-            commands::get_spike_log_path,
+            commands::start_tracking,
+            commands::pause_tracking,
+            commands::resume_tracking,
+            commands::stop_tracking,
+            commands::get_tracking_state,
+            commands::get_today_summary,
+            commands::get_today_timeline,
+            commands::get_today_sessions_debug,
         ])
         .setup(|app| {
-            spike::start(app.handle())?;
+            let log_guard = logging::init(app.handle())?;
+
+            let app_data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&app_data_dir)?;
+            let db_path = app_data_dir.join("tracker.db");
+            let db = db::Db::open(&db_path)?;
+
+            let settings = tracker::load_office_settings(&db);
+            let user_id = db
+                .get_app_state("current_user_id")
+                .expect("seeded by db::Db::open on first run");
+            let device_id = db
+                .get_app_state("device_id")
+                .expect("seeded by db::Db::open on first run");
+
+            let provider: Arc<dyn platform::ActivityProvider> = Arc::from(platform::provider());
+            let clock = Arc::new(SystemClock);
+            let mut engine = Engine::new(clock, provider, db, settings, user_id, device_id);
+
+            // Crash recovery (task 6): close anything left open by a previous run, and
+            // auto-resume if tracking was on when the app last stopped running.
+            let auto_resumed = engine.recover_on_startup();
+
+            let engine = Arc::new(Mutex::new(engine));
+            app.manage(commands::AppState {
+                engine: engine.clone(),
+                _log_guard: log_guard,
+            });
+
+            // Tick loop: every 2s, independent of window visibility (task 4).
+            let tick_engine = engine.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+                loop {
+                    interval.tick().await;
+                    let mut e = tick_engine.lock().unwrap_or_else(|e| e.into_inner());
+                    e.tick();
+                }
+            });
+
+            // Event listener (task 5): platform lock/unlock/sleep/wake/shutdown -> engine.
+            let (tx, rx) = std::sync::mpsc::channel();
+            platform::start_system_events(tx);
+            let event_engine = engine.clone();
+            std::thread::Builder::new()
+                .name("engine-events".into())
+                .spawn(move || {
+                    for sys_event in rx {
+                        let mut e = event_engine.lock().unwrap_or_else(|e| e.into_inner());
+                        e.handle_system_event(sys_event);
+                    }
+                })?;
+
+            // Once-a-day housekeeping (docs §7.4): delete SYNCED sessions and DONE queue
+            // rows older than 7 days. Unsent (OPEN/PENDING/FAILED) data is never touched.
+            // `interval()` fires immediately on the first tick too, so this also runs
+            // once per launch, not just once per 24h of continuous uptime.
+            let purge_engine = engine.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+                loop {
+                    interval.tick().await;
+                    let e = purge_engine.lock().unwrap_or_else(|e| e.into_inner());
+                    let cutoff = chrono::Utc::now().timestamp_millis() - 7 * 24 * 60 * 60 * 1000;
+                    if let Err(err) = e.db().purge_old_synced(cutoff) {
+                        tracing::error!(?err, "daily housekeeping: purge_old_synced failed");
+                    }
+                }
+            });
+
+            if auto_resumed {
+                let _ = app.handle().emit("tracking-resumed", ());
+            }
+
             setup_tray(app.handle())?;
             Ok(())
         })
