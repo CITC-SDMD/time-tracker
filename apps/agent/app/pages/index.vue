@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const { state, summary, resumedNotice, error, start, pause, resume, stop } = useTracking()
 const { me, refresh, logout } = useAuth()
-const { status: sync, notice } = useSync()
+const { status: sync, notice, dismissNotice } = useSync()
 const loginNotice = useState<string | null>('loginNotice', () => null)
 
 const loggingOut = ref(false)
@@ -79,9 +79,15 @@ function formatSeconds(seconds: number | undefined) {
 
     <p
       v-if="notice"
-      class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
+      class="flex items-start justify-between gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
     >
-      {{ notice }}
+      <span>{{ notice }}</span>
+      <button
+        class="shrink-0 underline"
+        @click="dismissNotice"
+      >
+        Dismiss
+      </button>
     </p>
 
     <p

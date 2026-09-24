@@ -22,6 +22,9 @@ export function useSync() {
   async function refresh() {
     try {
       status.value = await invoke<SyncStatus>('get_sync_status')
+      // The "please update" notice describes an ongoing condition: drop it once syncing works again.
+      if (!status.value.upgradeRequired && notice.value?.startsWith('Please update the app'))
+        notice.value = null
     }
     catch {
       // Not critical: the chip just keeps its last value.
@@ -49,5 +52,9 @@ export function useSync() {
     unlisteners.forEach(unlisten => unlisten())
   })
 
-  return { status, notice, refresh }
+  function dismissNotice() {
+    notice.value = null
+  }
+
+  return { status, notice, refresh, dismissNotice }
 }
