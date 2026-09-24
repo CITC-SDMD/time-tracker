@@ -50,7 +50,9 @@ return [
     |
     */
 
-    'expiration' => null,
+    // 30 days (docs/DEVELOPMENT_PLAN.md §9.2) — after this, the desktop app shows
+    // "Please log in again". No refresh step; a new token is just a fresh login.
+    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 60 * 24 * 30),
 
     /*
     |--------------------------------------------------------------------------

@@ -45,14 +45,20 @@ class MakeOicCommand extends Command
 
         $temporaryPassword = Str::password(16);
 
-        $oic = User::create([
-            'name' => $name,
-            'email' => $email,
-            'password' => Hash::make($temporaryPassword),
-            'role' => 'OIC',
-            'manager_id' => null,
-            'status' => 'ACTIVE',
-        ]);
+        // Explicit property assignment, not User::create([...]) — role/manager_id/
+        // status aren't Fillable (see User.php), so a mass-assignment create() would
+        // silently drop them. (This one only "worked" before by accident: MySQL's
+        // implicit ENUM default for a missing NOT NULL column is its first defined
+        // value, which happens to be 'OIC' — i.e. it was inserting the right value for
+        // the wrong reason, and would fail outright against SQLite or strict MySQL.)
+        $oic = new User;
+        $oic->name = $name;
+        $oic->email = $email;
+        $oic->password = Hash::make($temporaryPassword);
+        $oic->role = 'OIC';
+        $oic->manager_id = null;
+        $oic->status = 'ACTIVE';
+        $oic->save();
 
         $this->info("OIC account created: {$oic->email}");
         $this->warn("Temporary password: {$temporaryPassword}");

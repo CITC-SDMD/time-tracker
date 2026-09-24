@@ -830,7 +830,7 @@ PASS: only the API can reach the database.
 5. Middleware `EnsureActiveUser`: after Sanctum resolves the user, require `status = 'ACTIVE'`. `401` if unauthenticated, `403 ACCOUNT_DEACTIVATED` if deactivated.
 6. Middleware `EnsureManager` (any manager role), `EnsureOic` (settings, audit), and `EnsureSelfOrVisible($paramId)` (self, or `$paramId` in `HierarchyService::allDescendantIds()`).
 7. Routes: `POST /api/v1/auth/login`, `GET /api/v1/me`, `POST /api/v1/me/consent`, `POST/PATCH /api/v1/admin/employees`, `GET/PUT /api/v1/admin/settings`, `GET /api/v1/admin/audit`.
-8. Create account (`AdminEmployeeController@store`): validate the requested `role` is exactly one tier below the caller's own (§9.1) — otherwise `422`; create the `users` row (random unusable password, `manager_id` = caller) → `Password::sendResetLink()` → audit log entry. If the email already exists → `409`.
+8. Create account (`AdminEmployeeController@store`): validate the requested `role` is exactly one tier below the caller's own (§9.1) — otherwise `422`; create the `users` row (`manager_id` = caller) → audit log entry. If the email already exists → `409`. **Built as:** a real random temporary password, returned once in the response for the manager to hand over directly — `Password::sendResetLink()` needs a working reset-password page on the dashboard, which doesn't exist yet. Swap this for the emailed-link flow once that page is built; the interim behavior is otherwise equivalent (a one-time credential only the manager sees).
 9. Deactivate: set `status = DEACTIVATED`, `deactivated_at`, and revoke all their tokens (`$user->tokens()->delete()`) so they can't keep using an already-issued agent token. Reactivate does the reverse (no need to reissue a token — they log in again). Both gated by `EnsureSelfOrVisible` — actually here it's *not* self, just visible — a manager can deactivate anyone in their descendant set, at any depth, not only direct reports.
 10. A manager cannot deactivate themselves, and the system refuses to leave zero `ACTIVE` `OIC` rows (`400`) — the OIC-equivalent of "last admin protection."
 11. `php artisan tracker:make-oic "Name" email@office.com` — the one-time console command that creates the first account directly as OIC (§9.2), since there's no dashboard yet to do it from. Every other account descends from this one through the normal create-a-direct-report flow.
@@ -857,9 +857,8 @@ PASS: logged in.
 Test 2.2 [N] Build the hierarchy
 1. As OIC, create a Project Manager. Log in as them; create a Team Leader.
    Log in as the Team Leader; create a Developer.
-2. Check each invite's inbox (or, if mail isn't configured yet, copy the reset
-   link the dashboard shows).
-3. Set a password via each link. Log in to the desktop app with the Developer account.
+2. Note the temporary password shown in the dashboard for each account created.
+3. Log in to the desktop app with the Developer account, using that temporary password.
 Expected: every step works; the desktop login shows the consent screen.
 PASS: full 4-level chain works end to end.
 
