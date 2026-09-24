@@ -30,7 +30,8 @@ export function useActivity() {
     try {
       activity.value = await invoke<CurrentActivity>('get_current_activity')
       error.value = null
-    } catch (e) {
+    }
+    catch (e) {
       error.value = String(e)
     }
   }

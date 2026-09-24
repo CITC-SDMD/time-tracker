@@ -6,7 +6,9 @@
 <template>
   <main class="mx-auto max-w-4xl space-y-4 p-4">
     <header>
-      <h1 class="text-lg font-semibold">Overview</h1>
+      <h1 class="text-lg font-semibold">
+        Overview
+      </h1>
       <p class="text-sm text-slate-500">
         Employee status and today's totals will appear here once the API and auth are wired up
         (Phase 2 and Phase 6).

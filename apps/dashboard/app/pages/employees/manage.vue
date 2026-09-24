@@ -6,8 +6,12 @@
 <template>
   <main class="mx-auto max-w-4xl space-y-4 p-4">
     <header>
-      <h1 class="text-lg font-semibold">Manage employees</h1>
-      <p class="text-sm text-slate-500">Add, change role and deactivate employees here (Phase 2).</p>
+      <h1 class="text-lg font-semibold">
+        Manage employees
+      </h1>
+      <p class="text-sm text-slate-500">
+        Add, change role and deactivate employees here (Phase 2).
+      </p>
     </header>
   </main>
 </template>
