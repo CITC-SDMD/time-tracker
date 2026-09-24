@@ -115,7 +115,10 @@ class AdminEmployeeController extends Controller
         if ($newStatus === 'DEACTIVATED' && $employee->status !== 'DEACTIVATED') {
             $employee->status = 'DEACTIVATED';
             $employee->deactivated_at = now();
-            $employee->tokens()->delete(); // revoke any already-issued agent token immediately
+            // Agent tokens stay valid so the PC can still upload what it recorded before
+            // the deactivation (§10.1 step 4.3, Test 4.15); the `active` middleware already
+            // refuses them everywhere except /agent/sync. Any other token is revoked.
+            $employee->tokens()->where('name', 'not like', 'agent-%')->delete();
             AuditLog::record($caller, 'employee.deactivated', $employee);
         } elseif ($newStatus === 'ACTIVE' && $employee->status !== 'ACTIVE') {
             $employee->status = 'ACTIVE';

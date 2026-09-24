@@ -136,12 +136,10 @@ class EmployeeManagementTest extends TestCase
         // next request, instead of re-resolving from $devToken.
         auth()->forgetGuards();
 
-        // 401, not 403: the controller revokes the token outright on deactivation
-        // ($employee->tokens()->delete()), so Sanctum's own auth:sanctum middleware
-        // rejects it before EnsureActiveUser ever runs (unlike AuthTest's scenario,
-        // which deactivates without revoking and so gets 403 from EnsureActiveUser).
+        // Agent tokens are kept on deactivation (so unsent data can still be flushed via
+        // /agent/sync), so EnsureActiveUser is what refuses the token here.
         $this->withHeader('Authorization', "Bearer {$devToken}")
-            ->getJson('/api/v1/me')->assertStatus(401);
+            ->getJson('/api/v1/me')->assertStatus(403)->assertJsonPath('error.code', 'ACCOUNT_DEACTIVATED');
     }
 
     public function test_manager_cannot_deactivate_someone_outside_their_hierarchy(): void

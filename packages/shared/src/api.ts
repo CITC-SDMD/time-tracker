@@ -30,29 +30,41 @@ export interface Me {
   officeSettings: OfficeSettings
 }
 
-// POST /api/v1/agent/sync
+// POST /api/v1/agent/sync — headers: Authorization, X-Agent-Version, X-Device-Id (UUID).
+// Mirrors app/Http/Requests/AgentSyncRequest.php: at most 100 sessions (more -> 400
+// TOO_MANY_SESSIONS); a bad individual session is rejected with a reason, not a 4xx.
 export interface AgentSyncRequest {
   clientTime: string
-  computerName: string
-  dbReset: boolean
+  computerName: string | null
+  dbReset?: boolean
   status: {
     state: TrackingState
     currentApp: string | null
     idleAppName: string | null
-    since: string
-    trackingStartedAt: string
+    since: string | null
+    trackingStartedAt: string | null
   }
   sessions: Session[]
 }
 
+export type SyncRejectReason =
+  | 'INVALID'
+  | 'BAD_TIMES'
+  | 'BAD_DURATION'
+  | 'FUTURE'
+  | 'TOO_OLD'
+  | 'FIELD_TOO_LONG'
+  | 'OTHER_DEVICE_ACTIVE'
+  | 'ACCOUNT_DEACTIVATED'
+
 export interface AgentSyncResponse {
   accepted: string[]
   duplicates: string[]
-  rejected: Array<{ id: string; reason: string }>
+  rejected: Array<{ id: string; reason: SyncRejectReason }>
   serverTime: string
   commands: {
     stopTracking: boolean
-    stopReason: string | null
+    stopReason: 'STARTED_ON_OTHER_PC' | null
     signOut: boolean
   }
   settings: Pick<OfficeSettings, 'idleThresholdSeconds' | 'windowTitleMode'>

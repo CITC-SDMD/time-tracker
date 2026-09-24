@@ -6,6 +6,7 @@
 use App\Http\Controllers\Api\AdminAuditController;
 use App\Http\Controllers\Api\AdminEmployeeController;
 use App\Http\Controllers\Api\AdminSettingsController;
+use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\MeController;
@@ -13,6 +14,12 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::post('/auth/login', [AuthController::class, 'login']);
+
+    // No `active` here on purpose: a deactivated user's PC may still hold unsent data, and
+    // §10.1 step 4.3 has the controller accept what happened before deactivation and tell
+    // the app to sign out. Every other route below still refuses deactivated users.
+    Route::post('/agent/sync', [AgentController::class, 'sync'])
+        ->middleware(['auth:sanctum', 'check-agent-version', 'throttle:agent-sync']);
 
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('/me', [MeController::class, 'show']);

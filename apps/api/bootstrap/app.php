@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\CheckAgentVersion;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureManager;
 use App\Http\Middleware\EnsureOic;
@@ -25,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'active' => EnsureActiveUser::class,
+            'check-agent-version' => CheckAgentVersion::class,
             'manager' => EnsureManager::class,
             'oic' => EnsureOic::class,
             'self-or-visible' => EnsureSelfOrVisible::class,
