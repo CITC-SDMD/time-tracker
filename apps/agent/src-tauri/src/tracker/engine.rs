@@ -110,6 +110,15 @@ impl<C: Clock> Engine<C> {
             .map(|o| (o.id.clone(), o.kind, o.started_wall.timestamp_millis()))
     }
 
+    /// `(app_name, window_title)` of the open ACTIVE session. The title is `None` when the
+    /// office keeps app names only.
+    pub fn open_activity(&self) -> Option<(Option<String>, Option<String>)> {
+        self.open
+            .as_ref()
+            .filter(|o| o.kind == SessionKind::Active)
+            .map(|o| (o.app_name.clone(), o.window_title.clone()))
+    }
+
     /// `(active_ms, idle_ms)` of the open session as shown live on screen. An idle session
     /// is stored back-dated to the last input, but on screen the idle counter starts at
     /// one second when idle is noticed; the stretch before that still counts as active.

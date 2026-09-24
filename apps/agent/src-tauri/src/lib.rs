@@ -3,17 +3,19 @@ mod auth;
 mod commands;
 mod db;
 mod logging;
+mod notify;
 mod platform;
 mod sync;
 #[cfg(test)]
 mod testutil;
 mod tracker;
+mod tray;
+mod view;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tracker::clock::SystemClock;
 use tracker::engine::Engine;
@@ -25,7 +27,18 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            // Started by Windows at login, the app stays in the tray instead of opening a window.
+            Some(vec!["--hidden"]),
+        ))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            commands::get_launch_at_startup,
+            commands::set_launch_at_startup,
+            commands::open_log_folder,
+            commands::get_app_version,
             commands::login,
             commands::logout,
             commands::get_session,
@@ -132,9 +145,24 @@ pub fn run() {
 
             if auto_resumed {
                 let _ = app.handle().emit("tracking-resumed", ());
+                notify::notice(app.handle(), "Tracking resumed after the app restarted.");
             }
 
-            setup_tray(app.handle())?;
+            tray::setup(app.handle())?;
+            spawn_presenter(app.handle().clone());
+
+            // Launch at startup is on by default: turned on once, on the first run of an
+            // installed build (a dev build must not register itself). After that the
+            // Settings switch decides.
+            let first_run = engine_first_run(&engine);
+            if first_run && !cfg!(debug_assertions) {
+                let _ = app.autolaunch().enable();
+            }
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -148,38 +176,51 @@ pub fn run() {
         .expect("error while running the Time Tracker app");
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-
-    let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("Time Tracker")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => show_main_window(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+/// True once, on the very first run of this database.
+fn engine_first_run(engine: &Arc<Mutex<Engine<SystemClock>>>) -> bool {
+    let e = engine.lock().unwrap_or_else(|e| e.into_inner());
+    if e.db().get_app_state("autostart_initialized").is_some() {
+        return false;
     }
-    tray.build(app)?;
-    Ok(())
+    let _ = e.db().set_app_state("autostart_initialized", "1");
+    true
 }
 
-fn show_main_window(app: &AppHandle) {
+/// The one place that notices the tracking state or the app in front changing, wherever
+/// the change came from (a button, the tray, a lock event, the server). It tells the
+/// screen and updates the tray.
+fn spawn_presenter(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut last: Option<(&'static str, Option<String>, bool)> = None;
+        loop {
+            interval.tick().await;
+            let state = app.state::<commands::AppState>();
+            let can_start = commands::can_track(&state.session.lock().unwrap_or_else(|e| e.into_inner()));
+            let snapshot = state
+                .engine
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .status_snapshot();
+            let now = (snapshot.state, snapshot.current_app.clone(), can_start);
+            if last.as_ref() == Some(&now) {
+                continue;
+            }
+            if last.as_ref().map(|l| (l.0, l.2)) != Some((now.0, now.2)) {
+                tray::update(&app, &tray::tray_view(snapshot.state, can_start));
+            }
+            if last.as_ref().map(|l| l.0) != Some(now.0) {
+                let _ = app.emit("tracking-state-changed", snapshot.state);
+            }
+            if last.as_ref().map(|l| &l.1) != Some(&now.1) {
+                let _ = app.emit("activity-changed", &snapshot.current_app);
+            }
+            last = Some(now);
+        }
+    });
+}
+
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();

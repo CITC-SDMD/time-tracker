@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use chrono::TimeZone;
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 use tracing_appender::non_blocking::WorkerGuard;
 
+use crate::view::{build_app_list, build_timeline, AppTimeDto, SegmentDto};
 use crate::api::{ApiClient, ApiError, MeDto};
 use crate::sync::worker::{flush, SyncHandle};
 use crate::tracker::clock::SystemClock;
@@ -78,6 +80,20 @@ fn remember_me(engine: &mut Engine<SystemClock>, me: &MeDto) {
 
 fn api_error_string(err: ApiError) -> String {
     err.code()
+}
+
+/// Stops tracking, then tries to send everything within `max`. Returns the user id whose
+/// data was sent. Used by log out and by quitting from the tray.
+pub async fn stop_and_flush(state: &AppState, max: std::time::Duration) -> Result<String, String> {
+    let user_id = {
+        let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+        engine.stop();
+        engine.user_id().to_owned()
+    };
+    if let Some(token) = auth::load_token() {
+        let _ = flush(&state.sync, &state.engine, &state.api, &token, &user_id, max).await;
+    }
+    Ok(user_id)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,22 +171,7 @@ pub async fn accept_consent(state: State<'_, AppState>) -> Result<MeDto, String>
 /// keyed to this user and goes out the next time they log in.
 #[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> Result<LogoutDto, String> {
-    let user_id = {
-        let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
-        engine.stop();
-        engine.user_id().to_owned()
-    };
-    if let Some(token) = auth::load_token() {
-        let _ = flush(
-            &state.sync,
-            &state.engine,
-            &state.api,
-            &token,
-            &user_id,
-            std::time::Duration::from_secs(30),
-        )
-        .await;
-    }
+    let user_id = stop_and_flush(&state, std::time::Duration::from_secs(30)).await?;
     let pending_count = state
         .engine
         .lock()
@@ -228,6 +229,14 @@ pub struct TodaySummaryDto {
     pub idle_ms: i64,
     /// `ACTIVE` or `IDLE` while a session is open and counting, else `None`.
     pub live_kind: Option<&'static str>,
+    /// Time per app since the counters' start point, most first.
+    pub apps: Vec<AppTimeDto>,
+    /// What is in front right now (only while tracking and not idle). The title is `None`
+    /// when the office keeps app names only.
+    pub current_app: Option<String>,
+    pub current_title: Option<String>,
+    /// When this tracking run began (Start), for the work-period timer.
+    pub work_started_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -379,10 +388,19 @@ pub fn get_today_summary(state: State<'_, AppState>) -> Result<TodaySummaryDto, 
         SessionKind::Idle => "IDLE",
     });
 
+    let open_activity = engine.open_activity();
+    let (current_app, current_title) = open_activity.clone().unwrap_or((None, None));
+    let open_app = current_app.as_deref().map(|name| (name, open_active_ms));
+    let apps = build_app_list(&rows, open_app);
+
     Ok(TodaySummaryDto {
         active_ms,
         idle_ms,
         live_kind,
+        apps,
+        current_app,
+        current_title,
+        work_started_at: engine.status_snapshot().tracking_started_at.map(|t| t.timestamp_millis()),
     })
 }
 
@@ -401,13 +419,48 @@ pub fn reset_today_counters(state: State<'_, AppState>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Phase 3 returns raw per-chunk sessions here, same shape as `get_today_sessions_debug`.
-/// Merging adjacent same-app 10-minute chunks into single visual timeline blocks is a
-/// Phase 5+ dashboard concern -- not built now.
+/// Today's sessions as display blocks: adjacent same-app chunks merged, idle labelled
+/// "Idle (in <app>)". Covers the whole day; the counters' Reset does not affect it.
 #[tauri::command]
-pub fn get_today_timeline(state: State<'_, AppState>) -> Result<Vec<SessionDto>, String> {
+pub fn get_today_timeline(state: State<'_, AppState>) -> Result<Vec<SegmentDto>, String> {
     let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
-    today_sessions(&engine)
+    let (start_ms, end_ms) = today_range_ms();
+    let rows = engine
+        .db()
+        .sessions_for_range(engine.user_id(), start_ms, end_ms + 1)
+        .map_err(|e| e.to_string())?;
+    Ok(build_timeline(&rows, end_ms))
+}
+
+#[tauri::command]
+pub fn get_launch_at_startup(app: AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn set_launch_at_startup(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let launcher = app.autolaunch();
+    if enabled {
+        launcher.enable().map_err(|e| e.to_string())
+    } else {
+        launcher.disable().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("explorer")
+        .arg(&dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
 }
 
 #[tauri::command]

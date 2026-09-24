@@ -370,10 +370,10 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
             match report.outcome {
                 Outcome::NeedsLogin => {
                     end_session(&state);
-                    let _ = app.emit("notice", "Please log in again.");
+                    crate::notify::notice(&app, "Please log in again.");
                 }
                 Outcome::UpgradeRequired => {
-                    let _ = app.emit("notice", "Please update the app. Tracking keeps working, and your data is sent after the update.");
+                    crate::notify::notice(&app, "Please update the app. Tracking keeps working, and your data is sent after the update.");
                 }
                 _ => {}
             }
@@ -382,12 +382,12 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
                     Some("STARTED_ON_OTHER_PC") => "Tracking was started on another computer.",
                     _ => "Tracking was stopped by the server.",
                 };
-                let _ = app.emit("notice", message);
+                crate::notify::notice(&app, message);
                 let _ = app.emit("tracking-stopped", ());
             }
             if report.sign_out {
                 end_session(&state);
-                let _ = app.emit("notice", "Your account was deactivated. You have been signed out.");
+                crate::notify::notice(&app, "Your account was deactivated. You have been signed out.");
             }
         }
     });

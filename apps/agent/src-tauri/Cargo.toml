@@ -29,6 +29,9 @@ tracing-appender = "0.2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 # Windows Credential Manager; on other OSes the crate falls back to an in-memory mock store.
 keyring = { version = "3", features = ["windows-native"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
