@@ -19,11 +19,11 @@ use crate::tracker::engine::Engine;
 use crate::tracker::load_office_settings;
 
 pub const BATCH_SIZE: usize = 100;
-pub const MAX_BATCHES_PER_CYCLE: usize = 20;
+pub const MAX_BATCHES_PER_CYCLE: usize = 300;
+/// Gap between full batches: the server allows 30 requests a minute (docs §10.3), and 2.2s
+/// apart is 27 a minute, so a big backlog goes out non-stop without ever being throttled.
+const BATCH_PACE: Duration = Duration::from_millis(2200);
 const NORMAL_INTERVAL: Duration = Duration::from_secs(120);
-/// After a full 20-batch pass with more waiting: a pass uses 20 of the server's 30
-/// requests per minute, so wait out that minute rather than the full 2.
-const BACKLOG_INTERVAL: Duration = Duration::from_secs(65);
 const OFFLINE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,8 +46,6 @@ pub struct CycleReport {
     pub stop_tracking: bool,
     pub stop_reason: Option<String>,
     pub sign_out: bool,
-    /// The pass hit its 20-batch cap with more still waiting.
-    pub more_waiting: bool,
     /// The state that was reported to the server in the last request.
     pub reported_state: &'static str,
 }
@@ -64,13 +62,16 @@ fn computer_name() -> Option<String> {
     std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty())
 }
 
-/// Sends everything that is due for `user_id`, batch by batch (up to 20 batches), always
-/// including the current status. Sessions of any other user are left untouched.
+/// Sends everything that is due for `user_id`, batch by batch without stopping until the
+/// queue is empty, always including the current status. `pace` is the gap left between
+/// full batches to stay under the server's rate limit. Sessions of any other user are
+/// left untouched.
 pub async fn sync_cycle<C>(
     engine: &Arc<Mutex<Engine<C>>>,
     api: &ApiClient,
     token: &str,
     user_id: &str,
+    pace: Duration,
 ) -> CycleReport
 where
     C: Clock + Send + Sync + 'static,
@@ -81,7 +82,6 @@ where
         stop_tracking: false,
         stop_reason: None,
         sign_out: false,
-        more_waiting: false,
         reported_state: "NOT_TRACKING",
     };
 
@@ -141,7 +141,7 @@ where
                 if rows.len() < BATCH_SIZE {
                     break;
                 }
-                report.more_waiting = batch == MAX_BATCHES_PER_CYCLE - 1;
+                tokio::time::sleep(pace).await;
             }
             Err(err) => {
                 report.outcome = match &err {
@@ -295,7 +295,7 @@ where
     let attempt = async {
         let _cycle = handle.cycle.lock().await;
         let _ = lock(engine).db().make_pending_due(user_id, now_ms());
-        sync_cycle(engine, api, token, user_id).await
+        sync_cycle(engine, api, token, user_id, BATCH_PACE).await
     };
     tokio::time::timeout(limit, attempt).await.ok()
 }
@@ -307,16 +307,9 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
     tauri::async_runtime::spawn(async move {
         let mut offline = false;
         let mut last_reported_state = "";
-        let mut backlog_left = false;
 
         loop {
-            let wait = if offline {
-                OFFLINE_HEALTH_INTERVAL
-            } else if backlog_left {
-                BACKLOG_INTERVAL
-            } else {
-                NORMAL_INTERVAL
-            };
+            let wait = if offline { OFFLINE_HEALTH_INTERVAL } else { NORMAL_INTERVAL };
             tokio::select! {
                 _ = handle.notify.notified() => {}
                 _ = tokio::time::sleep(wait) => {}
@@ -353,12 +346,11 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
                 continue;
             }
 
-            let report = sync_cycle(&state.engine, &state.api, &token, &user_id).await;
+            let report = sync_cycle(&state.engine, &state.api, &token, &user_id, BATCH_PACE).await;
             if report.outcome == Outcome::Ok {
                 last_reported_state = report.reported_state;
             }
             offline = report.outcome == Outcome::Offline;
-            backlog_left = report.more_waiting;
 
             let status = handle.update(|s| {
                 s.online = report.outcome != Outcome::Offline;
@@ -478,7 +470,7 @@ mod tests {
         let server = MockServer::start(vec![(200, ok_body(&ids, &[], &[], NO_COMMANDS))]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(report.outcome, Outcome::Ok);
         assert_eq!(report.sent, 3);
@@ -503,7 +495,7 @@ mod tests {
         let server = MockServer::start(vec![(200, body)]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        sync_cycle(&engine, &api, "tok", USER).await;
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(pending(&engine), 0);
         let rows = lock(&engine).db().sessions_for_range(USER, 0, i64::MAX).unwrap();
@@ -519,7 +511,7 @@ mod tests {
         queue(&engine, USER, 2);
         let api = ApiClient::new(&dead_root().await, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(report.outcome, Outcome::Offline);
         assert_eq!(pending(&engine), 2);
@@ -537,7 +529,7 @@ mod tests {
         let server = MockServer::start(vec![(401, error("UNAUTHENTICATED"))]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "old", USER).await;
+        let report = sync_cycle(&engine, &api, "old", USER, Duration::ZERO).await;
 
         assert_eq!(report.outcome, Outcome::NeedsLogin);
         assert_eq!(pending(&engine), 2);
@@ -551,7 +543,7 @@ mod tests {
         let server = MockServer::start(vec![(426, error("UPGRADE_REQUIRED"))]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(report.outcome, Outcome::UpgradeRequired);
         assert_eq!(pending(&engine), 2);
@@ -565,7 +557,7 @@ mod tests {
             let server = MockServer::start(vec![(status, body)]).await;
             let api = ApiClient::new(&server.root, "dev");
 
-            let report = sync_cycle(&engine, &api, "tok", USER).await;
+            let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
             assert_eq!(report.outcome, Outcome::RetryLater(code.into()));
             assert_eq!(pending(&engine), 2);
@@ -581,7 +573,7 @@ mod tests {
         let server = MockServer::start(vec![(200, ok_body(&mine, &[], &[], NO_COMMANDS))]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        sync_cycle(&engine, &api, "tok", USER).await;
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         let body = body_of(&server.request(0));
         assert_eq!(body["sessions"].as_array().unwrap().len(), 1);
@@ -591,41 +583,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_long_backlog_is_sent_in_batches_of_100_up_to_20_per_cycle() {
+    async fn a_long_backlog_goes_out_in_one_continuous_run_of_batches_of_100() {
         let engine = engine();
         let ids = queue(&engine, USER, 3000);
         let responses = ids
             .chunks(BATCH_SIZE)
-            .take(MAX_BATCHES_PER_CYCLE)
             .map(|chunk| (200, ok_body(chunk, &[], &[], NO_COMMANDS)))
             .collect();
         let server = MockServer::start(responses).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(report.outcome, Outcome::Ok);
-        assert_eq!(server.request_count(), MAX_BATCHES_PER_CYCLE);
-        assert_eq!(report.sent, 2000);
-        assert_eq!(pending(&engine), 1000);
-        assert!(report.more_waiting, "the worker should come back sooner than 2 minutes");
+        assert_eq!(server.request_count(), 30);
+        assert_eq!(report.sent, 3000);
+        assert_eq!(pending(&engine), 0);
     }
 
     #[tokio::test]
-    async fn a_pass_that_empties_the_queue_is_not_marked_as_having_more_waiting() {
+    async fn full_batches_are_spaced_by_the_pace_and_the_last_one_is_not_delayed() {
         let engine = engine();
-        let ids = queue(&engine, USER, 200);
+        let ids = queue(&engine, USER, 250);
         let server = MockServer::start(vec![
             (200, ok_body(&ids[..100], &[], &[], NO_COMMANDS)),
-            (200, ok_body(&ids[100..], &[], &[], NO_COMMANDS)),
-            (200, ok_body(&[], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&ids[100..200], &[], &[], NO_COMMANDS)),
+            (200, ok_body(&ids[200..], &[], &[], NO_COMMANDS)),
         ])
         .await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let started = std::time::Instant::now();
+        sync_cycle(&engine, &api, "tok", USER, Duration::from_millis(300)).await;
+        let elapsed = started.elapsed();
 
-        assert!(!report.more_waiting);
+        // Two full batches, so two gaps; the final partial batch adds none.
+        assert!(elapsed >= Duration::from_millis(600), "took {elapsed:?}");
+        assert!(elapsed < Duration::from_millis(900), "took {elapsed:?}");
         assert_eq!(pending(&engine), 0);
     }
 
@@ -640,7 +634,7 @@ mod tests {
         .await;
         let api = ApiClient::new(&server.root, "dev");
 
-        sync_cycle(&engine, &api, "tok", USER).await;
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert_eq!(server.request_count(), 2);
         assert_eq!(pending(&engine), 0);
@@ -654,7 +648,7 @@ mod tests {
         let server = MockServer::start(vec![(200, ok_body(&[], &[], &[], commands))]).await;
         let api = ApiClient::new(&server.root, "dev");
 
-        let report = sync_cycle(&engine, &api, "tok", USER).await;
+        let report = sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
 
         assert!(report.stop_tracking);
         assert!(report.sign_out);
