@@ -326,12 +326,23 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
                 let e = lock(&state.engine);
                 (e.status_snapshot().state, e.db().pending_count(&user_id).unwrap_or(0))
             };
-            if snapshot_state == "NOT_TRACKING" && pending == 0 && last_reported_state == "NOT_TRACKING" {
+            // (Not while a warning is showing: this pass is what clears it, e.g. right after logging in again.)
+            let warning_showing = {
+                let s = handle.status();
+                s.needs_login || s.upgrade_required
+            };
+            if snapshot_state == "NOT_TRACKING"
+                && pending == 0
+                && last_reported_state == "NOT_TRACKING"
+                && !warning_showing
+            {
                 continue;
             }
 
             let report = sync_cycle(&state.engine, &state.api, &token, &user_id).await;
-            last_reported_state = report.reported_state;
+            if report.outcome == Outcome::Ok {
+                last_reported_state = report.reported_state;
+            }
             offline = report.outcome == Outcome::Offline;
 
             let status = handle.update(|s| {
