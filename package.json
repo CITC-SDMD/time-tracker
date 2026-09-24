@@ -1,0 +1,10 @@
+{
+  "name": "time-tracker",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "dev:agent": "pnpm --filter agent tauri dev",
+    "build:agent": "pnpm --filter agent tauri build",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

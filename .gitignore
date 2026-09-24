@@ -1,0 +1,23 @@
+node_modules/
+.nuxt/
+.output/
+.data/
+dist/
+.wrangler/
+target/
+
+# Environment files (keep the examples)
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Logs
+*.log
