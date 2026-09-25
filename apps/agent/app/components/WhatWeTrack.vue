@@ -1,10 +1,3 @@
-<script setup lang="ts">
-// Wording follows docs/DEVELOPMENT_PLAN.md §16. Shown on the consent screen and in Settings.
-const { me } = useAuth()
-
-const titlesTracked = computed(() => me.value?.officeSettings.windowTitleMode !== 'APP_ONLY')
-</script>
-
 <template>
   <section class="rounded-lg border border-slate-200 bg-white p-4 text-sm">
     <h2 class="mb-1 font-medium">
@@ -47,3 +40,10 @@ const titlesTracked = computed(() => me.value?.officeSettings.windowTitleMode !=
     </p>
   </section>
 </template>
+
+<script setup lang="ts">
+// Wording follows docs/DEVELOPMENT_PLAN.md §16. Shown on the consent screen and in Settings.
+const { me } = useAuth()
+
+const titlesTracked = computed(() => me.value?.officeSettings.windowTitleMode !== 'app_only')
+</script>

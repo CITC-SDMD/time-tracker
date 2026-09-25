@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 // Mirrors the Rust DTOs in src-tauri/src/commands.rs and view.rs.
-export type TrackingStateValue = 'NOT_TRACKING' | 'TRACKING' | 'PAUSED' | 'AWAY'
+export type TrackingStateValue = 'not_tracking' | 'tracking' | 'paused' | 'away'
 
 export interface TrackingStateDto {
   state: TrackingStateValue
@@ -19,7 +19,7 @@ export interface AppTimeDto {
 export interface TodaySummaryDto {
   activeMs: number
   idleMs: number
-  liveKind: 'ACTIVE' | 'IDLE' | null
+  liveKind: 'active' | 'idle' | null
   apps: AppTimeDto[]
   currentApp: string | null
   currentTitle: string | null
@@ -27,7 +27,7 @@ export interface TodaySummaryDto {
 }
 
 export interface SegmentDto {
-  kind: 'ACTIVE' | 'IDLE'
+  kind: 'active' | 'idle'
   label: string
   startedAt: number
   endedAt: number
@@ -52,19 +52,19 @@ export function formatDuration(totalSeconds: number): string {
   return `${s} s`
 }
 
-export type StatusKey = 'ACTIVE' | 'IDLE' | 'PAUSED' | 'AWAY' | 'NOT_TRACKING'
+export type StatusKey = 'active' | 'idle' | 'paused' | 'away' | 'not_tracking'
 
 export const STATUS_LABEL: Record<StatusKey, string> = {
-  ACTIVE: 'Active',
-  IDLE: 'Idle',
-  PAUSED: 'Paused',
-  AWAY: 'Away',
-  NOT_TRACKING: 'Not tracking',
+  active: 'Active',
+  idle: 'Idle',
+  paused: 'Paused',
+  away: 'Away',
+  not_tracking: 'Not tracking',
 }
 
 export interface SessionDto {
   id: string
-  sessionType: 'APPLICATION' | 'IDLE'
+  sessionType: 'application' | 'idle'
   appName: string | null
   idleAppName: string | null
   startedAt: number
@@ -92,14 +92,14 @@ export function useTracking() {
 
   const status = computed<StatusKey>(() => {
     switch (state.value?.state) {
-      case 'TRACKING':
-        return summary.value?.liveKind === 'IDLE' ? 'IDLE' : 'ACTIVE'
-      case 'PAUSED':
-        return 'PAUSED'
-      case 'AWAY':
-        return 'AWAY'
+      case 'tracking':
+        return summary.value?.liveKind === 'idle' ? 'idle' : 'active'
+      case 'paused':
+        return 'paused'
+      case 'away':
+        return 'away'
       default:
-        return 'NOT_TRACKING'
+        return 'not_tracking'
     }
   })
 
@@ -108,8 +108,8 @@ export function useTracking() {
     if (!s)
       return null
     const running = now.value - fetchedAt.value
-    const activeMs = s.activeMs + (s.liveKind === 'ACTIVE' ? running : 0)
-    const idleMs = s.idleMs + (s.liveKind === 'IDLE' ? running : 0)
+    const activeMs = s.activeMs + (s.liveKind === 'active' ? running : 0)
+    const idleMs = s.idleMs + (s.liveKind === 'idle' ? running : 0)
     return {
       active: formatClock(activeMs / 1000),
       idle: formatClock(idleMs / 1000),
@@ -120,7 +120,7 @@ export function useTracking() {
   /** Time since Start, while a tracking run is on. */
   const workClock = computed(() => {
     const started = summary.value?.workStartedAt
-    if (!started || state.value?.state === 'NOT_TRACKING')
+    if (!started || state.value?.state === 'not_tracking')
       return null
     return formatClock((now.value - started) / 1000)
   })

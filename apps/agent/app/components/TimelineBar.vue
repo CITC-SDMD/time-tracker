@@ -1,39 +1,3 @@
-<script setup lang="ts">
-import type { SegmentDto } from '~/composables/useTracking'
-
-const props = defineProps<{ segments: SegmentDto[] }>()
-
-const PALETTE = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16', '#ef4444']
-const IDLE_COLOUR = '#cbd5e1'
-
-// The same app always gets the same colour.
-function colourFor(segment: SegmentDto) {
-  if (segment.kind === 'IDLE')
-    return IDLE_COLOUR
-  let hash = 0
-  for (const ch of segment.label)
-    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  return PALETTE[hash % PALETTE.length]
-}
-
-const span = computed(() => {
-  const first = props.segments[0]
-  const last = props.segments[props.segments.length - 1]
-  return first && last ? Math.max(1, last.endedAt - first.startedAt) : 1
-})
-
-const bars = computed(() =>
-  props.segments.map(s => ({
-    ...s,
-    colour: colourFor(s),
-    // A sliver of a block still gets a visible sliver of the bar.
-    width: Math.max(0.4, ((s.endedAt - s.startedAt) / span.value) * 100),
-  })),
-)
-
-const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-</script>
-
 <template>
   <div>
     <p
@@ -76,3 +40,39 @@ const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digi
     </template>
   </div>
 </template>
+
+<script setup lang="ts">
+import type { SegmentDto } from '~/composables/useTracking'
+
+const props = defineProps<{ segments: SegmentDto[] }>()
+
+const PALETTE = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16', '#ef4444']
+const IDLE_COLOUR = '#cbd5e1'
+
+// The same app always gets the same colour.
+function colourFor(segment: SegmentDto) {
+  if (segment.kind === 'idle')
+    return IDLE_COLOUR
+  let hash = 0
+  for (const ch of segment.label)
+    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return PALETTE[hash % PALETTE.length]
+}
+
+const span = computed(() => {
+  const first = props.segments[0]
+  const last = props.segments[props.segments.length - 1]
+  return first && last ? Math.max(1, last.endedAt - first.startedAt) : 1
+})
+
+const bars = computed(() =>
+  props.segments.map(s => ({
+    ...s,
+    colour: colourFor(s),
+    // A sliver of a block still gets a visible sliver of the bar.
+    width: Math.max(0.4, ((s.endedAt - s.startedAt) / span.value) * 100),
+  })),
+)
+
+const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+</script>

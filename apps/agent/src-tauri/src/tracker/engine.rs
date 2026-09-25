@@ -75,12 +75,12 @@ impl<C: Clock> Engine<C> {
     pub fn status_snapshot(&self) -> StatusSnapshot {
         let (state, current_app, idle_app_name) = match (self.state, self.open.as_ref()) {
             (TrackingState::Tracking, Some(o)) if o.kind == SessionKind::Idle => {
-                ("IDLE", None, o.idle_app_name.clone())
+                ("idle", None, o.idle_app_name.clone())
             }
-            (TrackingState::Tracking, open) => ("ACTIVE", open.and_then(|o| o.app_name.clone()), None),
-            (TrackingState::Paused, _) => ("PAUSED", None, None),
-            (TrackingState::Away, _) => ("AWAY", None, None),
-            (TrackingState::NotTracking, _) => ("NOT_TRACKING", None, None),
+            (TrackingState::Tracking, open) => ("active", open.and_then(|o| o.app_name.clone()), None),
+            (TrackingState::Paused, _) => ("paused", None, None),
+            (TrackingState::Away, _) => ("away", None, None),
+            (TrackingState::NotTracking, _) => ("not_tracking", None, None),
         };
         StatusSnapshot {
             state,
@@ -858,17 +858,17 @@ mod tests {
     fn status_snapshot_follows_the_state_machine() {
         let (mut engine, clock, provider) = engine_with(300, (Some(app("VSCode")), 0));
         let snapshot = engine.status_snapshot();
-        assert_eq!(snapshot.state, "NOT_TRACKING");
+        assert_eq!(snapshot.state, "not_tracking");
         assert!(snapshot.tracking_started_at.is_none());
 
         engine.start();
         let snapshot = engine.status_snapshot();
-        assert_eq!(snapshot.state, "ACTIVE");
+        assert_eq!(snapshot.state, "active");
         assert_eq!(snapshot.current_app.as_deref(), Some("VSCode"));
         let started = snapshot.tracking_started_at.expect("set when tracking begins");
 
         engine.pause();
-        assert_eq!(engine.status_snapshot().state, "PAUSED");
+        assert_eq!(engine.status_snapshot().state, "paused");
         clock.advance(Duration::from_secs(5));
         provider.set(Some(app("VSCode")), 0);
         engine.resume();
@@ -876,7 +876,7 @@ mod tests {
         assert_eq!(engine.status_snapshot().tracking_started_at, Some(started));
 
         engine.stop();
-        assert_eq!(engine.status_snapshot().state, "NOT_TRACKING");
+        assert_eq!(engine.status_snapshot().state, "not_tracking");
         assert!(engine.status_snapshot().tracking_started_at.is_none());
     }
 

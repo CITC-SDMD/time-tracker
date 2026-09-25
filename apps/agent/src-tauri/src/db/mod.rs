@@ -7,9 +7,12 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
-/// (schema_version, migration SQL). Only one migration exists so far; future ones are
+/// (schema_version, migration SQL). Future ones are
 /// appended here and applied in order, each preceded by a `tracker.db.bak` copy.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("migrations/001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/001_init.sql")),
+    (2, include_str!("migrations/002_lowercase_enums.sql")),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionType {
@@ -20,14 +23,14 @@ pub enum SessionType {
 impl SessionType {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Application => "APPLICATION",
-            Self::Idle => "IDLE",
+            Self::Application => "application",
+            Self::Idle => "idle",
         }
     }
 
     fn from_str(s: &str) -> Self {
         match s {
-            "IDLE" => Self::Idle,
+            "idle" => Self::Idle,
             _ => Self::Application,
         }
     }
@@ -506,6 +509,39 @@ pub fn retry_delay_ms(attempts: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_two_lowercases_stored_enum_values() {
+        // a database as an older build left it: migration 1 only, with uppercase values
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/001_init.sql")).unwrap();
+        conn.execute_batch(
+            r#"INSERT INTO sessions (id, user_id, device_id, session_type, app_name, started_at, last_seen_at, sync_status, created_at)
+                 VALUES ('a', '1', 'd', 'APPLICATION', 'Code', 1, 1, 'SYNCED', 1),
+                        ('b', '1', 'd', 'IDLE', NULL, 2, 2, 'PENDING', 2);
+               INSERT INTO sync_queue (entity_type, entity_id, user_id, payload, next_attempt_at, created_at)
+                 VALUES ('SESSION', 'b', '1', '{"id":"b","type":"IDLE","appName":null}', 0, 0);
+               INSERT INTO app_state (key, value) VALUES
+                 ('me_json', '{"id":"1","role":"DEVELOPER","status":"DEACTIVATED","officeSettings":{"windowTitleMode":"APP_ONLY"}}'),
+                 ('office_settings_json', '{"idleThresholdSeconds":300,"windowTitleMode":"FULL"}');"#,
+        )
+        .unwrap();
+
+        conn.execute_batch(include_str!("migrations/002_lowercase_enums.sql")).unwrap();
+
+        let types: Vec<String> = conn
+            .prepare("SELECT session_type FROM sessions ORDER BY id").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(types, ["application", "idle"]);
+        let payload: String = conn.query_row("SELECT payload FROM sync_queue", [], |r| r.get(0)).unwrap();
+        assert!(payload.contains(r#""type":"idle""#), "{payload}");
+        let me: String = conn.query_row("SELECT value FROM app_state WHERE key = 'me_json'", [], |r| r.get(0)).unwrap();
+        assert!(me.contains(r#""role":"developer""#) && me.contains(r#""status":"inactive""#) && me.contains(r#""windowTitleMode":"app_only""#), "{me}");
+        let office: String = conn.query_row("SELECT value FROM app_state WHERE key = 'office_settings_json'", [], |r| r.get(0)).unwrap();
+        assert!(office.contains(r#""windowTitleMode":"full""#), "{office}");
+        // the new check constraint only accepts the lowercase values
+        assert!(conn.execute("UPDATE sessions SET session_type = 'IDLE' WHERE id = 'a'", []).is_err());
+    }
 
     fn closed_session(db: &Db, user_id: &str) -> String {
         let id = db

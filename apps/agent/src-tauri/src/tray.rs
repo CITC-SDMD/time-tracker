@@ -35,20 +35,20 @@ pub struct TrayView {
 
 pub fn tray_view(state: &str, can_start: bool) -> TrayView {
     let (kind, tooltip) = match state {
-        "ACTIVE" => (TrayKind::Active, "Time Tracker: tracking"),
-        "IDLE" => (TrayKind::Idle, "Time Tracker: idle"),
-        "PAUSED" => (TrayKind::Paused, "Time Tracker: paused"),
-        "AWAY" => (TrayKind::Off, "Time Tracker: away"),
+        "active" => (TrayKind::Active, "Time Tracker: tracking"),
+        "idle" => (TrayKind::Idle, "Time Tracker: idle"),
+        "paused" => (TrayKind::Paused, "Time Tracker: paused"),
+        "away" => (TrayKind::Off, "Time Tracker: away"),
         _ => (TrayKind::Off, "Time Tracker: not tracking"),
     };
-    let tracking = matches!(state, "ACTIVE" | "IDLE");
+    let tracking = matches!(state, "active" | "idle");
     TrayView {
         kind,
         tooltip,
-        start: state == "NOT_TRACKING" && can_start,
+        start: state == "not_tracking" && can_start,
         pause: tracking,
-        resume: state == "PAUSED",
-        stop: tracking || matches!(state, "PAUSED" | "AWAY"),
+        resume: state == "paused",
+        stop: tracking || matches!(state, "paused" | "away"),
     }
 }
 
@@ -204,14 +204,14 @@ mod tests {
 
     #[test]
     fn each_state_has_its_own_colour_and_tooltip() {
-        let states = ["ACTIVE", "IDLE", "PAUSED", "NOT_TRACKING"];
+        let states = ["active", "idle", "paused", "not_tracking"];
         let icons: Vec<_> = states.iter().map(|s| paint_icon(tray_view(s, true).kind)).collect();
         for i in 0..icons.len() {
             for j in (i + 1)..icons.len() {
                 assert_ne!(icons[i], icons[j], "{} and {} look the same", states[i], states[j]);
             }
         }
-        assert_eq!(tray_view("ACTIVE", true).tooltip, "Time Tracker: tracking");
+        assert_eq!(tray_view("active", true).tooltip, "Time Tracker: tracking");
     }
 
     #[test]
@@ -225,21 +225,21 @@ mod tests {
 
     #[test]
     fn menu_items_follow_the_state() {
-        let v = tray_view("NOT_TRACKING", true);
+        let v = tray_view("not_tracking", true);
         assert_eq!((v.start, v.pause, v.resume, v.stop), (true, false, false, false));
-        let v = tray_view("ACTIVE", true);
+        let v = tray_view("active", true);
         assert_eq!((v.start, v.pause, v.resume, v.stop), (false, true, false, true));
-        let v = tray_view("IDLE", true);
+        let v = tray_view("idle", true);
         assert_eq!((v.start, v.pause, v.resume, v.stop), (false, true, false, true));
-        let v = tray_view("PAUSED", true);
+        let v = tray_view("paused", true);
         assert_eq!((v.start, v.pause, v.resume, v.stop), (false, false, true, true));
-        let v = tray_view("AWAY", true);
+        let v = tray_view("away", true);
         assert_eq!((v.start, v.pause, v.resume, v.stop), (false, false, false, true));
     }
 
     #[test]
     fn start_needs_a_login_with_consent() {
-        assert!(!tray_view("NOT_TRACKING", false).start);
-        assert!(tray_view("NOT_TRACKING", true).start);
+        assert!(!tray_view("not_tracking", false).start);
+        assert!(tray_view("not_tracking", true).start);
     }
 }

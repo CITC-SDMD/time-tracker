@@ -14,7 +14,7 @@ pub fn load_office_settings(db: &crate::db::Db) -> state::OfficeSettings {
         .and_then(|json| serde_json::from_str::<StoredOfficeSettings>(&json).ok())
         .map(|s| state::OfficeSettings {
             idle_limit_seconds: s.idle_threshold_seconds,
-            title_mode: if s.window_title_mode == "APP_ONLY" {
+            title_mode: if s.window_title_mode == "app_only" {
                 state::TitleMode::AppOnly
             } else {
                 state::TitleMode::Full

@@ -13,7 +13,7 @@ export interface Me {
   officeSettings: {
     timezone: string
     idleThresholdSeconds: number
-    windowTitleMode: 'FULL' | 'APP_ONLY'
+    windowTitleMode: 'full' | 'app_only'
     minAgentVersion: string
     consentVersion: number
   }

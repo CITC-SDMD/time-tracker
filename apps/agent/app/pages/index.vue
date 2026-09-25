@@ -1,41 +1,3 @@
-<script setup lang="ts">
-const { state, summary, timeline, status, clock, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
-const { me, refresh } = useAuth()
-const { status: sync, notice, progress, dismissNotice } = useSync()
-
-// The counter Reset is a testing aid: only dev builds show it.
-const isDev = import.meta.dev
-
-const STATUS_STYLE: Record<StatusKey, string> = {
-  ACTIVE: 'bg-green-500',
-  IDLE: 'bg-amber-500',
-  PAUSED: 'bg-blue-500',
-  AWAY: 'bg-slate-400',
-  NOT_TRACKING: 'bg-slate-400',
-}
-
-const syncLabel = computed(() => {
-  const s = sync.value
-  if (!s)
-    return null
-  if (s.needsLogin)
-    return 'Please log in again'
-  if (s.upgradeRequired)
-    return 'Please update the app'
-  if (!s.online)
-    return s.pendingCount > 0 ? `Offline · ${s.pendingCount.toLocaleString()} waiting to send` : 'Offline'
-  return s.pendingCount > 0 ? `${s.pendingCount.toLocaleString()} ${s.pendingCount === 1 ? 'session' : 'sessions'} waiting to send` : 'All data sent'
-})
-
-// Best effort: picks up a raised consent version. The route guard then sends the person
-// to the consent screen if needed.
-onMounted(async () => {
-  await refresh().catch(() => {})
-  if (me.value?.consentRequired)
-    await navigateTo('/consent')
-})
-</script>
-
 <template>
   <main class="mx-auto max-w-md space-y-3 p-4">
     <header class="flex items-center justify-between">
@@ -102,7 +64,7 @@ onMounted(async () => {
       </div>
 
       <p
-        v-if="summary?.currentApp && status === 'ACTIVE'"
+        v-if="summary?.currentApp && status === 'active'"
         class="mt-3 truncate text-sm"
         :title="summary.currentTitle ?? summary.currentApp"
       >
@@ -113,7 +75,7 @@ onMounted(async () => {
         > · {{ summary.currentTitle }}</span>
       </p>
       <p
-        v-else-if="status === 'IDLE'"
+        v-else-if="status === 'idle'"
         class="mt-3 text-sm text-slate-500"
       >
         No keyboard or mouse use.
@@ -121,28 +83,28 @@ onMounted(async () => {
 
       <div class="mt-4 flex gap-2">
         <button
-          v-if="state?.state === 'NOT_TRACKING'"
+          v-if="state?.state === 'not_tracking'"
           class="rounded bg-slate-900 px-4 py-2 text-sm text-white"
           @click="start"
         >
           Start
         </button>
         <button
-          v-if="state?.state === 'TRACKING'"
+          v-if="state?.state === 'tracking'"
           class="rounded bg-slate-200 px-4 py-2 text-sm"
           @click="pause"
         >
           Pause
         </button>
         <button
-          v-if="state?.state === 'PAUSED'"
+          v-if="state?.state === 'paused'"
           class="rounded bg-slate-900 px-4 py-2 text-sm text-white"
           @click="resume"
         >
           Resume
         </button>
         <button
-          v-if="state?.state === 'TRACKING' || state?.state === 'PAUSED'"
+          v-if="state?.state === 'tracking' || state?.state === 'paused'"
           class="rounded bg-slate-200 px-4 py-2 text-sm"
           @click="stop"
         >
@@ -155,7 +117,7 @@ onMounted(async () => {
       <h2 class="mb-2 flex items-center justify-between text-sm font-medium text-slate-500">
         <span>Today</span>
         <button
-          v-if="isDev && state?.state === 'NOT_TRACKING'"
+          v-if="isDev && state?.state === 'not_tracking'"
           class="text-xs font-normal underline"
           title="Sets these counters back to 00:00:00. Nothing is deleted."
           @click="resetCounters"
@@ -247,3 +209,41 @@ onMounted(async () => {
     </footer>
   </main>
 </template>
+
+<script setup lang="ts">
+const { state, summary, timeline, status, clock, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
+const { me, refresh } = useAuth()
+const { status: sync, notice, progress, dismissNotice } = useSync()
+
+// The counter Reset is a testing aid: only dev builds show it.
+const isDev = import.meta.dev
+
+const STATUS_STYLE: Record<StatusKey, string> = {
+  active: 'bg-green-500',
+  idle: 'bg-amber-500',
+  paused: 'bg-blue-500',
+  away: 'bg-slate-400',
+  not_tracking: 'bg-slate-400',
+}
+
+const syncLabel = computed(() => {
+  const s = sync.value
+  if (!s)
+    return null
+  if (s.needsLogin)
+    return 'Please log in again'
+  if (s.upgradeRequired)
+    return 'Please update the app'
+  if (!s.online)
+    return s.pendingCount > 0 ? `Offline · ${s.pendingCount.toLocaleString()} waiting to send` : 'Offline'
+  return s.pendingCount > 0 ? `${s.pendingCount.toLocaleString()} ${s.pendingCount === 1 ? 'session' : 'sessions'} waiting to send` : 'All data sent'
+})
+
+// Best effort: picks up a raised consent version. The route guard then sends the person
+// to the consent screen if needed.
+onMounted(async () => {
+  await refresh().catch(() => {})
+  if (me.value?.consentRequired)
+    await navigateTo('/consent')
+})
+</script>

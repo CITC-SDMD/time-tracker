@@ -50,7 +50,7 @@ pub fn restore_session(db: &db::Db) -> Option<MeDto> {
     auth::load_token()?;
     let me: MeDto = serde_json::from_str(&db.get_app_state("me_json")?).ok()?;
     let user_id = db.get_app_state("current_user_id")?;
-    (me.id == user_id && me.status == "ACTIVE").then_some(me)
+    (me.id == user_id && me.status == "active").then_some(me)
 }
 
 /// Whether the person may start tracking: logged in, and consent given for the current version.
@@ -110,7 +110,7 @@ pub async fn login(
     password: String,
 ) -> Result<MeDto, String> {
     let (token, me) = state.api.login(&email, &password).await.map_err(api_error_string)?;
-    if me.status != "ACTIVE" {
+    if me.status != "active" {
         return Err("DEACTIVATED".into());
     }
 
@@ -143,7 +143,7 @@ pub async fn refresh_me(state: State<'_, AppState>) -> Result<Option<MeDto>, Str
         return Ok(current);
     };
     if let Ok(me) = state.api.me(&token).await {
-        if me.status == "ACTIVE" {
+        if me.status == "active" {
             let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
             remember_me(&mut engine, &me);
             *state.session.lock().map_err(|_| "session lock poisoned")? = Some(me);
@@ -254,10 +254,10 @@ pub struct SessionDto {
 
 fn state_str(state: TrackingState) -> &'static str {
     match state {
-        TrackingState::NotTracking => "NOT_TRACKING",
-        TrackingState::Tracking => "TRACKING",
-        TrackingState::Paused => "PAUSED",
-        TrackingState::Away => "AWAY",
+        TrackingState::NotTracking => "not_tracking",
+        TrackingState::Tracking => "tracking",
+        TrackingState::Paused => "paused",
+        TrackingState::Away => "away",
     }
 }
 
@@ -286,8 +286,8 @@ fn today_range_ms() -> (i64, i64) {
 
 fn session_type_str(t: db::SessionType) -> &'static str {
     match t {
-        db::SessionType::Application => "APPLICATION",
-        db::SessionType::Idle => "IDLE",
+        db::SessionType::Application => "application",
+        db::SessionType::Idle => "idle",
     }
 }
 
@@ -384,8 +384,8 @@ pub fn get_today_summary(state: State<'_, AppState>) -> Result<TodaySummaryDto, 
     active_ms += open_active_ms;
     idle_ms += open_idle_ms;
     let live_kind = engine.open_session_info().map(|(_, kind, _)| match kind {
-        SessionKind::Active => "ACTIVE",
-        SessionKind::Idle => "IDLE",
+        SessionKind::Active => "active",
+        SessionKind::Idle => "idle",
     });
 
     let open_activity = engine.open_activity();

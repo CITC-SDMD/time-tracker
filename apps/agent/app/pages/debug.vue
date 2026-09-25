@@ -1,35 +1,3 @@
-<script setup lang="ts">
-import { invoke } from '@tauri-apps/api/core'
-import type { SessionDto } from '~/composables/useTracking'
-
-// Phase 3 task 12: a raw list of today's local sessions, for debugging the engine.
-// Deliberately not merged into display-ready timeline blocks -- see the comment on
-// get_today_timeline in src-tauri/src/commands.rs.
-const sessions = ref<SessionDto[]>([])
-const error = ref<string | null>(null)
-
-async function refresh() {
-  try {
-    sessions.value = await invoke<SessionDto[]>('get_today_sessions_debug')
-    error.value = null
-  }
-  catch (e) {
-    error.value = String(e)
-  }
-}
-
-function formatTime(ms: number | null) {
-  return ms === null ? '—' : new Date(ms).toLocaleTimeString()
-}
-
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => {
-  refresh()
-  timer = setInterval(refresh, 2000)
-})
-onBeforeUnmount(() => clearInterval(timer))
-</script>
-
 <template>
   <main class="mx-auto max-w-2xl space-y-4 p-4">
     <header class="flex items-center justify-between">
@@ -109,3 +77,35 @@ onBeforeUnmount(() => clearInterval(timer))
     </p>
   </main>
 </template>
+
+<script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core'
+import type { SessionDto } from '~/composables/useTracking'
+
+// Phase 3 task 12: a raw list of today's local sessions, for debugging the engine.
+// Deliberately not merged into display-ready timeline blocks -- see the comment on
+// get_today_timeline in src-tauri/src/commands.rs.
+const sessions = ref<SessionDto[]>([])
+const error = ref<string | null>(null)
+
+async function refresh() {
+  try {
+    sessions.value = await invoke<SessionDto[]>('get_today_sessions_debug')
+    error.value = null
+  }
+  catch (e) {
+    error.value = String(e)
+  }
+}
+
+function formatTime(ms: number | null) {
+  return ms === null ? '—' : new Date(ms).toLocaleTimeString()
+}
+
+let timer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  refresh()
+  timer = setInterval(refresh, 2000)
+})
+onBeforeUnmount(() => clearInterval(timer))
+</script>

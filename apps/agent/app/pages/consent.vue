@@ -1,30 +1,3 @@
-<script setup lang="ts">
-const { acceptConsent, logout } = useAuth()
-
-const busy = ref(false)
-const error = ref<string | null>(null)
-
-async function accept() {
-  busy.value = true
-  error.value = null
-  try {
-    await acceptConsent()
-    await navigateTo('/')
-  }
-  catch (e) {
-    error.value = describeLoginError(e)
-  }
-  finally {
-    busy.value = false
-  }
-}
-
-async function decline() {
-  await logout()
-  await navigateTo('/login')
-}
-</script>
-
 <template>
   <main class="mx-auto max-w-md space-y-4 p-4">
     <header>
@@ -64,3 +37,30 @@ async function decline() {
     </div>
   </main>
 </template>
+
+<script setup lang="ts">
+const { acceptConsent, logout } = useAuth()
+
+const busy = ref(false)
+const error = ref<string | null>(null)
+
+async function accept() {
+  busy.value = true
+  error.value = null
+  try {
+    await acceptConsent()
+    await navigateTo('/')
+  }
+  catch (e) {
+    error.value = describeLoginError(e)
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+async function decline() {
+  await logout()
+  await navigateTo('/login')
+}
+</script>

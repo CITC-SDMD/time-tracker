@@ -34,7 +34,7 @@ impl ApiError {
     /// The short code the Vue side switches on.
     pub fn code(&self) -> String {
         match self {
-            Self::Offline => "OFFLINE".into(),
+            Self::Offline => "offline".into(),
             Self::WrongPassword => "WRONG_PASSWORD".into(),
             Self::Deactivated => "DEACTIVATED".into(),
             Self::Unauthorized => "UNAUTHORIZED".into(),
@@ -229,7 +229,7 @@ mod tests {
     use super::*;
     use crate::testutil::{dead_root, MockServer};
 
-    const ME: &str = r#"{"id":"42","name":"Ana","email":"ana@example.com","role":"DEVELOPER","status":"ACTIVE","consentVersion":null,"consentRequired":true,"officeSettings":{"timezone":"Asia/Manila","idleThresholdSeconds":300,"windowTitleMode":"FULL","minAgentVersion":"0.1.0","consentVersion":1}}"#;
+    const ME: &str = r#"{"id":"42","name":"Ana","email":"ana@example.com","role":"developer","status":"active","consentVersion":null,"consentRequired":true,"officeSettings":{"timezone":"Asia/Manila","idleThresholdSeconds":300,"windowTitleMode":"full","minAgentVersion":"0.1.0","consentVersion":1}}"#;
 
     fn error_body(code: &str) -> String {
         format!(r#"{{"error":{{"code":"{code}","message":"x"}}}}"#)

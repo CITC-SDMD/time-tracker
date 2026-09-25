@@ -97,14 +97,14 @@ mod tests {
 
     #[test]
     fn payload_timestamps_become_iso_strings() {
-        let payload = r#"{"id":"a","type":"APPLICATION","appName":"Code","processName":"Code.exe","windowTitle":null,"idleAppName":null,"startedAt":1758794400000,"endedAt":1758794700123,"durationSeconds":300,"clockChanged":false}"#;
+        let payload = r#"{"id":"a","type":"application","appName":"Code","processName":"Code.exe","windowTitle":null,"idleAppName":null,"startedAt":1758794400000,"endedAt":1758794700123,"durationSeconds":300,"clockChanged":false}"#;
 
         let wire = wire_session(payload).unwrap();
 
         assert_eq!(wire["startedAt"], "2025-09-25T10:00:00.000Z");
         assert_eq!(wire["endedAt"], "2025-09-25T10:05:00.123Z");
         assert_eq!(wire["durationSeconds"], 300);
-        assert_eq!(wire["type"], "APPLICATION");
+        assert_eq!(wire["type"], "application");
     }
 
     #[test]

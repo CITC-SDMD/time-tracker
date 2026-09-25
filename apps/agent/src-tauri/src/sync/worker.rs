@@ -82,7 +82,7 @@ where
         stop_tracking: false,
         stop_reason: None,
         sign_out: false,
-        reported_state: "NOT_TRACKING",
+        reported_state: "not_tracking",
     };
 
     for batch in 0..MAX_BATCHES_PER_CYCLE {
@@ -338,9 +338,9 @@ pub fn spawn(app: AppHandle, handle: SyncHandle) {
                 let s = handle.status();
                 s.needs_login || s.upgrade_required
             };
-            if snapshot_state == "NOT_TRACKING"
+            if snapshot_state == "not_tracking"
                 && pending == 0
-                && last_reported_state == "NOT_TRACKING"
+                && last_reported_state == "not_tracking"
                 && !warning_showing
             {
                 continue;
@@ -451,7 +451,7 @@ mod tests {
     fn ok_body(accepted: &[String], duplicates: &[String], rejected: &[(&str, &str)], commands: &str) -> String {
         let rejected: Vec<_> = rejected.iter().map(|(id, r)| serde_json::json!({"id": id, "reason": r})).collect();
         format!(
-            r#"{{"accepted":{},"duplicates":{},"rejected":{},"serverTime":"2026-09-25T10:00:00.000Z","commands":{commands},"settings":{{"idleThresholdSeconds":420,"windowTitleMode":"APP_ONLY"}}}}"#,
+            r#"{{"accepted":{},"duplicates":{},"rejected":{},"serverTime":"2026-09-25T10:00:00.000Z","commands":{commands},"settings":{{"idleThresholdSeconds":420,"windowTitleMode":"app_only"}}}}"#,
             serde_json::to_string(accepted).unwrap(),
             serde_json::to_string(duplicates).unwrap(),
             serde_json::to_string(&rejected).unwrap(),
@@ -487,7 +487,7 @@ mod tests {
         let raw = server.request(0);
         assert!(raw.to_lowercase().contains("authorization: bearer tok"));
         let body = body_of(&raw);
-        assert_eq!(body["status"]["state"], "NOT_TRACKING");
+        assert_eq!(body["status"]["state"], "not_tracking");
         assert_eq!(body["dbReset"], false);
         assert_eq!(body["sessions"].as_array().unwrap().len(), 3);
         assert_eq!(body["sessions"][0]["id"], ids[0].as_str());
@@ -646,7 +646,7 @@ mod tests {
             lock(&engine).tick();
         }
         sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
-        assert_eq!(report(0)["state"], "ACTIVE");
+        assert_eq!(report(0)["state"], "active");
         assert_eq!(report(0)["currentApp"], "VSCode");
         assert!(report(0)["trackingStartedAt"].is_string());
 
@@ -656,7 +656,7 @@ mod tests {
         clock.advance(Duration::from_secs(2));
         lock(&engine).tick();
         sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
-        assert_eq!(report(1)["state"], "IDLE");
+        assert_eq!(report(1)["state"], "idle");
         assert_eq!(report(1)["idleAppName"], "VSCode");
 
         provider.set(Some(app("VSCode")), 0);
@@ -664,13 +664,13 @@ mod tests {
         lock(&engine).tick();
         lock(&engine).pause();
         sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
-        assert_eq!(report(2)["state"], "PAUSED");
+        assert_eq!(report(2)["state"], "paused");
 
         lock(&engine).resume();
         clock.advance(Duration::from_secs(3));
         lock(&engine).stop();
         sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
-        assert_eq!(report(3)["state"], "NOT_TRACKING");
+        assert_eq!(report(3)["state"], "not_tracking");
         assert!(report(3)["trackingStartedAt"].is_null());
     }
 
@@ -768,7 +768,7 @@ mod tests {
         assert_eq!(body_of(&server.request(0))["dbReset"], true);
         let e = lock(&engine);
         assert_eq!(e.db().get_app_state("db_reset_pending").as_deref(), Some("0"));
-        assert!(e.db().get_app_state("office_settings_json").unwrap().contains("APP_ONLY"));
+        assert!(e.db().get_app_state("office_settings_json").unwrap().contains("app_only"));
         assert!(e.db().get_app_state("last_sync_at").is_some());
     }
 }

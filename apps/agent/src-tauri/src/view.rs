@@ -32,11 +32,11 @@ pub struct AppTimeDto {
 fn label_for(row: &SessionRow) -> (&'static str, String) {
     match row.session_type {
         SessionType::Application => (
-            "ACTIVE",
+            "active",
             row.app_name.clone().unwrap_or_else(|| "Unknown app".to_owned()),
         ),
         SessionType::Idle => (
-            "IDLE",
+            "idle",
             match &row.idle_app_name {
                 Some(app) => format!("Idle (in {app})"),
                 None => "Idle".to_owned(),
@@ -138,7 +138,7 @@ mod tests {
         ];
         let t = build_timeline(&rows, 1_000_000);
         assert_eq!(t[0].label, "Idle (in Zoom)");
-        assert_eq!(t[0].kind, "IDLE");
+        assert_eq!(t[0].kind, "idle");
         assert_eq!(t[1].label, "Idle");
     }
 
