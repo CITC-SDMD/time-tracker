@@ -74,6 +74,8 @@ php artisan serve
 
 Write down the temporary password `tracker:make-oic` prints — that's the only account that exists until you create Project Managers, Team Leaders, and so on from the dashboard (docs/DEVELOPMENT_PLAN.md §9.1-§9.2).
 
+**Trying the dashboard with a filled-in office (development only):** after `php artisan migrate:fresh --seed`, run `php artisan db:seed --class=DemoHierarchySeeder`. It adds 2 project managers, 3 team leaders and 6 members under `oic@test.com` (all with the password `password`, e.g. `pm1@test.com`, `tl1@test.com`, `dev1@test.com`), 60 days of daily totals, every live state (tracking, idle, paused, not tracking, offline) and today's timelines for a few of them. It does nothing in production and can be run again.
+
 `http://127.0.0.1:8000/health` should return `{"ok":true,"version":"dev"}`. Quality checks: `vendor\bin\pint --test` (formatting) and `php artisan test`.
 
 To run the dashboard against this local API instead of the same-origin production setup, point `apps/dashboard`'s dev server at it — see `apps/dashboard/nuxt.config.ts`'s `runtimeConfig.public.apiBase`.

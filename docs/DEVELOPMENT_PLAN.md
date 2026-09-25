@@ -516,14 +516,18 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 | `POST /api/v1/auth/login` | anyone | Email + password → Sanctum token (agent) | `AuthController@login` |
 | `GET /api/v1/me` | logged in | Own profile, role, office settings, whether consent is needed | `MeController@show` |
 | `POST /api/v1/me/consent` | logged in | Record consent `{ consentVersion }` | `MeController@acceptConsent` |
+| `PATCH /api/v1/me` | logged in | Change own `name` (email and role are not theirs to change) | `MeController@update` |
+| `PUT /api/v1/me/password` | logged in | Change own password `{ currentPassword, password, password_confirmation }`; wrong current or unchanged password = 422; revokes every token (desktop asks to log in again); throttled 5/min | `MeController@changePassword` |
 | `POST /api/v1/agent/sync` | logged in (agent) | Sends status + up to 100 closed sessions. Gets back results + commands. | `AgentController@sync` |
 | `GET /api/v1/employees` | manager | List of people in the caller's hierarchy (§9.1) with live status and today's totals | `EmployeeController@index` |
 | `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | self, or a manager whose hierarchy includes `{id}` | Daily totals per day (max 31 days) | `EmployeeController@summary` |
 | `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | self, or a manager whose hierarchy includes `{id}` | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
 | `POST /api/v1/admin/employees` | manager | Create a direct report `{ name, email, role }` — role must be exactly one tier below the caller's (§9.1) | `AdminEmployeeController@store` |
-| `PATCH /api/v1/admin/employees/{id}` | a manager whose hierarchy includes `{id}` | Change `name` or `status` (deactivate / reactivate); changing `role`/`manager_id` (re-parenting) is restricted to the direct manager only | `AdminEmployeeController@update` |
+| `PATCH /api/v1/admin/employees/{id}` | a manager whose hierarchy includes `{id}` | Change `name`, `status` (deactivate / reactivate) or `managerId` (**move** to another manager). The new manager must be someone the caller can see, be active, and hold the role exactly one tier above the person's role (so the tree keeps its shape and cannot loop); an OIC is never moved; nothing is applied when the move is refused. Audited as `employee.moved` | `AdminEmployeeController@update` |
+| `POST /api/v1/admin/employees/{id}/resend-invite` | a manager whose hierarchy includes `{id}` | Email a fresh 3-day set-password link to an active account (returns the link instead when the mail cannot be sent). Audited as `employee.invite_resent`; throttled 10/min | `AdminEmployeeController@resendInvite` |
+| `GET /api/v1/reports/daily`, `/reports/apps`, `/reports/team` `?from=&to=&uid=&format=json|csv` | manager (own hierarchy) | Phase 11 reports from `daily_summaries`: one row per person per day / active time per app / totals per person. Max 92 days; `uid` outside the hierarchy = 403; CSV has `HH:MM` and seconds, a UTF-8 BOM, and neutralises cells starting with `= + - @`; a CSV download is audited as `report.exported` | `ReportController` |
 | `GET /api/v1/admin/settings` / `PUT` | OIC only | Read / change office settings | `AdminSettingsController` |
-| `GET /api/v1/admin/audit?cursor=` | OIC only | Audit log, newest first, 50 per page | `AdminAuditController@index` |
+| `GET /api/v1/admin/audit?cursor=&action=&q=&from=&to=` | OIC only | Audit log, newest first, 50 per page; optional filters: exact `action`, `q` (name of who did it or who it was done to), `from`/`to` (office-timezone days) | `AdminAuditController@index` |
 
 **Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the number of DB round-trips. A single session is just a batch of one.
 
@@ -1317,6 +1321,42 @@ Built differently from the task list:
 
 **Deliverables**
 - A working manager dashboard, deployed to dev, correctly scoped at every tier of the hierarchy.
+
+**As built (OIC pass)** — every page is under the `user` layout at `/user/...`; the sidebar is role-aware (`navFor` in `utils/routes.ts`) and the API refuses what the sidebar hides:
+
+| Page | Who | What it does |
+|---|---|---|
+| `/user` | every manager | Overview cards + table, scoped, refreshes every 60 s while the tab is visible |
+| `/user/employees/[id]` | self or visible | Day view: date control, totals, app breakdown, timeline, session list |
+| `/user/people` | every manager | Table with a Manager column, search and filters; add a person, **move** to another manager, resend the set-password link, deactivate / reactivate, delete an unused account |
+| `/user/reports` | every manager | Phase 11 reports (daily per person, app usage, team totals) with CSV |
+| `/user/settings` | OIC | All five office settings, with validation |
+| `/user/audit` | OIC | Filterable audit log with readable action labels |
+| `/user/profile` | everyone | Own name and password |
+
+**Browser test results (Playwright + Chromium, 2026-09-25)** — `apps/e2e`, run with `pnpm e2e`. It starts its own API (port 8001) and the built dashboard (port 3101) against a separate `tracker_e2e` database, so `tracker_dev` is never touched, and mail goes to the log, never to Gmail. Every test also fails on any console error or warning, uncaught exception or unexpected 4xx/5xx.
+
+| Area | Covered |
+|---|---|
+| Sign in, forgot and reset | validation, wrong password, throttle, managers-only rule, sign out, single-use and invalid links |
+| Overview and a person's day | every live state, totals, 60 s refresh only while visible, PM / TL / OIC scoping, outside-hierarchy refusal |
+| People (CRUD) | create with emailed link and first sign-in, read with search and filters, update (resend link, move manager, deactivate / reactivate, sign-out of a deactivated manager), delete and the refusal for accounts with history |
+| Profile | name edit, password change and its rules, audit entry |
+| Reports | three tabs, 92-day limit, person filter, CSV (byte-order mark, header, rows match, no formulas) |
+| Settings and audit | per-field validation, save / discard / persist, OIC-only access, paging, filters, labels |
+| Look and feel | light and dark mode, no flash, phone layout, automated accessibility scan of every page in both themes, keyboard use |
+| Security | signed-out access, role limits in the UI and the API, CSRF, cross-origin write, script in a name |
+
+Result: **253 of 253 passed, three full runs in a row** (12.3, 12.0 and 11.0 minutes), so no flaky tests. It found six real bugs, all fixed:
+
+1. `minAgentVersion` accepted any text ("banana"), which would lock every desktop app out. It now has to look like `1.2.3` (API test added).
+2. The consent version could be lowered through the API although the form says it never goes down. The API now refuses it (API test added).
+3. A signed-out request that did not ask for JSON got a 500 instead of 401 (API test added).
+4. No page had a title or a language. Pages now read "People · Time Tracker" and `lang="en"` is set.
+5. The report tabs were not built as tabs for screen readers (`Tabs.vue`).
+6. After closing a dialog with the keyboard, focus fell to the top of the page instead of returning to the button that opened it (`Modal.vue`).
+
+Known and accepted: a reactivated person's old session works again (everything is blocked while they are deactivated); the "email could not be sent" screen is tested with a stubbed reply because the test environment cannot make mail fail. Still to do by hand with the desktop app (Tests 6.3, 6.4, 6.9 and the settings-reach-the-desktop check): they need a real desktop app.
 
 **Tests**
 
