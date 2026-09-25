@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// Sanctum SPA login (docs/DEVELOPMENT_PLAN.md §9.2). Only managers may sign in; the server
-// says "This dashboard is for managers only." to everyone else.
+// "Forgot password" (docs/DEVELOPMENT_PLAN.md §9.2). Open to anyone, employees included. The
+// answer is the same whether or not the email has an account.
 definePageMeta({ layout: false })
 
-const { login } = useAuth()
+const { web } = useApi()
 const email = ref('')
-const password = ref('')
+const sent = ref(false)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
@@ -13,11 +13,12 @@ async function onSubmit() {
   loading.value = true
   error.value = null
   try {
-    await login(email.value, password.value)
-    await navigateTo('/')
+    await web('/sanctum/csrf-cookie')
+    await web('/auth/forgot-password', { method: 'POST', body: { email: email.value.trim() } })
+    sent.value = true
   }
   catch (e) {
-    error.value = messageOf(e, 'Could not log in. Check your connection and try again.')
+    error.value = messageOf(e, 'Could not send the link. Check your connection and try again.')
   }
   finally {
     loading.value = false
@@ -29,14 +30,23 @@ async function onSubmit() {
   <main class="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-4">
     <header>
       <h1 class="text-lg font-semibold">
-        Time Tracker — Managers
+        Forgot your password?
       </h1>
       <p class="text-sm text-slate-500">
-        Sign in with your office account.
+        Enter your office email and we will send you a link to choose a new one.
       </p>
     </header>
 
+    <p
+      v-if="sent"
+      class="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800"
+      role="status"
+    >
+      If that email has an account, we sent a link to it. It works for one hour. Check your spam folder if you do not see it.
+    </p>
+
     <form
+      v-else
       class="space-y-3 rounded-lg border border-slate-200 bg-white p-4"
       @submit.prevent="onSubmit"
     >
@@ -47,16 +57,6 @@ async function onSubmit() {
           type="email"
           required
           autocomplete="username"
-          class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-        >
-      </label>
-      <label class="block text-sm">
-        <span class="text-slate-500">Password</span>
-        <input
-          v-model="password"
-          type="password"
-          required
-          autocomplete="current-password"
           class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
         >
       </label>
@@ -72,16 +72,15 @@ async function onSubmit() {
         :disabled="loading"
         class="w-full rounded bg-slate-900 py-1.5 text-sm font-medium text-white disabled:opacity-50"
       >
-        {{ loading ? 'Signing in…' : 'Sign in' }}
+        {{ loading ? 'Sending…' : 'Send the link' }}
       </button>
-      <p class="text-center text-sm">
-        <NuxtLink
-          to="/forgot-password"
-          class="text-slate-500 underline"
-        >
-          Forgot password?
-        </NuxtLink>
-      </p>
     </form>
+
+    <NuxtLink
+      to="/login"
+      class="text-center text-sm text-slate-500 underline"
+    >
+      Back to sign in
+    </NuxtLink>
   </main>
 </template>

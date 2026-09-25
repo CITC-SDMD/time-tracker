@@ -123,7 +123,8 @@ export interface CreatedEmployee {
   name: string
   email: string
   role: Role
-  temporaryPassword: string
+  emailSent: boolean // a set-password link was emailed to them
+  setPasswordUrl?: string // only when the email could not be sent: pass this link on yourself
 }
 
 // GET /api/v1/admin/audit

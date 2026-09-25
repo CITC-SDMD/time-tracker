@@ -69,15 +69,15 @@ async function setStatus(person: EmployeeListItem, status: 'ACTIVE' | 'DEACTIVAT
   }
 }
 
-async function copyPassword() {
-  if (!created.value)
+async function copyLink() {
+  if (!created.value?.setPasswordUrl)
     return
   try {
-    await navigator.clipboard.writeText(created.value.temporaryPassword)
+    await navigator.clipboard.writeText(created.value.setPasswordUrl)
     copied.value = true
   }
   catch {
-    // Clipboard blocked: the password is still on screen to copy by hand.
+    // Clipboard blocked: the link is still on screen to copy by hand.
   }
 }
 
@@ -159,21 +159,30 @@ onMounted(() => {
       </form>
 
       <div
-        v-if="created"
+        v-if="created?.emailSent"
+        class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800"
+        role="status"
+      >
+        <span class="font-medium">{{ created.name }}</span> was added as {{ ROLE_LABEL[created.role] }}.
+        We emailed a link to {{ created.email }} so they can choose their password. It works for 3 days.
+      </div>
+      <div
+        v-else-if="created"
         class="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm"
+        role="alert"
       >
         <p>
-          <span class="font-medium">{{ created.name }}</span> was added as {{ ROLE_LABEL[created.role] }}.
-          Give them this temporary password now. It is shown only once:
+          <span class="font-medium">{{ created.name }}</span> was added as {{ ROLE_LABEL[created.role] }},
+          but the email could not be sent. Give them this link so they can choose their password (it works for 3 days):
         </p>
         <p class="mt-2 flex flex-wrap items-center gap-3">
           <code
-            class="rounded bg-white px-2 py-1 font-mono"
-            data-testid="temporary-password"
-          >{{ created.temporaryPassword }}</code>
+            class="break-all rounded bg-white px-2 py-1 font-mono text-xs"
+            data-testid="set-password-url"
+          >{{ created.setPasswordUrl }}</code>
           <button
             class="rounded bg-white px-2 py-1 underline"
-            @click="copyPassword"
+            @click="copyLink"
           >
             {{ copied ? 'Copied' : 'Copy' }}
           </button>

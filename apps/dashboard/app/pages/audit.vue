@@ -22,6 +22,7 @@ const ACTION_LABEL: Record<string, string> = {
   'employee.reactivated': 'Reactivated an account',
   'settings.updated': 'Changed the office settings',
   'timeline.viewed': 'Viewed a timeline',
+  'password.reset': 'Set or reset their password',
 }
 
 function detailsText(entry: AuditLogEntry): string {
