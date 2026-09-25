@@ -38,6 +38,7 @@ pub fn run() {
             commands::get_launch_at_startup,
             commands::set_launch_at_startup,
             commands::open_log_folder,
+            commands::open_forgot_password,
             commands::get_app_version,
             commands::login,
             commands::logout,

@@ -133,6 +133,8 @@ Use the installed (release) build for test 0.11 (resource use). Dev builds use m
 
 **API address:** the app talks to the server named by the `TRACKER_API_URL` build setting (the server root, no `/api/v1`), for example `$env:TRACKER_API_URL = "https://tracker.example.com"` before `pnpm build:agent`. If it is not set, the app uses `http://127.0.0.1:8000`, which is right for local development.
 
+**Dashboard address (for "Forgot password?"):** the login screen opens the dashboard's reset page in the browser. In production the dashboard shares the API's address, so nothing more is needed. If yours differs, set `TRACKER_DASHBOARD_URL` the same way. Development builds default to `http://localhost:3100`.
+
 ---
 
 ## Office server (Phase 1+)
@@ -199,16 +201,23 @@ DB_PASSWORD=<the password from step 3>
 
 SANCTUM_STATEFUL_DOMAINS=tracker.yourcompany.com
 
-# TODO: no SMTP relay chosen yet (docs/DEVELOPMENT_PLAN.md §3).
-# Until this is filled in, the dashboard shows password-reset/invite links
-# directly instead of emailing them.
+# Where welcome and password-reset emails link to. Leave it out when the dashboard and API
+# share one address (the normal setup); locally the dashboard is on its own port.
+# DASHBOARD_URL=http://localhost:3100
+
+# Mail (welcome and password-reset links). If sending fails, the account is still created and the
+# dashboard shows the set-password link so the manager can pass it on.
+# Gmail / Google Workspace: turn on 2-Step Verification, create an app password at
+# https://myaccount.google.com/apppasswords and use it here (not the normal password).
+# About 500 emails a day for a normal Gmail account; a mail service such as Brevo or SES is more
+# reliable for production.
 MAIL_MAILER=smtp
-MAIL_HOST=
+MAIL_HOST=smtp.gmail.com
 MAIL_PORT=587
-MAIL_USERNAME=
-MAIL_PASSWORD=
-MAIL_ENCRYPTION=tls
-MAIL_FROM_ADDRESS=tracker@yourcompany.com
+MAIL_USERNAME=youraccount@gmail.com
+MAIL_PASSWORD=<the 16-character app password, no spaces>
+MAIL_FROM_ADDRESS=youraccount@gmail.com
+MAIL_FROM_NAME="Time Tracker"
 ```
 
 ```bash
@@ -216,7 +225,7 @@ php artisan migrate --seed
 php artisan tracker:make-oic "Your Name" you@yourcompany.com
 ```
 
-Write down the temporary password it prints — use it for the first dashboard login, then change it.
+Write down the temporary password it prints and use it for the first dashboard login. Once mail is set up, "Forgot password?" on the login page lets you choose your own.
 
 ### 5. Build and deploy the dashboard
 

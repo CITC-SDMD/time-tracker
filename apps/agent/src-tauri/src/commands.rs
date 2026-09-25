@@ -458,6 +458,23 @@ pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Opens the dashboard's "Forgot password" page in the default browser. The address is built here
+/// from the configured dashboard root; nothing from the screen goes into it.
+#[tauri::command]
+pub fn open_forgot_password(state: State<'_, AppState>) -> Result<(), String> {
+    let root = {
+        let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+        crate::api::dashboard_root(engine.db())
+    };
+    let url = crate::api::forgot_password_url(&root);
+    // `start` treats the first quoted argument as a window title, hence the empty one.
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()

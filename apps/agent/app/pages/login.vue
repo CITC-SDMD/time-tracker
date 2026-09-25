@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core'
+
 const { login } = useAuth()
 const notice = useState<string | null>('loginNotice', () => null)
 
@@ -19,6 +21,16 @@ async function submit() {
   }
   finally {
     busy.value = false
+  }
+}
+
+// The reset link is emailed by the server; the page for asking for one is on the dashboard.
+async function forgotPassword() {
+  try {
+    await invoke('open_forgot_password')
+  }
+  catch (e) {
+    error.value = `Could not open the browser: ${String(e)}`
   }
 }
 </script>
@@ -82,5 +94,16 @@ async function submit() {
         {{ busy ? 'Logging in…' : 'Log in' }}
       </button>
     </form>
+
+    <p class="text-center text-sm">
+      <button
+        type="button"
+        class="text-slate-500 underline"
+        title="Opens the password page in your browser"
+        @click="forgotPassword"
+      >
+        Forgot password?
+      </button>
+    </p>
   </main>
 </template>

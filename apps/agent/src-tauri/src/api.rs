@@ -13,6 +13,7 @@ pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Server root, without `/api/v1` (`/health` sits outside the versioned prefix).
 const DEFAULT_ROOT: &str = "http://127.0.0.1:8000";
+const DEV_DASHBOARD_ROOT: &str = "http://localhost:3100";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
@@ -84,6 +85,24 @@ struct ErrorBody {
 struct ErrorInner {
     code: String,
     message: String,
+}
+
+/// Where the dashboard lives, for links opened in the browser. Order: `app_state.dashboard_base_url`
+/// (test override), the `TRACKER_DASHBOARD_URL` build-time variable, then the API root (the two
+/// share one address in production; local development runs them on different ports).
+pub fn dashboard_root(db: &Db) -> String {
+    db.get_app_state("dashboard_base_url")
+        .or_else(|| option_env!("TRACKER_DASHBOARD_URL").map(str::to_owned))
+        .or_else(|| db.get_app_state("api_base_url"))
+        .or_else(|| option_env!("TRACKER_API_URL").map(str::to_owned))
+        // Nothing configured: a development build talks to the local API, and its dashboard is on
+        // the Nuxt dev server; a release build assumes one shared address.
+        .unwrap_or_else(|| if cfg!(debug_assertions) { DEV_DASHBOARD_ROOT } else { DEFAULT_ROOT }.to_owned())
+}
+
+/// The dashboard page where someone asks for a password-reset link.
+pub fn forgot_password_url(root: &str) -> String {
+    format!("{}/forgot-password", root.trim_end_matches('/'))
 }
 
 #[derive(Clone)]
@@ -214,6 +233,21 @@ mod tests {
 
     fn error_body(code: &str) -> String {
         format!(r#"{{"error":{{"code":"{code}","message":"x"}}}}"#)
+    }
+
+    #[test]
+    fn forgot_password_url_joins_the_dashboard_root_without_a_double_slash() {
+        assert_eq!(forgot_password_url("https://t.example.com"), "https://t.example.com/forgot-password");
+        assert_eq!(forgot_password_url("http://localhost:3100/"), "http://localhost:3100/forgot-password");
+    }
+
+    #[test]
+    fn dashboard_root_prefers_its_own_override_then_the_api_override() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        db.set_app_state("api_base_url", "http://api.test").unwrap();
+        assert_eq!(dashboard_root(&db), "http://api.test");
+        db.set_app_state("dashboard_base_url", "http://dash.test").unwrap();
+        assert_eq!(dashboard_root(&db), "http://dash.test");
     }
 
     #[tokio::test]
