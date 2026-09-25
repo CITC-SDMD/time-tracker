@@ -6,8 +6,27 @@ definePageMeta({ layout: false })
 const route = useRoute()
 const { web } = useApi()
 
-const token = computed(() => String(route.query.token ?? ''))
-const email = computed(() => String(route.query.email ?? ''))
+// The email link carries the token and the email as one URL-safe value (`?link=`), so nothing after
+// an "&" can be lost on the way. The older `?token=&email=` form still works.
+function readLink(): { token: string, email: string } {
+  const raw = String(route.query.link ?? '')
+  if (raw) {
+    try {
+      const base64 = raw.replace(/-/g, '+').replace(/_/g, '/')
+      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { token?: string, email?: string }
+      return { token: parsed.token ?? '', email: parsed.email ?? '' }
+    }
+    catch {
+      return { token: '', email: '' }
+    }
+  }
+  return { token: String(route.query.token ?? ''), email: String(route.query.email ?? '') }
+}
+
+const link = readLink()
+const token = computed(() => link.token)
+const email = computed(() => link.email)
 const linkComplete = computed(() => !!token.value && !!email.value)
 
 const password = ref('')

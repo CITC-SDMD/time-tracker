@@ -43,8 +43,8 @@ class PasswordResetTest extends TestCase
         Notification::assertSentTo($user, ResetPassword::class, function (ResetPassword $n) use ($user) {
             $url = $user->passwordSetUrl($n->token);
 
-            return str_starts_with($url, 'https://tracker.example.com/reset-password?token=')
-                && str_contains($url, urlencode($user->email));
+            return str_starts_with($url, 'https://tracker.example.com/reset-password?link=')
+                && $this->linkFromUrl($url) === ['token' => $n->token, 'email' => $user->email];
         });
     }
 
@@ -220,7 +220,8 @@ class PasswordResetTest extends TestCase
         ])->assertCreated()->assertJsonPath('emailSent', false);
 
         $this->assertDatabaseHas('users', ['email' => 'pm@example.com']);
-        $this->assertStringStartsWith('https://tracker.example.com/reset-password?token=', $response->json('setPasswordUrl'));
+        $this->assertStringStartsWith('https://tracker.example.com/reset-password?link=', $response->json('setPasswordUrl'));
+        $this->assertDoesNotMatchRegularExpression('/[&%@]/', (string) parse_url($response->json('setPasswordUrl'), PHP_URL_QUERY));
 
         $this->postJson('/auth/reset-password', [
             'token' => $this->tokenFromUrl($response->json('setPasswordUrl')), 'email' => 'pm@example.com',
@@ -228,10 +229,16 @@ class PasswordResetTest extends TestCase
         ])->assertOk();
     }
 
-    private function tokenFromUrl(string $url): string
+    /** @return array{token: string, email: string} */
+    private function linkFromUrl(string $url): array
     {
         parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
 
-        return $query['token'];
+        return json_decode(base64_decode(strtr($query['link'], '-_', '+/')), true);
+    }
+
+    private function tokenFromUrl(string $url): string
+    {
+        return $this->linkFromUrl($url)['token'];
     }
 }

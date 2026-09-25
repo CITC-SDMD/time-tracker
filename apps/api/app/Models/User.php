@@ -50,13 +50,16 @@ class User extends Authenticatable
         };
     }
 
-    /** The dashboard page where this person picks a new password (welcome and reset emails). */
+    /**
+     * The dashboard page where this person picks a new password (welcome and reset emails). The
+     * token and email travel as ONE opaque URL-safe value: no "&", "@" or "%" for a mail gateway
+     * or link scanner to mangle, which would otherwise cut the email off the link.
+     */
     public function passwordSetUrl(string $token): string
     {
-        return config('app.dashboard_url').'/reset-password?'.http_build_query([
-            'token' => $token,
-            'email' => $this->getEmailForPasswordReset(),
-        ]);
+        $payload = json_encode(['token' => $token, 'email' => $this->getEmailForPasswordReset()]);
+
+        return config('app.dashboard_url').'/reset-password?link='.rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
     }
 
     public function isManagerRole(): bool
