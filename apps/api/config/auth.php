@@ -69,7 +69,7 @@ return [
 
         // 'users' => [
         //     'driver' => 'database',
-        //     'table' => 'users',
+        //     'table' => 'password_invite_tokens',
         // ],
     ],
 
@@ -97,6 +97,13 @@ return [
             'provider' => 'users',
             'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
             'expire' => 60,
+            'throttle' => 60,
+        ],
+        // Welcome links for new accounts: valid for 3 days, kept in their own table so an hour-long reset token can never be honoured for 3 days.
+        'invites' => [
+            'provider' => 'users',
+            'table' => 'password_invite_tokens',
+            'expire' => 60 * 24 * 3,
             'throttle' => 60,
         ],
     ],

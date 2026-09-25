@@ -50,6 +50,15 @@ class User extends Authenticatable
         };
     }
 
+    /** The dashboard page where this person picks a new password (welcome and reset emails). */
+    public function passwordSetUrl(string $token): string
+    {
+        return config('app.dashboard_url').'/reset-password?'.http_build_query([
+            'token' => $token,
+            'email' => $this->getEmailForPasswordReset(),
+        ]);
+    }
+
     public function isManagerRole(): bool
     {
         return in_array($this->role, self::MANAGER_ROLES, true);

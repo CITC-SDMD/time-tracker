@@ -16,6 +16,13 @@ return [
     'name' => env('APP_NAME', 'Laravel'),
 
     /*
+    | Where the dashboard lives. Welcome and password-reset emails link here. In production it is
+    | the same address as the API; in local development the dashboard runs on its own port.
+    */
+
+    'dashboard_url' => rtrim((string) env('DASHBOARD_URL', env('APP_URL', 'http://localhost')), '/'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------

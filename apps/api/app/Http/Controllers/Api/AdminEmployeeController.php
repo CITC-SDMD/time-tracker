@@ -7,10 +7,13 @@ use App\Http\Requests\StoreEmployeeRequest;
 use App\Http\Requests\UpdateEmployeeRequest;
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Notifications\WelcomeNotification;
 use App\Services\HierarchyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
+use Throwable;
 
 // POST /api/v1/admin/employees, PATCH /api/v1/admin/employees/{id}
 // (docs/DEVELOPMENT_PLAN.md §9.1, §10). Both routes carry the `manager` middleware;
@@ -33,13 +36,9 @@ class AdminEmployeeController extends Controller
             ], 409);
         }
 
-        // A real (never-emailed, never-logged) temporary password, same approach as
-        // `tracker:make-oic`. The plan's longer-term design is an emailed
-        // Password::sendResetLink() flow (§9.2) — that needs a working reset-password
-        // page on the dashboard first, which hasn't been built yet, so this is the
-        // interim mechanism: the manager sees it once, in this response, and passes
-        // it to the new hire directly.
-        $temporaryPassword = Str::password(16);
+        // Nobody knows this password: the new person picks their own through the emailed
+        // set-password link (§9.2).
+        $unusablePassword = Str::password(32);
 
         // Explicit property assignment, not User::create([...]) — role/manager_id/
         // status/created_by are deliberately excluded from Fillable (see User.php), so
@@ -48,7 +47,7 @@ class AdminEmployeeController extends Controller
         $employee = new User;
         $employee->name = $request->string('name');
         $employee->email = $request->string('email');
-        $employee->password = Hash::make($temporaryPassword);
+        $employee->password = Hash::make($unusablePassword);
         $employee->role = $request->string('role');
         $employee->manager_id = $caller->id;
         $employee->status = 'ACTIVE';
@@ -57,12 +56,24 @@ class AdminEmployeeController extends Controller
 
         AuditLog::record($caller, 'employee.created', $employee, ['role' => $employee->role]);
 
+        // A failing mail server must not undo the account: it is logged, and the manager is
+        // handed the link to pass on themselves.
+        $token = Password::broker('invites')->createToken($employee);
+        $emailSent = true;
+        try {
+            $employee->notify(new WelcomeNotification($token, $caller->name));
+        } catch (Throwable $e) {
+            report($e);
+            $emailSent = false;
+        }
+
         return response()->json([
             'id' => (string) $employee->id,
             'name' => $employee->name,
             'email' => $employee->email,
             'role' => $employee->role,
-            'temporaryPassword' => $temporaryPassword,
+            'emailSent' => $emailSent,
+            ...($emailSent ? [] : ['setPasswordUrl' => $employee->passwordSetUrl($token)]),
         ], 201);
     }
 
