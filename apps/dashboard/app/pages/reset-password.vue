@@ -1,6 +1,89 @@
+<template>
+  <main class="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-4">
+    <header>
+      <h1 class="text-lg font-semibold">
+        Choose your password
+      </h1>
+      <p
+        v-if="email"
+        class="text-sm text-gray-500 dark:text-gray-400"
+      >
+        For {{ email }}
+      </p>
+    </header>
+
+    <UiAlert
+      v-if="!linkComplete"
+      variant="danger"
+    >
+      This link is incomplete. Open the link from your email again, or
+      <UiLink to="/forgot-password">
+        ask for a new one
+      </UiLink>.
+    </UiAlert>
+
+    <UiAlert v-else-if="done">
+      <p>Your password is set. Any device that was signed in has been signed out.</p>
+      <p class="mt-2">
+        Sign in to the desktop app with your email and this password.
+      </p>
+      <UiLink
+        to="/"
+        class="mt-2 inline-block"
+      >
+        Managers: sign in to the dashboard
+      </UiLink>
+    </UiAlert>
+
+    <UiCard
+      v-else
+      as="form"
+      class="space-y-4"
+      novalidate
+      @submit.prevent="onSubmit"
+    >
+      <FormInput
+        v-model="form.password"
+        label="New password (at least 10 characters)"
+        type="password"
+        autocomplete="new-password"
+        :errors="v$.password.$errors"
+        @blur="v$.password.$touch()"
+      />
+      <FormInput
+        v-model="form.confirmation"
+        label="Type it again"
+        type="password"
+        autocomplete="new-password"
+        :errors="v$.confirmation.$errors"
+        @blur="v$.confirmation.$touch()"
+      />
+      <FormError v-if="error">
+        {{ error }}
+        <UiLink
+          v-if="error.includes('expired')"
+          to="/forgot-password"
+        >
+          Get a new link
+        </UiLink>
+      </FormError>
+      <FormButton
+        type="submit"
+        block
+        :loading="loading"
+      >
+        {{ loading ? 'Saving…' : 'Set password' }}
+      </FormButton>
+    </UiCard>
+  </main>
+</template>
+
 <script setup lang="ts">
 // Set or reset a password from an emailed link (welcome or "Forgot password"). Works for every
 // role: employees who only use the desktop app choose their password here too.
+import { useVuelidate } from '@vuelidate/core'
+import { helpers, minLength, required, sameAs } from '@vuelidate/validators'
+
 definePageMeta({ layout: false })
 
 const route = useRoute()
@@ -29,19 +112,25 @@ const token = computed(() => link.token)
 const email = computed(() => link.email)
 const linkComplete = computed(() => !!token.value && !!email.value)
 
-const password = ref('')
-const confirmation = ref('')
+const form = reactive({ password: '', confirmation: '' })
+const rules = {
+  password: {
+    required: helpers.withMessage('Choose a password.', required),
+    minLength: helpers.withMessage('Use at least 10 characters.', minLength(10)),
+  },
+  confirmation: {
+    required: helpers.withMessage('Type the password again.', required),
+    sameAs: helpers.withMessage('The two passwords are not the same.', sameAs(toRef(form, 'password'))),
+  },
+}
+const v$ = useVuelidate(rules, form)
 const done = ref(false)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
-const mismatch = computed(() => confirmation.value !== '' && confirmation.value !== password.value)
-
 async function onSubmit() {
-  if (mismatch.value) {
-    error.value = 'The two passwords are not the same.'
+  if (!(await v$.value.$validate()))
     return
-  }
   loading.value = true
   error.value = null
   try {
@@ -51,8 +140,8 @@ async function onSubmit() {
       body: {
         token: token.value,
         email: email.value,
-        password: password.value,
-        password_confirmation: confirmation.value,
+        password: form.password,
+        password_confirmation: form.confirmation,
       },
     })
     done.value = true
@@ -65,98 +154,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<template>
-  <main class="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-4">
-    <header>
-      <h1 class="text-lg font-semibold">
-        Choose your password
-      </h1>
-      <p
-        v-if="email"
-        class="text-sm text-slate-500"
-      >
-        For {{ email }}
-      </p>
-    </header>
-
-    <p
-      v-if="!linkComplete"
-      class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-      role="alert"
-    >
-      This link is incomplete. Open the link from your email again, or
-      <NuxtLink
-        to="/forgot-password"
-        class="underline"
-      >
-        ask for a new one
-      </NuxtLink>.
-    </p>
-
-    <div
-      v-else-if="done"
-      class="space-y-3 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800"
-      role="status"
-    >
-      <p>Your password is set. Any device that was signed in has been signed out.</p>
-      <p>Sign in to the desktop app with your email and this password.</p>
-      <NuxtLink
-        to="/login"
-        class="inline-block underline"
-      >
-        Managers: sign in to the dashboard
-      </NuxtLink>
-    </div>
-
-    <form
-      v-else
-      class="space-y-3 rounded-lg border border-slate-200 bg-white p-4"
-      @submit.prevent="onSubmit"
-    >
-      <label class="block text-sm">
-        <span class="text-slate-500">New password (at least 10 characters)</span>
-        <input
-          v-model="password"
-          type="password"
-          required
-          minlength="10"
-          autocomplete="new-password"
-          class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-        >
-      </label>
-      <label class="block text-sm">
-        <span class="text-slate-500">Type it again</span>
-        <input
-          v-model="confirmation"
-          type="password"
-          required
-          minlength="10"
-          autocomplete="new-password"
-          class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-        >
-      </label>
-      <p
-        v-if="error"
-        class="text-sm text-red-600"
-        role="alert"
-      >
-        {{ error }}
-        <NuxtLink
-          v-if="error.includes('expired')"
-          to="/forgot-password"
-          class="underline"
-        >
-          Get a new link
-        </NuxtLink>
-      </p>
-      <button
-        type="submit"
-        :disabled="loading"
-        class="w-full rounded bg-slate-900 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-      >
-        {{ loading ? 'Saving…' : 'Set password' }}
-      </button>
-    </form>
-  </main>
-</template>

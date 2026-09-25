@@ -1,256 +1,110 @@
+<template>
+  <div class="flex h-screen flex-1">
+    <div class="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:flex-none lg:px-20 xl:px-24">
+      <div class="mx-auto w-full max-w-sm lg:w-96">
+        <div>
+          <img
+            class="h-10 w-auto dark:hidden"
+            src="https://tailwindcss.com/plus-assets/img/logos/mark.svg?color=amber&shade=500"
+            alt="Your Company"
+          >
+          <img
+            class="h-10 w-auto not-dark:hidden"
+            src="https://tailwindcss.com/plus-assets/img/logos/mark.svg?color=amber&shade=400"
+            alt="Your Company"
+          >
+          <h2 class="mt-8 text-2xl/9 font-bold tracking-tight text-gray-900 dark:text-white">
+            Sign in to your account
+          </h2>
+        </div>
+
+        <form
+          class="mt-10 space-y-6"
+          novalidate
+          @submit.prevent="onSubmit"
+        >
+          <FormInput
+            v-model="form.email"
+            label="Email address"
+            type="email"
+            name="email"
+            autocomplete="username"
+            :errors="v$.email.$errors"
+            @blur="v$.email.$touch()"
+          />
+          <FormInput
+            v-model="form.password"
+            label="Password"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            :errors="v$.password.$errors"
+            @blur="v$.password.$touch()"
+          />
+
+          <div class="flex items-center justify-end text-sm/6">
+            <UiLink to="/forgot-password">
+              Forgot password?
+            </UiLink>
+          </div>
+
+          <FormError v-if="error">
+            {{ error }}
+          </FormError>
+
+          <FormButton
+            type="submit"
+            block
+            :loading="loading"
+          >
+            {{ loading ? 'Signing in…' : 'Sign in' }}
+          </FormButton>
+        </form>
+      </div>
+    </div>
+    <div class="relative hidden w-0 flex-1 lg:block">
+      <img
+        class="absolute inset-0 size-full object-cover"
+        src="https://images.unsplash.com/photo-1496917756835-20cb06e75b4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=1908&q=80"
+        alt=""
+      >
+    </div>
+  </div>
+</template>
+
 <script setup lang="ts">
-import { ROLE_LABEL, type EmployeeListItem } from 'shared'
+import { useVuelidate } from '@vuelidate/core'
+import { email as emailRule, helpers, required } from '@vuelidate/validators'
 
-// Overview (docs/DEVELOPMENT_PLAN.md §12 Phase 6): who is working now, and today's totals,
-// over the caller's own visible set only. Refreshes every 60 s while the tab is visible.
-const { api } = useApi()
-const { formatDuration, formatTime } = useFormat()
+definePageMeta({ layout: false })
 
-const employees = ref<EmployeeListItem[]>([])
-const loaded = ref(false)
+const { login } = useAuth()
+const form = reactive({ email: '', password: '' })
+const rules = {
+  email: {
+    required: helpers.withMessage('Enter your email address.', required),
+    email: helpers.withMessage('Enter a valid email address.', emailRule),
+  },
+  password: { required: helpers.withMessage('Enter your password.', required) },
+}
+const v$ = useVuelidate(rules, form)
 const error = ref<string | null>(null)
+const loading = ref(false)
 
-const STATUS_LABEL: Record<EmployeeListItem['status'], string> = {
-  ACTIVE: 'Active',
-  IDLE: 'Idle',
-  PAUSED: 'Paused',
-  AWAY: 'Away',
-  NOT_TRACKING: 'Not tracking',
-  OFFLINE: 'Offline',
-}
-
-const STATUS_DOT: Record<EmployeeListItem['status'], string> = {
-  ACTIVE: 'bg-green-500',
-  IDLE: 'bg-amber-500',
-  PAUSED: 'bg-blue-500',
-  AWAY: 'bg-slate-400',
-  NOT_TRACKING: 'bg-slate-300',
-  OFFLINE: 'bg-red-400',
-}
-
-function statusText(e: EmployeeListItem): string {
-  return e.status === 'OFFLINE'
-    ? `Offline (last seen ${formatTime(e.lastActivityAt)})`
-    : STATUS_LABEL[e.status]
-}
-
-const cards = computed(() => {
-  const list = employees.value
-  const tracking = list.filter(e => e.status === 'ACTIVE').length
-  const idle = list.filter(e => e.status === 'IDLE').length
-  return { tracking, idle, notTracking: list.length - tracking - idle }
-})
-
-const totals = computed(() => ({
-  tracked: employees.value.reduce((sum, e) => sum + e.trackedSeconds, 0),
-  active: employees.value.reduce((sum, e) => sum + e.activeSeconds, 0),
-  idle: employees.value.reduce((sum, e) => sum + e.idleSeconds, 0),
-}))
-
-async function load() {
+async function onSubmit() {
+  if (!(await v$.value.$validate()))
+    return
+  loading.value = true
+  error.value = null
   try {
-    employees.value = await api<EmployeeListItem[]>('/employees')
-    error.value = null
+    const signedIn = await login(form.email.trim(), form.password)
+    await navigateTo(homeFor(signedIn.role))
   }
   catch (e) {
-    error.value = messageOf(e, 'Could not load the overview.')
+    error.value = messageOf(e, 'Could not log in. Check your connection and try again.')
   }
   finally {
-    loaded.value = true
+    loading.value = false
   }
 }
-
-let timer: ReturnType<typeof setInterval> | undefined
-
-function onVisible() {
-  if (document.visibilityState === 'visible')
-    load()
-}
-
-onMounted(() => {
-  load()
-  timer = setInterval(() => {
-    if (document.visibilityState === 'visible')
-      load()
-  }, 60_000)
-  document.addEventListener('visibilitychange', onVisible)
-})
-
-onBeforeUnmount(() => {
-  clearInterval(timer)
-  document.removeEventListener('visibilitychange', onVisible)
-})
 </script>
-
-<template>
-  <main class="mx-auto max-w-6xl space-y-4 p-4">
-    <header>
-      <h1 class="text-lg font-semibold">
-        Overview
-      </h1>
-      <p class="text-sm text-slate-500">
-        Everyone you can see, updated every minute.
-      </p>
-    </header>
-
-    <p
-      v-if="error"
-      class="text-sm text-red-600"
-      role="alert"
-    >
-      {{ error }}
-    </p>
-
-    <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <div class="rounded-lg border border-slate-200 bg-white p-4">
-        <p class="text-sm text-slate-500">
-          Tracking now
-        </p>
-        <p
-          class="text-3xl font-semibold text-green-600"
-          data-testid="card-tracking"
-        >
-          {{ cards.tracking }}
-        </p>
-      </div>
-      <div class="rounded-lg border border-slate-200 bg-white p-4">
-        <p class="text-sm text-slate-500">
-          Idle now
-        </p>
-        <p
-          class="text-3xl font-semibold text-amber-600"
-          data-testid="card-idle"
-        >
-          {{ cards.idle }}
-        </p>
-      </div>
-      <div class="rounded-lg border border-slate-200 bg-white p-4">
-        <p class="text-sm text-slate-500">
-          Not tracking
-        </p>
-        <p
-          class="text-3xl font-semibold text-slate-600"
-          data-testid="card-not-tracking"
-        >
-          {{ cards.notTracking }}
-        </p>
-      </div>
-    </section>
-
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-2 text-sm font-medium text-slate-500">
-        Today, everyone together
-      </h2>
-      <dl class="flex flex-wrap gap-x-8 gap-y-1 text-sm">
-        <div class="flex gap-2">
-          <dt class="text-slate-500">
-            Tracked
-          </dt>
-          <dd class="font-medium tabular-nums">
-            {{ formatDuration(totals.tracked) }}
-          </dd>
-        </div>
-        <div class="flex gap-2">
-          <dt class="text-slate-500">
-            Active
-          </dt>
-          <dd class="font-medium tabular-nums">
-            {{ formatDuration(totals.active) }}
-          </dd>
-        </div>
-        <div class="flex gap-2">
-          <dt class="text-slate-500">
-            Idle
-          </dt>
-          <dd class="font-medium tabular-nums">
-            {{ formatDuration(totals.idle) }}
-          </dd>
-        </div>
-      </dl>
-    </section>
-
-    <section class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table class="w-full min-w-[52rem] text-left text-sm">
-        <thead class="border-b border-slate-200 text-slate-500">
-          <tr>
-            <th class="px-3 py-2 font-medium">
-              Name
-            </th>
-            <th class="px-3 py-2 font-medium">
-              Role
-            </th>
-            <th class="px-3 py-2 font-medium">
-              Status
-            </th>
-            <th class="px-3 py-2 text-right font-medium">
-              Tracked
-            </th>
-            <th class="px-3 py-2 text-right font-medium">
-              Active
-            </th>
-            <th class="px-3 py-2 text-right font-medium">
-              Idle
-            </th>
-            <th class="px-3 py-2 font-medium">
-              Current app
-            </th>
-            <th class="px-3 py-2 font-medium">
-              Last activity
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="e in employees"
-            :key="e.id"
-            class="border-b border-slate-100 last:border-0"
-          >
-            <td class="px-3 py-2">
-              <NuxtLink
-                :to="`/employees/${e.id}`"
-                class="font-medium underline"
-              >
-                {{ e.name }}
-              </NuxtLink>
-            </td>
-            <td class="px-3 py-2 text-slate-500">
-              {{ ROLE_LABEL[e.role] }}
-            </td>
-            <td class="px-3 py-2">
-              <span class="inline-flex items-center gap-2">
-                <span
-                  class="inline-block h-2.5 w-2.5 rounded-full"
-                  :class="STATUS_DOT[e.status]"
-                />
-                {{ statusText(e) }}
-              </span>
-            </td>
-            <td class="px-3 py-2 text-right tabular-nums">
-              {{ formatDuration(e.trackedSeconds) }}
-            </td>
-            <td class="px-3 py-2 text-right tabular-nums">
-              {{ formatDuration(e.activeSeconds) }}
-            </td>
-            <td class="px-3 py-2 text-right tabular-nums">
-              {{ formatDuration(e.idleSeconds) }}
-            </td>
-            <td class="px-3 py-2">
-              {{ e.status === 'ACTIVE' ? (e.currentApp ?? '—') : '—' }}
-            </td>
-            <td class="px-3 py-2 text-slate-500">
-              {{ formatTime(e.lastActivityAt) }}
-            </td>
-          </tr>
-          <tr v-if="loaded && !employees.length">
-            <td
-              colspan="8"
-              class="px-3 py-4 text-center text-slate-500"
-            >
-              Nobody to show yet.
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-  </main>
-</template>

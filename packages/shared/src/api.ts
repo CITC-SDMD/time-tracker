@@ -13,7 +13,7 @@ export interface ApiError {
 export interface OfficeSettings {
   timezone: string
   idleThresholdSeconds: number
-  windowTitleMode: 'FULL' | 'APP_ONLY'
+  windowTitleMode: 'full' | 'app_only'
   minAgentVersion: string
   consentVersion: number
 }
@@ -25,6 +25,7 @@ export interface Me {
   email: string
   role: Role
   status: UserStatus
+  managerName: string | null
   consentVersion: number | null
   consentRequired: boolean
   officeSettings: OfficeSettings
@@ -77,7 +78,10 @@ export interface EmployeeListItem {
   email: string
   role: Role
   accountStatus: UserStatus
-  status: TrackingState | 'OFFLINE'
+  managerId: string | null
+  managerName: string | null
+  createdAt: string
+  status: TrackingState | 'offline'
   trackedSeconds: number
   activeSeconds: number
   idleSeconds: number
@@ -99,7 +103,7 @@ export interface DailySummary {
 
 // GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor= — merged blocks of one office-timezone day
 export interface TimelineSegment {
-  kind: 'ACTIVE' | 'IDLE'
+  kind: 'active' | 'idle'
   label: string // app name, or "Idle (in Zoom)"
   appName: string | null
   idleAppName: string | null
@@ -135,4 +139,45 @@ export interface AuditLogEntry {
   targetName: string | null
   details: Record<string, unknown> | null
   at: string
+}
+
+// GET /api/v1/admin/audit?cursor=&action=&q=&from=&to=
+export interface AuditLogPage {
+  entries: AuditLogEntry[]
+  nextCursor: number | null
+}
+
+// GET /api/v1/reports/daily?from=&to=&uid=&format=json|csv — one row per person per day
+export interface ReportDailyRow {
+  day: string // YYYY-MM-DD, office timezone
+  userId: string
+  name: string
+  email: string
+  role: Role
+  trackedSeconds: number
+  activeSeconds: number
+  idleSeconds: number
+  firstActivityAt: string | null
+  lastActivityAt: string | null
+}
+
+// GET /api/v1/reports/apps — active time per application over the range
+export interface ReportAppRow {
+  app: string
+  seconds: number
+  people: number
+}
+
+// GET /api/v1/reports/team — one row per person over the range
+export interface ReportTeamRow {
+  userId: string
+  name: string
+  email: string
+  role: Role
+  managerName: string | null
+  daysTracked: number
+  trackedSeconds: number
+  activeSeconds: number
+  idleSeconds: number
+  averageTrackedSeconds: number
 }

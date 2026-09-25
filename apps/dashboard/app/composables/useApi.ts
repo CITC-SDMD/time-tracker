@@ -48,7 +48,7 @@ export function useApi() {
       // A deactivated manager gets 403 ACCOUNT_DEACTIVATED on the next request (Test 6.9).
       if (signOutOnAuthError && isSignedOut(error)) {
         me.value = null
-        await navigateTo('/login')
+        await navigateTo('/')
       }
       throw error
     }

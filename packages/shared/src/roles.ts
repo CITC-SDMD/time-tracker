@@ -2,37 +2,39 @@
 // apps/api/app/Models/User.php.
 
 export type Role =
-  | 'OIC'
-  | 'PROJECT_MANAGER'
-  | 'TEAM_LEADER'
-  | 'LEAD_DEVELOPER'
-  | 'DEVELOPER'
-  | 'CLIENT_SUPPORT'
-  | 'QA'
-  | 'SYSTEM_ANALYST'
+  | 'superadmin'
+  | 'oic'
+  | 'project_manager'
+  | 'team_leader'
+  | 'lead_developer'
+  | 'developer'
+  | 'client_support'
+  | 'qa'
+  | 'system_analyst'
 
-export type UserStatus = 'ACTIVE' | 'DEACTIVATED'
+export type UserStatus = 'active' | 'inactive'
 
 /** Roles that may use the dashboard. */
-export const MANAGER_ROLES: readonly Role[] = ['OIC', 'PROJECT_MANAGER', 'TEAM_LEADER']
+export const MANAGER_ROLES: readonly Role[] = ['superadmin', 'oic', 'project_manager', 'team_leader']
 
 export const INDIVIDUAL_CONTRIBUTOR_ROLES: readonly Role[] = [
-  'LEAD_DEVELOPER',
-  'DEVELOPER',
-  'CLIENT_SUPPORT',
-  'QA',
-  'SYSTEM_ANALYST',
+  'lead_developer',
+  'developer',
+  'client_support',
+  'qa',
+  'system_analyst',
 ]
 
 export const ROLE_LABEL: Record<Role, string> = {
-  OIC: 'OIC',
-  PROJECT_MANAGER: 'Project Manager',
-  TEAM_LEADER: 'Team Leader',
-  LEAD_DEVELOPER: 'Lead Developer',
-  DEVELOPER: 'Developer',
-  CLIENT_SUPPORT: 'Client Support',
-  QA: 'QA',
-  SYSTEM_ANALYST: 'System Analyst',
+  superadmin: 'Superadmin',
+  oic: 'OIC',
+  project_manager: 'Project Manager',
+  team_leader: 'Team Leader',
+  lead_developer: 'Lead Developer',
+  developer: 'Developer',
+  client_support: 'Client Support',
+  qa: 'QA',
+  system_analyst: 'System Analyst',
 }
 
 export function isManagerRole(role: Role): boolean {
@@ -42,11 +44,11 @@ export function isManagerRole(role: Role): boolean {
 /** The roles a person of `role` may create: exactly one tier below their own. */
 export function rolesOneTierBelow(role: Role): readonly Role[] {
   switch (role) {
-    case 'OIC':
-      return ['PROJECT_MANAGER']
-    case 'PROJECT_MANAGER':
-      return ['TEAM_LEADER']
-    case 'TEAM_LEADER':
+    case 'oic':
+      return ['project_manager']
+    case 'project_manager':
+      return ['team_leader']
+    case 'team_leader':
       return INDIVIDUAL_CONTRIBUTOR_ROLES
     default:
       return []

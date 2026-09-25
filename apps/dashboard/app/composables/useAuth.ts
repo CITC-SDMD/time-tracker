@@ -8,11 +8,13 @@ export function useAuth() {
   const me = useState<Me | null>('auth:me', () => null)
 
   const isManager = computed(() => !!me.value && isManagerRole(me.value.role))
-  const isOic = computed(() => me.value?.role === 'OIC')
+  const isOic = computed(() => me.value?.role === 'oic')
 
   async function login(email: string, password: string) {
     await web('/sanctum/csrf-cookie')
-    me.value = await web<Me>('/auth/login', { method: 'POST', body: { email, password } })
+    const signedIn = await web<Me>('/auth/login', { method: 'POST', body: { email, password } })
+    me.value = signedIn
+    return signedIn
   }
 
   async function logout() {
@@ -22,7 +24,7 @@ export function useAuth() {
     finally {
       me.value = null
     }
-    await navigateTo('/login')
+    await navigateTo('/')
   }
 
   /** Picks up an existing session cookie (a page reload); leaves `me` empty if there is none. */
