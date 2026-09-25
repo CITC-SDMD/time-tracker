@@ -24,6 +24,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // The dashboard signs in with a session cookie (Sanctum SPA); the agent keeps its token.
+        $middleware->statefulApi();
+
         $middleware->alias([
             'active' => EnsureActiveUser::class,
             'check-agent-version' => CheckAgentVersion::class,

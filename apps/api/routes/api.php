@@ -25,9 +25,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/me', [MeController::class, 'show']);
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
 
-        // §10.3: summary/timeline land in Phase 4/6, once sessions have real data.
         Route::middleware('manager')->group(function () {
             Route::get('/employees', [EmployeeController::class, 'index']);
+            Route::middleware('self-or-visible')->group(function () {
+                Route::get('/employees/{id}/summary', [EmployeeController::class, 'summary'])->whereNumber('id');
+                Route::get('/employees/{id}/timeline', [EmployeeController::class, 'timeline'])->whereNumber('id');
+            });
             Route::post('/admin/employees', [AdminEmployeeController::class, 'store']);
             Route::patch('/admin/employees/{id}', [AdminEmployeeController::class, 'update']);
         });

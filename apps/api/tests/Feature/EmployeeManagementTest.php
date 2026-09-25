@@ -113,7 +113,8 @@ class EmployeeManagementTest extends TestCase
 
         $response->assertOk();
         $ids = collect($response->json())->pluck('id');
-        $this->assertEqualsCanonicalizing([(string) $tlA->id, (string) $devA->id], $ids->all());
+        // The caller is part of their own visible set (Phase 6: the overview includes them).
+        $this->assertEqualsCanonicalizing([(string) $pmA->id, (string) $tlA->id, (string) $devA->id], $ids->all());
     }
 
     public function test_manager_can_deactivate_someone_in_their_hierarchy_and_their_token_stops_working(): void

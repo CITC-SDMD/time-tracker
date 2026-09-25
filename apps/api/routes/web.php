@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\DashboardAuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -14,3 +15,8 @@ Route::get('/health', function () {
         'version' => config('app.version', 'dev'),
     ]);
 });
+
+// Dashboard sign-in (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA cookie authentication.
+// /sanctum/csrf-cookie is registered by Sanctum itself.
+Route::post('/login', [DashboardAuthController::class, 'login'])->middleware('throttle:10,1');
+Route::post('/logout', [DashboardAuthController::class, 'logout']);
