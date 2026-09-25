@@ -29,7 +29,7 @@ class DashboardAuthTest extends TestCase
     {
         $oic = User::factory()->oic()->create(['password' => bcrypt('secret-pass')]);
 
-        $this->postJson('/login', ['email' => $oic->email, 'password' => 'secret-pass'])
+        $this->postJson('/auth/login', ['email' => $oic->email, 'password' => 'secret-pass'])
             ->assertOk()
             ->assertJsonPath('role', 'OIC');
 
@@ -42,7 +42,7 @@ class DashboardAuthTest extends TestCase
     {
         $oic = User::factory()->oic()->create(['password' => bcrypt('secret-pass')]);
 
-        $this->postJson('/login', ['email' => $oic->email, 'password' => 'nope'])
+        $this->postJson('/auth/login', ['email' => $oic->email, 'password' => 'nope'])
             ->assertStatus(401)
             ->assertJsonPath('error.code', 'WRONG_PASSWORD');
     }
@@ -51,7 +51,7 @@ class DashboardAuthTest extends TestCase
     {
         $dev = User::factory()->create(['password' => bcrypt('secret-pass')]);
 
-        $this->postJson('/login', ['email' => $dev->email, 'password' => 'secret-pass'])
+        $this->postJson('/auth/login', ['email' => $dev->email, 'password' => 'secret-pass'])
             ->assertForbidden()
             ->assertJsonPath('error.message', 'This dashboard is for managers only.');
 
@@ -63,7 +63,7 @@ class DashboardAuthTest extends TestCase
         $oic = User::factory()->oic()->create(['password' => bcrypt('secret-pass')]);
         $pm = User::factory()->projectManager($oic)->deactivated()->create(['password' => bcrypt('secret-pass')]);
 
-        $this->postJson('/login', ['email' => $pm->email, 'password' => 'secret-pass'])
+        $this->postJson('/auth/login', ['email' => $pm->email, 'password' => 'secret-pass'])
             ->assertForbidden()
             ->assertJsonPath('error.code', 'ACCOUNT_DEACTIVATED');
     }
@@ -72,7 +72,7 @@ class DashboardAuthTest extends TestCase
     {
         $oic = User::factory()->oic()->create();
 
-        $this->actingAs($oic, 'web')->postJson('/logout')->assertNoContent();
+        $this->actingAs($oic, 'web')->postJson('/auth/logout')->assertNoContent();
 
         $this->assertGuest('web');
     }

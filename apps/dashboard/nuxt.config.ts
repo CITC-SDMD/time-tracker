@@ -16,6 +16,15 @@ export default defineNuxtConfig({
   },
   devServer: { port: 3100 },
   compatibilityDate: '2026-09-01',
+  // In dev the page is on :3100 and Laravel on :8000. Proxying makes them one origin, as in
+  // production, so the Sanctum session cookie and CSRF token work without any CORS setup.
+  nitro: {
+    devProxy: {
+      '/api': { target: 'http://127.0.0.1:8000/api', changeOrigin: true },
+      '/auth': { target: 'http://127.0.0.1:8000/auth', changeOrigin: true },
+      '/sanctum': { target: 'http://127.0.0.1:8000/sanctum', changeOrigin: true },
+    },
+  },
   vite: {
     plugins: [tailwindcss()],
   },

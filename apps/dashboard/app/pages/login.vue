@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// Sanctum SPA login (docs/DEVELOPMENT_PLAN.md §9.2). The "admins only" check and
-// route guard land in Phase 2, once apps/api exists to actually authenticate against.
+// Sanctum SPA login (docs/DEVELOPMENT_PLAN.md §9.2). Only managers may sign in; the server
+// says "This dashboard is for managers only." to everyone else.
+definePageMeta({ layout: false })
+
 const { login } = useAuth()
 const email = ref('')
 const password = ref('')
@@ -14,8 +16,8 @@ async function onSubmit() {
     await login(email.value, password.value)
     await navigateTo('/')
   }
-  catch {
-    error.value = 'Could not log in. Check your email and password.'
+  catch (e) {
+    error.value = messageOf(e, 'Could not log in. Check your connection and try again.')
   }
   finally {
     loading.value = false
@@ -27,10 +29,10 @@ async function onSubmit() {
   <main class="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-4">
     <header>
       <h1 class="text-lg font-semibold">
-        Time Tracker — Admin
+        Time Tracker — Managers
       </h1>
       <p class="text-sm text-slate-500">
-        Sign in with your office admin account.
+        Sign in with your office account.
       </p>
     </header>
 
@@ -61,6 +63,7 @@ async function onSubmit() {
       <p
         v-if="error"
         class="text-sm text-red-600"
+        role="alert"
       >
         {{ error }}
       </p>

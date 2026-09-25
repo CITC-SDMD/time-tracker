@@ -18,11 +18,3 @@ export interface Session {
 
 export type TrackingState = 'ACTIVE' | 'IDLE' | 'PAUSED' | 'AWAY' | 'NOT_TRACKING'
 
-// A merged, display-ready piece of a day's timeline (docs/DEVELOPMENT_PLAN.md §10.3).
-export interface TimelineSegment {
-  type: SessionType
-  label: string // e.g. "Visual Studio Code" or "Idle (in Zoom)"
-  startedAt: string
-  endedAt: string
-  seconds: number
-}

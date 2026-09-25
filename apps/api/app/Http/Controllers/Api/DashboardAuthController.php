@@ -11,7 +11,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 
-// POST /login and /logout for the dashboard (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA
+// POST /auth/login and /auth/logout for the dashboard (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA
 // authentication — a session cookie plus CSRF token, not a bearer token. These are Laravel's
 // own unprefixed web routes, unlike the agent's token login under /api/v1/auth/login.
 // Individual contributors have the right password but no business in a manager dashboard, so

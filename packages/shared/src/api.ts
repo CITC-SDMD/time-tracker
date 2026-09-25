@@ -74,6 +74,9 @@ export interface AgentSyncResponse {
 export interface EmployeeListItem {
   id: string
   name: string
+  email: string
+  role: Role
+  accountStatus: UserStatus
   status: TrackingState | 'OFFLINE'
   trackedSeconds: number
   activeSeconds: number
@@ -90,6 +93,37 @@ export interface DailySummary {
   idleSeconds: number
   apps: Record<string, number> // appKey -> active seconds
   appNames: Record<string, string> // appKey -> friendly name
+  firstActivityAt: string | null
+  lastActivityAt: string | null
+}
+
+// GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor= — merged blocks of one office-timezone day
+export interface TimelineSegment {
+  kind: 'ACTIVE' | 'IDLE'
+  label: string // app name, or "Idle (in Zoom)"
+  appName: string | null
+  idleAppName: string | null
+  title: string | null
+  startedAt: string
+  endedAt: string
+  durationSeconds: number
+}
+
+export interface TimelineResponse {
+  day: string
+  firstActivityAt: string | null
+  lastActivityAt: string | null
+  segments: TimelineSegment[]
+  nextCursor: number | null // pass back as ?cursor= for the next page
+}
+
+// POST /api/v1/admin/employees
+export interface CreatedEmployee {
+  id: string
+  name: string
+  email: string
+  role: Role
+  temporaryPassword: string
 }
 
 // GET /api/v1/admin/audit

@@ -1,24 +1,39 @@
-import type { Me } from 'shared'
+import { isManagerRole, type Me } from 'shared'
 
 // Sanctum SPA authentication: a session cookie + CSRF token, not a bearer token
-// (docs/DEVELOPMENT_PLAN.md §9.2) — that's what makes /sanctum/csrf-cookie, /login and
-// /logout Laravel's own unprefixed web routes, unlike everything else under /api/v1.
-// The role check ("admins only", sign out + redirect) and the route guard land in
-// Phase 2, once apps/api actually exists to talk to.
+// (docs/DEVELOPMENT_PLAN.md §9.2). Only managers (OIC, Project Manager, Team Leader) may
+// use the dashboard; the server refuses everyone else at login and on every route.
 export function useAuth() {
-  const { api } = useApi()
+  const { web } = useApi()
   const me = useState<Me | null>('auth:me', () => null)
 
+  const isManager = computed(() => !!me.value && isManagerRole(me.value.role))
+  const isOic = computed(() => me.value?.role === 'OIC')
+
   async function login(email: string, password: string) {
-    await $fetch('/sanctum/csrf-cookie', { credentials: 'include' })
-    await $fetch('/login', { method: 'POST', credentials: 'include', body: { email, password } })
-    me.value = await api<Me>('/me')
+    await web('/sanctum/csrf-cookie')
+    me.value = await web<Me>('/auth/login', { method: 'POST', body: { email, password } })
   }
 
   async function logout() {
-    await $fetch('/logout', { method: 'POST', credentials: 'include' })
-    me.value = null
+    try {
+      await web('/auth/logout', { method: 'POST' })
+    }
+    finally {
+      me.value = null
+    }
+    await navigateTo('/login')
   }
 
-  return { me, login, logout }
+  /** Picks up an existing session cookie (a page reload); leaves `me` empty if there is none. */
+  async function restore() {
+    try {
+      me.value = await web<Me>('/api/v1/me')
+    }
+    catch {
+      me.value = null
+    }
+  }
+
+  return { me, isManager, isOic, login, logout, restore }
 }

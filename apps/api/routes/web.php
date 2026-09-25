@@ -17,6 +17,6 @@ Route::get('/health', function () {
 });
 
 // Dashboard sign-in (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA cookie authentication.
-// /sanctum/csrf-cookie is registered by Sanctum itself.
-Route::post('/login', [DashboardAuthController::class, 'login'])->middleware('throttle:10,1');
-Route::post('/logout', [DashboardAuthController::class, 'logout']);
+// Under /auth so a static-hosted dashboard page can own /login. /sanctum/csrf-cookie is registered by Sanctum itself.
+Route::post('/auth/login', [DashboardAuthController::class, 'login'])->middleware('throttle:10,1');
+Route::post('/auth/logout', [DashboardAuthController::class, 'logout']);

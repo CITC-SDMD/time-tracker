@@ -1,15 +1,68 @@
-// Thin wrapper around Laravel's JSON API under /api/v1 (docs/DEVELOPMENT_PLAN.md §10).
-// Same-origin in production, so cookies ride along automatically; `credentials: 'include'`
-// keeps that working in dev too, when apiBase points at a separate dev server.
+import type { Me } from 'shared'
+
+type FetchOptions = NonNullable<Parameters<typeof $fetch>[1]>
+
+function xsrfToken(): string | undefined {
+  const match = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/)
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined
+}
+
+/** The person is signed out (or their account was deactivated): a fresh login is needed. */
+function isSignedOut(error: unknown): boolean {
+  const e = error as { statusCode?: number, data?: { error?: { code?: string } } }
+  return e.statusCode === 401 || e.data?.error?.code === 'ACCOUNT_DEACTIVATED'
+}
+
+/** The HTTP status of a failed call, if there was one. */
+export function statusOf(error: unknown): number | undefined {
+  return (error as { statusCode?: number }).statusCode
+}
+
+/** The server's own message ("Incorrect email or password."), or `fallback`. */
+export function messageOf(error: unknown, fallback: string): string {
+  const data = (error as { data?: { error?: { message?: string } } }).data
+  return data?.error?.message ?? fallback
+}
+
+// Thin wrapper around Laravel (docs/DEVELOPMENT_PLAN.md §10). Same origin in production; in
+// dev, nuxt.config proxies /api, /auth and /sanctum to the PHP server, so cookies just work.
+// Sanctum's SPA login needs the XSRF cookie echoed back in a header on every write.
 export function useApi() {
   const config = useRuntimeConfig()
+  const me = useState<Me | null>('auth:me', () => null)
 
-  function api<T>(path: string, options: Parameters<typeof $fetch<T>>[1] = {}) {
-    return $fetch<T>(`${config.public.apiBase}${path}`, {
-      credentials: 'include',
-      ...options,
-    })
+  async function request<T>(url: string, options: FetchOptions, signOutOnAuthError: boolean): Promise<T> {
+    const token = xsrfToken()
+    try {
+      return await $fetch<T>(url, {
+        credentials: 'include',
+        ...options,
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { 'X-XSRF-TOKEN': token } : {}),
+          ...(options.headers as Record<string, string> | undefined),
+        },
+      } as never) as T
+    }
+    catch (error) {
+      // A deactivated manager gets 403 ACCOUNT_DEACTIVATED on the next request (Test 6.9).
+      if (signOutOnAuthError && isSignedOut(error)) {
+        me.value = null
+        await navigateTo('/login')
+      }
+      throw error
+    }
   }
 
-  return { api }
+  /** A call under /api/v1. Signs the person out on 401 or a deactivated account. */
+  function api<T>(path: string, options: FetchOptions = {}) {
+    return request<T>(`${config.public.apiBase}${path}`, options, true)
+  }
+
+  /** A call to one of Laravel's own unprefixed routes (/auth/login, /sanctum/csrf-cookie). */
+  function web<T>(path: string, options: FetchOptions = {}) {
+    return request<T>(path, options, false)
+  }
+
+  return { api, web }
 }
