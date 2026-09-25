@@ -69,6 +69,25 @@ async function setStatus(person: EmployeeListItem, status: 'ACTIVE' | 'DEACTIVAT
   }
 }
 
+async function remove(person: EmployeeListItem) {
+  if (!confirm(`Delete ${person.name} (${person.email})? This cannot be undone. Only accounts that never tracked any time can be deleted; anyone else should be deactivated.`))
+    return
+  busyId.value = person.id
+  error.value = null
+  try {
+    await api(`/admin/employees/${person.id}`, { method: 'DELETE' })
+    if (created.value?.id === person.id)
+      created.value = null
+    await load()
+  }
+  catch (e) {
+    error.value = messageOf(e, 'Could not delete this account.')
+  }
+  finally {
+    busyId.value = null
+  }
+}
+
 async function copyLink() {
   if (!created.value?.setPasswordUrl)
     return
@@ -250,6 +269,14 @@ onMounted(() => {
                   @click="setStatus(p, 'ACTIVE')"
                 >
                   Reactivate
+                </button>
+                <button
+                  :disabled="busyId === p.id"
+                  class="ml-2 rounded bg-red-50 px-3 py-1 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  title="Only for accounts that never tracked any time"
+                  @click="remove(p)"
+                >
+                  Delete
                 </button>
               </template>
             </td>

@@ -6,8 +6,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-// Readable only by the OIC (docs/DEVELOPMENT_PLAN.md §9.1) — not filtered by hierarchy.
-#[Fillable(['actor_user_id', 'action', 'target_user_id', 'details', 'created_at'])]
+// Readable only by the OIC (docs/DEVELOPMENT_PLAN.md §9.1) — not filtered by hierarchy. The names are
+// copied into each entry so the log still reads correctly after an account is deleted.
+#[Fillable(['actor_user_id', 'actor_name', 'action', 'target_user_id', 'target_name', 'details', 'created_at'])]
 class AuditLog extends Model
 {
     public $timestamps = false;
@@ -27,8 +28,10 @@ class AuditLog extends Model
     {
         return self::create([
             'actor_user_id' => $actor->id,
+            'actor_name' => $actor->name,
             'action' => $action,
             'target_user_id' => $target?->id,
+            'target_name' => $target?->name,
             'details' => $details,
             'created_at' => now(),
         ]);

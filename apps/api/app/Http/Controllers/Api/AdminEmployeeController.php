@@ -10,6 +10,9 @@ use App\Models\User;
 use App\Notifications\WelcomeNotification;
 use App\Services\HierarchyService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
@@ -146,5 +149,47 @@ class AdminEmployeeController extends Controller
             'role' => $employee->role,
             'status' => $employee->status,
         ]);
+    }
+
+    /**
+     * Removes an account that was added by mistake or never used. Anyone who has tracked time or has
+     * people reporting to them is refused: the office keeps all tracked data, so they are deactivated
+     * instead, which keeps their history.
+     */
+    public function destroy(Request $request, int $id): Response|JsonResponse
+    {
+        $caller = $request->user();
+        $employee = User::findOrFail($id);
+
+        if ($id === $caller->id) {
+            return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
+        }
+        if ($employee->role === 'OIC') {
+            return $this->refuse(400, 'CANNOT_DELETE_OIC', 'An OIC account cannot be deleted. Deactivate it instead.');
+        }
+        if (! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
+            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your hierarchy.');
+        }
+        if (User::where('manager_id', $id)->exists()) {
+            return $this->refuse(409, 'HAS_REPORTS', "{$employee->name} has people reporting to them. Delete or move those accounts first.");
+        }
+        if (DB::table('sessions')->where('user_id', $id)->exists() || DB::table('daily_summaries')->where('user_id', $id)->exists()) {
+            return $this->refuse(409, 'HAS_DATA', "{$employee->name} has tracked time, which the office keeps. Deactivate the account instead.");
+        }
+
+        // Written first: the entry keeps the person's name after the row is gone.
+        AuditLog::record($caller, 'employee.deleted', $employee, ['email' => $employee->email, 'role' => $employee->role]);
+
+        $employee->tokens()->delete();
+        DB::table('password_reset_tokens')->where('email', $employee->email)->delete();
+        DB::table('password_invite_tokens')->where('email', $employee->email)->delete();
+        $employee->delete();
+
+        return response()->noContent();
+    }
+
+    private function refuse(int $status, string $code, string $message): JsonResponse
+    {
+        return response()->json(['error' => ['code' => $code, 'message' => $message]], $status);
     }
 }

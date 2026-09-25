@@ -34,9 +34,9 @@ class AdminAuditController extends Controller
         return response()->json([
             'entries' => $entries->map(fn (AuditLog $entry) => [
                 'id' => $entry->id,
-                'actorName' => $entry->actor?->name ?? 'Unknown',
+                'actorName' => $entry->actor?->name ?? $entry->actor_name ?? 'Unknown',
                 'action' => $entry->action,
-                'targetName' => $entry->target?->name,
+                'targetName' => $entry->target?->name ?? $entry->target_name,
                 'details' => $entry->details,
                 'at' => $entry->created_at->toIso8601String(),
             ]),

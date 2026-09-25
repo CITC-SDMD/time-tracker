@@ -20,6 +20,7 @@ const ACTION_LABEL: Record<string, string> = {
   'employee.created': 'Added an account',
   'employee.deactivated': 'Deactivated an account',
   'employee.reactivated': 'Reactivated an account',
+  'employee.deleted': 'Deleted an account',
   'settings.updated': 'Changed the office settings',
   'timeline.viewed': 'Viewed a timeline',
   'password.reset': 'Set or reset their password',

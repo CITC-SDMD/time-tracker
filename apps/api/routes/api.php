@@ -33,6 +33,7 @@ Route::prefix('v1')->group(function () {
             });
             Route::post('/admin/employees', [AdminEmployeeController::class, 'store']);
             Route::patch('/admin/employees/{id}', [AdminEmployeeController::class, 'update']);
+            Route::delete('/admin/employees/{id}', [AdminEmployeeController::class, 'destroy'])->whereNumber('id');
         });
 
         // Office-wide, not hierarchy-scoped — OIC only, even for other manager roles
