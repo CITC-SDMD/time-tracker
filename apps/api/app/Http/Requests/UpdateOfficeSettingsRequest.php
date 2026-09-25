@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\OfficeSetting;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -20,9 +21,11 @@ class UpdateOfficeSettingsRequest extends FormRequest
         return [
             'timezone' => ['sometimes', 'string', 'max:64', 'timezone'],
             'idleThresholdSeconds' => ['sometimes', 'integer', 'min:30', 'max:3600'],
-            'windowTitleMode' => ['sometimes', 'string', Rule::in(['FULL', 'APP_ONLY'])],
-            'minAgentVersion' => ['sometimes', 'string', 'max:32'],
-            'consentVersion' => ['sometimes', 'integer', 'min:1'],
+            'windowTitleMode' => ['sometimes', 'string', Rule::in(['full', 'app_only'])],
+            // a version like 1.2.3: anything else would lock every desktop app out of syncing
+            'minAgentVersion' => ['sometimes', 'string', 'max:32', 'regex:/^\d+\.\d+\.\d+$/'],
+            // it only ever goes up: lowering it would skip the tracking notice people already accepted
+            'consentVersion' => ['sometimes', 'integer', 'min:'.OfficeSetting::current()->consent_version],
         ];
     }
 }

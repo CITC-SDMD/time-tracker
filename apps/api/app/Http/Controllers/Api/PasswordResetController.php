@@ -27,7 +27,7 @@ class PasswordResetController extends Controller
         // cannot be used to find out which emails have an account. A mail failure is hidden
         // the same way: it is logged, not shown.
         try {
-            Password::broker('users')->sendResetLink(['email' => $data['email'], 'status' => 'ACTIVE']);
+            Password::broker('users')->sendResetLink(['email' => $data['email'], 'status' => 'active']);
         } catch (\Throwable $e) {
             report($e);
         }
@@ -43,7 +43,7 @@ class PasswordResetController extends Controller
             'password' => ['required', 'string', 'confirmed', PasswordRule::min(10)],
         ]);
 
-        $user = User::where('email', $data['email'])->where('status', 'ACTIVE')->first();
+        $user = User::where('email', $data['email'])->where('status', 'active')->first();
         $broker = $user ? $this->brokerHolding($user, $data['token']) : null;
 
         if ($broker === null) {
@@ -51,7 +51,7 @@ class PasswordResetController extends Controller
         }
 
         $status = Password::broker($broker)->reset(
-            ['email' => $data['email'], 'token' => $data['token'], 'password' => $data['password'], 'status' => 'ACTIVE'],
+            ['email' => $data['email'], 'token' => $data['token'], 'password' => $data['password'], 'status' => 'active'],
             function (User $user, string $password) {
                 $user->forceFill(['password' => $password, 'remember_token' => Str::random(60)])->save();
                 // Everything signed in with the old password is signed out: the dashboard and

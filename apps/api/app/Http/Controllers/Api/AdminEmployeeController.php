@@ -53,7 +53,7 @@ class AdminEmployeeController extends Controller
         $employee->password = Hash::make($unusablePassword);
         $employee->role = $request->string('role');
         $employee->manager_id = $caller->id;
-        $employee->status = 'ACTIVE';
+        $employee->status = 'active';
         $employee->created_by = $caller->id;
         $employee->save();
 
@@ -91,9 +91,9 @@ class AdminEmployeeController extends Controller
         // deactivating themselves. (Two OICs deactivating each other can never drive
         // the active count to zero — the caller stays active — so that path is
         // defense-in-depth for future code, not something this test suite can hit.)
-        if ($newStatus === 'DEACTIVATED' && $employee->role === 'OIC') {
-            $otherActiveOics = User::where('role', 'OIC')
-                ->where('status', 'ACTIVE')
+        if ($newStatus === 'inactive' && $employee->role === 'oic') {
+            $otherActiveOics = User::where('role', 'oic')
+                ->where('status', 'active')
                 ->whereKeyNot($employee->id)
                 ->exists();
 
@@ -115,27 +115,46 @@ class AdminEmployeeController extends Controller
         // by anyone, including another OIC. Peer OICs are the one deliberate exception:
         // any active OIC may act on any other OIC. Everyone else still requires $id to
         // be a real descendant.
-        $isPeerOic = $caller->role === 'OIC' && $employee->role === 'OIC';
+        $isPeerOic = $caller->role === 'oic' && $employee->role === 'oic';
         if (! $isPeerOic && ! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
             return response()->json([
                 'error' => ['code' => 'FORBIDDEN', 'message' => 'This person is not in your hierarchy.'],
             ], 403);
         }
 
+        // Checked before anything is changed, so a refused move leaves the account untouched.
+        $newManager = null;
+        if ($request->has('managerId') && $request->integer('managerId') !== $employee->manager_id) {
+            $refusal = $this->checkMove($caller, $employee, $request->integer('managerId'));
+            if ($refusal instanceof JsonResponse) {
+                return $refusal;
+            }
+            $newManager = $refusal;
+        }
+
         if ($request->has('name')) {
             $employee->name = $request->string('name');
         }
 
-        if ($newStatus === 'DEACTIVATED' && $employee->status !== 'DEACTIVATED') {
-            $employee->status = 'DEACTIVATED';
+        if ($newManager) {
+            $previousManager = $employee->manager;
+            $employee->manager_id = $newManager->id;
+            AuditLog::record($caller, 'employee.moved', $employee, [
+                'from' => $previousManager?->name,
+                'to' => $newManager->name,
+            ]);
+        }
+
+        if ($newStatus === 'inactive' && $employee->status !== 'inactive') {
+            $employee->status = 'inactive';
             $employee->deactivated_at = now();
             // Agent tokens stay valid so the PC can still upload what it recorded before
             // the deactivation (§10.1 step 4.3, Test 4.15); the `active` middleware already
             // refuses them everywhere except /agent/sync. Any other token is revoked.
             $employee->tokens()->where('name', 'not like', 'agent-%')->delete();
             AuditLog::record($caller, 'employee.deactivated', $employee);
-        } elseif ($newStatus === 'ACTIVE' && $employee->status !== 'ACTIVE') {
-            $employee->status = 'ACTIVE';
+        } elseif ($newStatus === 'active' && $employee->status !== 'active') {
+            $employee->status = 'active';
             $employee->deactivated_at = null;
             AuditLog::record($caller, 'employee.reactivated', $employee);
         }
@@ -148,7 +167,71 @@ class AdminEmployeeController extends Controller
             'email' => $employee->email,
             'role' => $employee->role,
             'status' => $employee->status,
+            'managerId' => $employee->manager_id === null ? null : (string) $employee->manager_id,
+            'managerName' => $employee->manager()->value('name'),
         ]);
+    }
+
+    /**
+     * Emails a fresh set-password link to someone the caller manages (the welcome link lasts 3 days).
+     * When the mail cannot be sent the link comes back instead, as when the account was created.
+     */
+    public function resendInvite(Request $request, int $id): JsonResponse
+    {
+        $caller = $request->user();
+        $employee = User::findOrFail($id);
+
+        if ($id === $caller->id) {
+            return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
+        }
+        if (! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
+            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your hierarchy.');
+        }
+        if ($employee->status !== 'active') {
+            return $this->refuse(409, 'ACCOUNT_INACTIVE', "{$employee->name} is deactivated. Reactivate the account first.");
+        }
+
+        $token = Password::broker('invites')->createToken($employee);
+        $emailSent = true;
+        try {
+            $employee->notify(new WelcomeNotification($token, $caller->name));
+        } catch (Throwable $e) {
+            report($e);
+            $emailSent = false;
+        }
+
+        AuditLog::record($caller, 'employee.invite_resent', $employee, ['emailSent' => $emailSent]);
+
+        return response()->json([
+            'emailSent' => $emailSent,
+            ...($emailSent ? [] : ['setPasswordUrl' => $employee->passwordSetUrl($token)]),
+        ]);
+    }
+
+    /**
+     * Whether $caller may move $employee under the manager with id $managerId. Returns the new
+     * manager when yes, or the refusal to send back. The new manager must be someone the caller can
+     * see, active, and hold the role exactly one tier above the person being moved, so the tree
+     * keeps its shape (and can never loop) without any extra validation.
+     */
+    private function checkMove(User $caller, User $employee, int $managerId): User|JsonResponse
+    {
+        if ($employee->role === 'oic') {
+            return $this->refuse(400, 'CANNOT_MOVE_OIC', 'An OIC has no manager.');
+        }
+
+        $newManager = User::find($managerId);
+        if (! $newManager || ! $this->hierarchy->isVisible($caller, $managerId)) {
+            return $this->refuse(403, 'FORBIDDEN', 'That manager is not in your hierarchy.');
+        }
+        if ($newManager->status !== 'active') {
+            return $this->refuse(422, 'MANAGER_INACTIVE', "{$newManager->name} is deactivated and cannot manage anyone.");
+        }
+        if (! in_array($employee->role, User::rolesOneTierBelow($newManager->role), true)) {
+            return $this->refuse(422, 'WRONG_TIER', "{$newManager->name} cannot manage this role. A person reports to the role one tier above their own.");
+        }
+
+        return $newManager;
     }
 
     /**
@@ -164,7 +247,7 @@ class AdminEmployeeController extends Controller
         if ($id === $caller->id) {
             return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
         }
-        if ($employee->role === 'OIC') {
+        if ($employee->role === 'oic') {
             return $this->refuse(400, 'CANNOT_DELETE_OIC', 'An OIC account cannot be deleted. Deactivate it instead.');
         }
         if (! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {

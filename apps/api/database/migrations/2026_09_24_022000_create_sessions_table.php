@@ -14,7 +14,7 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
             $table->uuid('device_id');
-            $table->enum('type', ['APPLICATION', 'IDLE']);
+            $table->enum('type', ['application', 'idle']);
             $table->string('app_name', 128)->nullable();
             $table->string('app_key', 128)->nullable();
             $table->string('process_name', 128)->nullable();

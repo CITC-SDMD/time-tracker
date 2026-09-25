@@ -14,7 +14,7 @@ class OfficeSettingsSeeder extends Seeder
         OfficeSetting::query()->updateOrCreate(['id' => 1], [
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);

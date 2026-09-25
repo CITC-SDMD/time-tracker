@@ -27,7 +27,7 @@ class DeleteEmployeeTest extends TestCase
         parent::setUp();
         OfficeSetting::create([
             'id' => 1, 'timezone' => 'Asia/Manila', 'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL', 'min_agent_version' => '0.1.0', 'consent_version' => 1,
+            'window_title_mode' => 'full', 'min_agent_version' => '0.1.0', 'consent_version' => 1,
         ]);
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
@@ -61,7 +61,7 @@ class DeleteEmployeeTest extends TestCase
     public function test_deleting_a_person_who_did_things_keeps_their_audit_entries(): void
     {
         $this->actingAs($this->pm, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'Made By Pat', 'email' => 'made@example.com', 'role' => 'TEAM_LEADER',
+            'name' => 'Made By Pat', 'email' => 'made@example.com', 'role' => 'team_leader',
         ])->assertCreated();
         $made = User::where('email', 'made@example.com')->firstOrFail();
         $this->remove($this->pm, $made)->assertNoContent();
@@ -86,7 +86,7 @@ class DeleteEmployeeTest extends TestCase
         $other = User::factory()->individualContributor($this->tl)->create();
         DB::table('sessions')->insert([
             'id' => (string) Str::uuid(), 'user_id' => $other->id, 'device_id' => (string) Str::uuid(),
-            'type' => 'APPLICATION', 'app_name' => 'X', 'started_at' => '2026-09-20 01:00:00', 'ended_at' => '2026-09-20 01:01:00',
+            'type' => 'application', 'app_name' => 'X', 'started_at' => '2026-09-20 01:00:00', 'ended_at' => '2026-09-20 01:01:00',
             'duration_seconds' => 60, 'day' => '2026-09-20', 'received_at' => now(),
         ]);
         $this->remove($this->tl, $other)->assertStatus(409)->assertJsonPath('error.code', 'HAS_DATA');

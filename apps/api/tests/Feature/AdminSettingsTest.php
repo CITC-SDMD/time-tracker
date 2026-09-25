@@ -19,7 +19,7 @@ class AdminSettingsTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -34,7 +34,7 @@ class AdminSettingsTest extends TestCase
         $response->assertOk()->assertJson([
             'timezone' => 'Asia/Manila',
             'idleThresholdSeconds' => 300,
-            'windowTitleMode' => 'FULL',
+            'windowTitleMode' => 'full',
             'minAgentVersion' => '0.1.0',
             'consentVersion' => 1,
         ]);
@@ -64,6 +64,31 @@ class AdminSettingsTest extends TestCase
         $this->assertSame(2, OfficeSetting::current()->consent_version);
     }
 
+    public function test_the_consent_version_can_never_go_down(): void
+    {
+        // found by the browser tests: the form refused it but the API accepted it
+        $oic = User::factory()->oic()->create();
+        $this->actingAs($oic, 'sanctum')->putJson('/api/v1/admin/settings', ['consentVersion' => 3])->assertOk();
+
+        $this->actingAs($oic, 'sanctum')->putJson('/api/v1/admin/settings', ['consentVersion' => 2])->assertStatus(422);
+        $this->actingAs($oic, 'sanctum')->putJson('/api/v1/admin/settings', ['consentVersion' => 3])->assertOk();
+
+        $this->assertSame(3, OfficeSetting::current()->consent_version);
+    }
+
+    public function test_the_minimum_agent_version_must_look_like_a_version(): void
+    {
+        // found by the browser tests: "banana" used to be saved, which would lock every desktop app out
+        $oic = User::factory()->oic()->create();
+
+        foreach (['banana', '1.2', '1.2.3.4', 'v1.2.3', '1.2.x', ''] as $bad) {
+            $this->actingAs($oic, 'sanctum')->putJson('/api/v1/admin/settings', ['minAgentVersion' => $bad])->assertStatus(422);
+        }
+        $this->actingAs($oic, 'sanctum')->putJson('/api/v1/admin/settings', ['minAgentVersion' => '1.2.3'])->assertOk();
+
+        $this->assertSame('1.2.3', OfficeSetting::current()->min_agent_version);
+    }
+
     public function test_invalid_window_title_mode_is_rejected(): void
     {
         $oic = User::factory()->oic()->create();
@@ -72,7 +97,7 @@ class AdminSettingsTest extends TestCase
             ->putJson('/api/v1/admin/settings', ['windowTitleMode' => 'NOT_A_MODE']);
 
         $response->assertStatus(422);
-        $this->assertSame('FULL', OfficeSetting::current()->window_title_mode);
+        $this->assertSame('full', OfficeSetting::current()->window_title_mode);
     }
 
     public function test_a_project_manager_cannot_read_or_change_settings(): void

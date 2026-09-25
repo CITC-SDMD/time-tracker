@@ -19,7 +19,7 @@ class AuthTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -86,7 +86,7 @@ class AuthTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('id', (string) $user->id)
-            ->assertJsonPath('role', 'OIC')
+            ->assertJsonPath('role', 'oic')
             ->assertJsonPath('consentRequired', true); // consent_version starts null
     }
 
@@ -110,7 +110,7 @@ class AuthTest extends TestCase
         $this->withHeader('Authorization', "Bearer {$token}")
             ->getJson('/api/v1/me')->assertOk();
 
-        $user->status = 'DEACTIVATED'; // explicit — status isn't Fillable, see User.php
+        $user->status = 'inactive'; // explicit — status isn't Fillable, see User.php
         $user->save();
 
         // Sanctum's guard caches the resolved user for the lifetime of the guard

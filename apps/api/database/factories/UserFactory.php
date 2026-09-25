@@ -33,8 +33,8 @@ class UserFactory extends Factory
             // Individual-contributor by default — tests opt into a manager role
             // explicitly via the state helpers below, so a plain factory call never
             // accidentally creates someone with dashboard access.
-            'role' => 'DEVELOPER',
-            'status' => 'ACTIVE',
+            'role' => 'developer',
+            'status' => 'active',
         ];
     }
 
@@ -50,27 +50,27 @@ class UserFactory extends Factory
 
     public function oic(): static
     {
-        return $this->state(fn () => ['role' => 'OIC', 'manager_id' => null]);
+        return $this->state(fn () => ['role' => 'oic', 'manager_id' => null]);
     }
 
     public function projectManager(?User $reportsTo = null): static
     {
-        return $this->state(fn () => ['role' => 'PROJECT_MANAGER', 'manager_id' => $reportsTo?->id]);
+        return $this->state(fn () => ['role' => 'project_manager', 'manager_id' => $reportsTo?->id]);
     }
 
     public function teamLeader(?User $reportsTo = null): static
     {
-        return $this->state(fn () => ['role' => 'TEAM_LEADER', 'manager_id' => $reportsTo?->id]);
+        return $this->state(fn () => ['role' => 'team_leader', 'manager_id' => $reportsTo?->id]);
     }
 
     /** Any individual-contributor role — LEAD_DEVELOPER/DEVELOPER/CLIENT_SUPPORT/QA/SYSTEM_ANALYST. */
-    public function individualContributor(?User $reportsTo = null, string $role = 'DEVELOPER'): static
+    public function individualContributor(?User $reportsTo = null, string $role = 'developer'): static
     {
         return $this->state(fn () => ['role' => $role, 'manager_id' => $reportsTo?->id]);
     }
 
     public function deactivated(): static
     {
-        return $this->state(fn () => ['status' => 'DEACTIVATED', 'deactivated_at' => now()]);
+        return $this->state(fn () => ['status' => 'inactive', 'deactivated_at' => now()]);
     }
 }

@@ -12,14 +12,15 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             $table->enum('role', [
-                'OIC',
-                'PROJECT_MANAGER',
-                'TEAM_LEADER',
-                'LEAD_DEVELOPER',
-                'DEVELOPER',
-                'CLIENT_SUPPORT',
-                'QA',
-                'SYSTEM_ANALYST',
+                'superadmin',
+                'oic',
+                'project_manager',
+                'team_leader',
+                'lead_developer',
+                'developer',
+                'client_support',
+                'qa',
+                'system_analyst',
             ])->after('password');
 
             // Self-referencing: NULL only for the OIC. Enforcing "exactly one tier up"
@@ -27,7 +28,7 @@ return new class extends Migration
             $table->foreignId('manager_id')->nullable()->after('role')
                 ->constrained('users')->nullOnDelete();
 
-            $table->enum('status', ['ACTIVE', 'DEACTIVATED'])->default('ACTIVE')->after('manager_id');
+            $table->enum('status', ['active', 'inactive'])->default('active')->after('manager_id');
             $table->timestamp('deactivated_at')->nullable()->after('status');
             $table->unsignedInteger('consent_version')->nullable()->after('deactivated_at');
             $table->timestamp('consent_accepted_at')->nullable()->after('consent_version');

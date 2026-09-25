@@ -36,24 +36,24 @@ class EmployeeController extends Controller
         $timezone = OfficeSetting::current()->timezone;
         $today = now($timezone)->format('Y-m-d');
 
-        // Two eager loads (status, today's summary) on top of the users query: the number of
+        // Three eager loads (manager, status, today's summary) on top of the users query: the number of
         // queries does not grow with the number of people (§10.3, Test 6.12).
         $query = User::whereIn('id', $this->hierarchy->visibleUserIds($request->user()))
-            ->with(['employeeStatus', 'dailySummaries' => fn ($q) => $q->where('day', $today)])
+            ->with(['manager:id,name', 'employeeStatus', 'dailySummaries' => fn ($q) => $q->where('day', $today)])
             ->orderBy('name');
 
         if (! $request->boolean('includeDeactivated')) {
-            $query->where('status', 'ACTIVE');
+            $query->where('status', 'active');
         }
 
         $employees = $query->get()->map(function (User $employee) {
             $status = $employee->employeeStatus;
             $today = $employee->dailySummaries->first();
 
-            $state = $status?->state ?? 'NOT_TRACKING';
+            $state = $status?->state ?? 'not_tracking';
             $isStale = $status && $status->last_seen_at->lt(now()->subMinutes(5));
-            if ($isStale && in_array($state, ['ACTIVE', 'IDLE', 'PAUSED'], true)) {
-                $state = 'OFFLINE';
+            if ($isStale && in_array($state, ['active', 'idle', 'paused'], true)) {
+                $state = 'offline';
             }
 
             return [
@@ -62,6 +62,9 @@ class EmployeeController extends Controller
                 'email' => $employee->email,
                 'role' => $employee->role,
                 'accountStatus' => $employee->status,
+                'managerId' => $employee->manager_id === null ? null : (string) $employee->manager_id,
+                'managerName' => $employee->manager?->name,
+                'createdAt' => $employee->created_at?->toIso8601String(),
                 'status' => $state,
                 'trackedSeconds' => $today->tracked_seconds ?? 0,
                 'activeSeconds' => $today->active_seconds ?? 0,

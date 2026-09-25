@@ -12,7 +12,7 @@ class EnsureOic
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if ($request->user()?->role !== 'OIC') {
+        if ($request->user()?->role !== 'oic') {
             return response()->json([
                 'error' => ['code' => 'FORBIDDEN', 'message' => 'Only the OIC can do this.'],
             ], 403);

@@ -13,7 +13,7 @@ return new class extends Migration
             $table->tinyInteger('id')->primary()->default(1);
             $table->string('timezone', 64); // e.g. "Asia/Manila" — defines what "a day" is
             $table->integer('idle_threshold_seconds')->default(300);
-            $table->enum('window_title_mode', ['FULL', 'APP_ONLY'])->default('FULL');
+            $table->enum('window_title_mode', ['full', 'app_only'])->default('full');
             $table->string('min_agent_version', 32);
             $table->integer('consent_version')->default(1);
         });

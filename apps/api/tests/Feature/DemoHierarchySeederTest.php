@@ -1,0 +1,59 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\User;
+use Database\Seeders\DatabaseSeeder;
+use Database\Seeders\DemoHierarchySeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+// the development office used for the live tests: it must build, be safe to run twice, and
+// give the OIC a dashboard with every live state in it.
+class DemoHierarchySeederTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_it_builds_the_office_and_can_be_run_again(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $this->seed(DemoHierarchySeeder::class);
+        $sessions = DB::table('sessions')->count();
+        $this->seed(DemoHierarchySeeder::class);
+
+        $this->assertSame(1, User::where('role', 'oic')->count());
+        $this->assertSame(2, User::where('role', 'project_manager')->count());
+        $this->assertSame(3, User::where('role', 'team_leader')->count());
+        $this->assertSame(6, User::whereIn('role', User::INDIVIDUAL_CONTRIBUTOR_ROLES)->count());
+        $this->assertSame($sessions, DB::table('sessions')->count());
+        $this->assertSame(0, User::whereIn('role', ['project_manager', 'team_leader', 'developer'])->whereNull('manager_id')->count());
+        $this->assertGreaterThan(300, DB::table('daily_summaries')->count());
+    }
+
+    public function test_the_oic_sees_every_live_state_and_a_team_leader_only_their_team(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $this->seed(DemoHierarchySeeder::class);
+
+        $office = collect($this->actingAs(User::where('email', 'oic@test.com')->first(), 'sanctum')->getJson('/api/v1/employees')->assertOk()->json());
+        $this->assertCount(12, $office);
+        $this->assertEqualsCanonicalizing(['active', 'idle', 'paused', 'not_tracking', 'offline'], $office->pluck('status')->unique()->all());
+
+        $team = collect($this->actingAs(User::where('email', 'tl1@test.com')->first(), 'sanctum')->getJson('/api/v1/employees')->assertOk()->json());
+        $this->assertEqualsCanonicalizing(['Tina Cruz', 'Dan Ramos', 'Dana Uy'], $team->pluck('name')->all());
+    }
+
+    public function test_a_seeded_timeline_has_blocks_for_today(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $this->seed(DemoHierarchySeeder::class);
+        $oic = User::where('email', 'oic@test.com')->first();
+        $dev = User::where('email', 'dev1@test.com')->first();
+        $today = now('Asia/Manila')->format('Y-m-d');
+
+        $timeline = $this->actingAs($oic, 'sanctum')->getJson("/api/v1/employees/{$dev->id}/timeline?day={$today}")->assertOk()->json();
+
+        $this->assertNotEmpty($timeline['segments']);
+    }
+}

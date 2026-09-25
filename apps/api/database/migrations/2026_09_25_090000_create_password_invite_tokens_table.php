@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-// Welcome links (3 days) live apart from password-reset links (1 hour): the token table does not
+// welcome links (3 days) live apart from password-reset links (1 hour): the token table does not
 // record which kind a token is, so sharing one table would let a reset token live for 3 days.
 return new class extends Migration
 {

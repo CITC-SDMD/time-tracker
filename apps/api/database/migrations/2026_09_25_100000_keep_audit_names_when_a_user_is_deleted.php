@@ -5,7 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-// Deleting an account must not delete what the audit log says that person did. The actor link now
+// deleting an account must not delete what the audit log says that person did. the actor link now
 // clears instead of cascading, and each entry keeps the names as they were when it was written.
 return new class extends Migration
 {
@@ -25,7 +25,7 @@ return new class extends Migration
             $table->foreign('actor_user_id')->references('id')->on('users')->nullOnDelete();
         });
 
-        // Names for the entries written before this change.
+        // names for the entries written before this change.
         foreach (DB::table('audit_logs')->select('id', 'actor_user_id', 'target_user_id')->get() as $row) {
             DB::table('audit_logs')->where('id', $row->id)->update([
                 'actor_name' => DB::table('users')->where('id', $row->actor_user_id)->value('name'),

@@ -26,7 +26,7 @@ class AuthController extends Controller
             ], 401);
         }
 
-        if ($user->status !== 'ACTIVE') {
+        if ($user->status !== 'active') {
             return response()->json([
                 'error' => ['code' => 'ACCOUNT_DEACTIVATED', 'message' => 'Your account is deactivated.'],
             ], 403);

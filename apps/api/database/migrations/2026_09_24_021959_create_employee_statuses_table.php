@@ -11,7 +11,7 @@ return new class extends Migration
     {
         Schema::create('employee_statuses', function (Blueprint $table) {
             $table->foreignId('user_id')->primary()->constrained('users')->cascadeOnDelete();
-            $table->enum('state', ['ACTIVE', 'IDLE', 'PAUSED', 'AWAY', 'NOT_TRACKING']);
+            $table->enum('state', ['active', 'idle', 'paused', 'away', 'not_tracking']);
             $table->string('current_app', 128)->nullable();
             $table->string('idle_app_name', 128)->nullable();
             $table->uuid('device_id')->nullable();

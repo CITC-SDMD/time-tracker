@@ -27,11 +27,11 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     /** Roles that get any dashboard access at all, scoped to their own hierarchy. */
-    public const array MANAGER_ROLES = ['OIC', 'PROJECT_MANAGER', 'TEAM_LEADER'];
+    public const array MANAGER_ROLES = ['superadmin', 'oic', 'project_manager', 'team_leader'];
 
     /** Roles with no reports — desktop app only, see only their own data. */
     public const array INDIVIDUAL_CONTRIBUTOR_ROLES = [
-        'LEAD_DEVELOPER', 'DEVELOPER', 'CLIENT_SUPPORT', 'QA', 'SYSTEM_ANALYST',
+        'lead_developer', 'developer', 'client_support', 'qa', 'system_analyst',
     ];
 
     /**
@@ -43,9 +43,9 @@ class User extends Authenticatable
     public static function rolesOneTierBelow(string $role): array
     {
         return match ($role) {
-            'OIC' => ['PROJECT_MANAGER'],
-            'PROJECT_MANAGER' => ['TEAM_LEADER'],
-            'TEAM_LEADER' => self::INDIVIDUAL_CONTRIBUTOR_ROLES,
+            'oic' => ['project_manager'],
+            'project_manager' => ['team_leader'],
+            'team_leader' => self::INDIVIDUAL_CONTRIBUTOR_ROLES,
             default => [],
         };
     }

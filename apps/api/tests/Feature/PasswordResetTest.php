@@ -26,7 +26,7 @@ class PasswordResetTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -175,7 +175,7 @@ class PasswordResetTest extends TestCase
         $oic = User::factory()->oic()->create(['name' => 'Olive Boss']);
 
         $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'PROJECT_MANAGER',
+            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'project_manager',
         ])->assertCreated()->assertJsonPath('emailSent', true);
 
         $this->assertArrayNotHasKey('temporaryPassword', $response->json());
@@ -189,7 +189,7 @@ class PasswordResetTest extends TestCase
         Notification::fake();
         $oic = User::factory()->oic()->create();
         $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'PROJECT_MANAGER',
+            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'project_manager',
         ])->assertCreated();
         $pm = User::where('email', 'pm@example.com')->firstOrFail();
 
@@ -216,7 +216,7 @@ class PasswordResetTest extends TestCase
         $oic = User::factory()->oic()->create();
 
         $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'PROJECT_MANAGER',
+            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'project_manager',
         ])->assertCreated()->assertJsonPath('emailSent', false);
 
         $this->assertDatabaseHas('users', ['email' => 'pm@example.com']);

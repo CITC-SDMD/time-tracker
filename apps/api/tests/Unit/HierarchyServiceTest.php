@@ -65,8 +65,8 @@ class HierarchyServiceTest extends TestCase
         $pm = User::factory()->projectManager($oic)->create();
         $tlA = User::factory()->teamLeader($pm)->create();
         $tlB = User::factory()->teamLeader($pm)->create();
-        $devA = User::factory()->individualContributor($tlA, 'DEVELOPER')->create();
-        $qaA = User::factory()->individualContributor($tlA, 'QA')->create();
+        $devA = User::factory()->individualContributor($tlA, 'developer')->create();
+        $qaA = User::factory()->individualContributor($tlA, 'qa')->create();
         $devB = User::factory()->individualContributor($tlB)->create();
 
         $visibleToA = $this->hierarchy->visibleUserIds($tlA);
@@ -82,7 +82,7 @@ class HierarchyServiceTest extends TestCase
         $pm = User::factory()->projectManager($oic)->create();
         $tl = User::factory()->teamLeader($pm)->create();
         $dev = User::factory()->individualContributor($tl)->create();
-        $sysAnalyst = User::factory()->individualContributor($tl, 'SYSTEM_ANALYST')->create();
+        $sysAnalyst = User::factory()->individualContributor($tl, 'system_analyst')->create();
 
         $this->assertSame([$dev->id], $this->hierarchy->visibleUserIds($dev));
         $this->assertFalse($this->hierarchy->isVisible($dev, $sysAnalyst->id));
@@ -95,7 +95,7 @@ class HierarchyServiceTest extends TestCase
         $oic = User::factory()->oic()->create();
         $pm = User::factory()->projectManager($oic)->create();
         $tl = User::factory()->teamLeader($pm)->create();
-        $sysAnalyst = User::factory()->individualContributor($tl, 'SYSTEM_ANALYST')->create();
+        $sysAnalyst = User::factory()->individualContributor($tl, 'system_analyst')->create();
 
         $this->assertTrue($this->hierarchy->isVisible($tl, $sysAnalyst->id));
         $this->assertTrue($this->hierarchy->isVisible($pm, $sysAnalyst->id));
@@ -104,9 +104,9 @@ class HierarchyServiceTest extends TestCase
 
     public function test_roles_one_tier_below(): void
     {
-        $this->assertSame(['PROJECT_MANAGER'], User::rolesOneTierBelow('OIC'));
-        $this->assertSame(['TEAM_LEADER'], User::rolesOneTierBelow('PROJECT_MANAGER'));
-        $this->assertSame(User::INDIVIDUAL_CONTRIBUTOR_ROLES, User::rolesOneTierBelow('TEAM_LEADER'));
-        $this->assertSame([], User::rolesOneTierBelow('DEVELOPER'));
+        $this->assertSame(['project_manager'], User::rolesOneTierBelow('oic'));
+        $this->assertSame(['team_leader'], User::rolesOneTierBelow('project_manager'));
+        $this->assertSame(User::INDIVIDUAL_CONTRIBUTOR_ROLES, User::rolesOneTierBelow('team_leader'));
+        $this->assertSame([], User::rolesOneTierBelow('developer'));
     }
 }

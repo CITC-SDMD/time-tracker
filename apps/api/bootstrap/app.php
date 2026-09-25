@@ -27,6 +27,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // The dashboard signs in with a session cookie (Sanctum SPA); the agent keeps its token.
         $middleware->statefulApi();
 
+        // There is no login page on this server (the dashboard owns it), so a signed-out request is
+        // answered 401 even when it does not ask for JSON, instead of failing on a missing "login" route.
+        $middleware->redirectGuestsTo(fn () => null);
+
         $middleware->alias([
             'active' => EnsureActiveUser::class,
             'check-agent-version' => CheckAgentVersion::class,

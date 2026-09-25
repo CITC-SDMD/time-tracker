@@ -38,7 +38,7 @@ class DashboardEmployeesTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -66,9 +66,21 @@ class DashboardEmployeesTest extends TestCase
         $this->assertCount(7, $this->names($this->oic));
     }
 
+    public function test_each_person_carries_the_name_of_their_manager(): void
+    {
+        $rows = collect($this->actingAs($this->oic, 'sanctum')->getJson('/api/v1/employees')->assertOk()->json())->keyBy('name');
+
+        $this->assertNull($rows['Olive']['managerId']);
+        $this->assertNull($rows['Olive']['managerName']);
+        $this->assertSame('Pat', $rows['Tina A']['managerName']);
+        $this->assertSame((string) $this->tlA->id, $rows['Dev A1']['managerId']);
+        $this->assertSame('Tina A', $rows['Dev A1']['managerName']);
+        $this->assertNotEmpty($rows['Dev A1']['createdAt']);
+    }
+
     public function test_deactivated_people_are_left_out_unless_asked_for(): void
     {
-        $this->devA2->forceFill(['status' => 'DEACTIVATED'])->save();
+        $this->devA2->forceFill(['status' => 'inactive'])->save();
 
         $this->assertNotContains('Dev A2', $this->names($this->tlA));
         $this->assertContains('Dev A2', $this->names($this->tlA, '?includeDeactivated=1'));
@@ -76,14 +88,14 @@ class DashboardEmployeesTest extends TestCase
 
     public function test_status_is_offline_when_last_seen_is_over_five_minutes_ago(): void
     {
-        $this->liveStatus($this->devA1, 'ACTIVE', now()->subMinutes(2));
-        $this->liveStatus($this->devA2, 'ACTIVE', now()->subMinutes(9));
+        $this->liveStatus($this->devA1, 'active', now()->subMinutes(2));
+        $this->liveStatus($this->devA2, 'active', now()->subMinutes(9));
 
         $rows = collect($this->actingAs($this->tlA, 'sanctum')->getJson('/api/v1/employees')->json())->keyBy('name');
 
-        $this->assertSame('ACTIVE', $rows['Dev A1']['status']);
-        $this->assertSame('OFFLINE', $rows['Dev A2']['status']);
-        $this->assertSame('NOT_TRACKING', $rows['Tina A']['status']);
+        $this->assertSame('active', $rows['Dev A1']['status']);
+        $this->assertSame('offline', $rows['Dev A2']['status']);
+        $this->assertSame('not_tracking', $rows['Tina A']['status']);
     }
 
     public function test_todays_totals_use_the_office_timezone_day(): void
@@ -109,7 +121,7 @@ class DashboardEmployeesTest extends TestCase
 
         foreach (range(1, 30) as $i) {
             $dev = User::factory()->individualContributor($this->tlA)->create();
-            $this->liveStatus($dev, 'ACTIVE', now());
+            $this->liveStatus($dev, 'active', now());
             $this->summary($dev, now('Asia/Manila')->format('Y-m-d'), 60, 60, 0);
         }
         DB::flushQueryLog();
@@ -155,7 +167,7 @@ class DashboardEmployeesTest extends TestCase
 
     public function test_a_deactivated_manager_is_refused(): void
     {
-        $this->tlA->forceFill(['status' => 'DEACTIVATED'])->save();
+        $this->tlA->forceFill(['status' => 'inactive'])->save();
 
         $this->actingAs($this->tlA, 'sanctum')
             ->getJson('/api/v1/employees')
@@ -185,12 +197,12 @@ class DashboardEmployeesTest extends TestCase
     public function test_timeline_merges_chunks_and_uses_the_office_day(): void
     {
         // Manila is UTC+8: 2026-09-20 in Manila runs 2026-09-19 16:00Z to 2026-09-20 16:00Z.
-        $this->addSession($this->devA1, 'APPLICATION', 'VS Code', 'a.ts', '2026-09-20 01:00:00', '2026-09-20 01:10:00');
-        $this->addSession($this->devA1, 'APPLICATION', 'VS Code', 'b.ts', '2026-09-20 01:10:00', '2026-09-20 01:30:00');
-        $this->addSession($this->devA1, 'IDLE', null, null, '2026-09-20 01:30:00', '2026-09-20 01:40:00', 'VS Code');
-        $this->addSession($this->devA1, 'APPLICATION', 'Chrome', 'Docs', '2026-09-20 01:41:00', '2026-09-20 01:50:00');
+        $this->addSession($this->devA1, 'application', 'VS Code', 'a.ts', '2026-09-20 01:00:00', '2026-09-20 01:10:00');
+        $this->addSession($this->devA1, 'application', 'VS Code', 'b.ts', '2026-09-20 01:10:00', '2026-09-20 01:30:00');
+        $this->addSession($this->devA1, 'idle', null, null, '2026-09-20 01:30:00', '2026-09-20 01:40:00', 'VS Code');
+        $this->addSession($this->devA1, 'application', 'Chrome', 'Docs', '2026-09-20 01:41:00', '2026-09-20 01:50:00');
         // Belongs to the next Manila day.
-        $this->addSession($this->devA1, 'APPLICATION', 'Chrome', 'x', '2026-09-20 17:00:00', '2026-09-20 17:10:00');
+        $this->addSession($this->devA1, 'application', 'Chrome', 'x', '2026-09-20 17:00:00', '2026-09-20 17:10:00');
 
         $json = $this->actingAs($this->tlA, 'sanctum')
             ->getJson("/api/v1/employees/{$this->devA1->id}/timeline?day=2026-09-20")
@@ -200,7 +212,7 @@ class DashboardEmployeesTest extends TestCase
         $this->assertSame('VS Code', $json['segments'][0]['label']);
         $this->assertSame(1800, $json['segments'][0]['durationSeconds']);
         $this->assertSame('b.ts', $json['segments'][0]['title']); // longest chunk wins
-        $this->assertSame('IDLE', $json['segments'][1]['kind']);
+        $this->assertSame('idle', $json['segments'][1]['kind']);
         $this->assertSame('Idle (in VS Code)', $json['segments'][1]['label']);
         $this->assertSame('Chrome', $json['segments'][2]['label']);
         $this->assertNull($json['nextCursor']);
@@ -211,7 +223,7 @@ class DashboardEmployeesTest extends TestCase
     public function test_timeline_cuts_a_session_that_crosses_midnight(): void
     {
         // 23:50 to 00:20 Manila = 15:50Z to 16:20Z.
-        $this->addSession($this->devA1, 'APPLICATION', 'VS Code', 't', '2026-09-20 15:50:00', '2026-09-20 16:20:00');
+        $this->addSession($this->devA1, 'application', 'VS Code', 't', '2026-09-20 15:50:00', '2026-09-20 16:20:00');
 
         $first = $this->actingAs($this->tlA, 'sanctum')
             ->getJson("/api/v1/employees/{$this->devA1->id}/timeline?day=2026-09-20")->json('segments');
@@ -228,7 +240,7 @@ class DashboardEmployeesTest extends TestCase
         $rows = [];
         $base = strtotime('2026-09-20 00:00:00 UTC');
         foreach (range(0, 599) as $i) {
-            $rows[] = $this->sessionRow($this->devA1, 'APPLICATION', $i % 2 ? 'B' : 'A', null,
+            $rows[] = $this->sessionRow($this->devA1, 'application', $i % 2 ? 'B' : 'A', null,
                 gmdate('Y-m-d H:i:s', $base + $i * 10), gmdate('Y-m-d H:i:s', $base + $i * 10 + 9), null);
         }
         DB::table('sessions')->insert($rows);

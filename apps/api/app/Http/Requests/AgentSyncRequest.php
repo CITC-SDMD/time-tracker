@@ -33,7 +33,7 @@ class AgentSyncRequest extends FormRequest
             'computerName' => ['nullable', 'string', 'max:128'],
             'dbReset' => ['sometimes', 'boolean'],
             'status' => ['required', 'array'],
-            'status.state' => ['required', 'in:ACTIVE,IDLE,PAUSED,AWAY,NOT_TRACKING'],
+            'status.state' => ['required', 'in:active,idle,paused,away,not_tracking'],
             'status.currentApp' => ['nullable', 'string', 'max:128'],
             'status.idleAppName' => ['nullable', 'string', 'max:128'],
             'status.since' => ['nullable', 'date'],

@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\MeController;
+use App\Http\Controllers\Api\ReportController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -23,6 +24,8 @@ Route::prefix('v1')->group(function () {
 
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('/me', [MeController::class, 'show']);
+        Route::patch('/me', [MeController::class, 'update']);
+        Route::put('/me/password', [MeController::class, 'changePassword'])->middleware('throttle:5,1');
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
 
         Route::middleware('manager')->group(function () {
@@ -31,8 +34,13 @@ Route::prefix('v1')->group(function () {
                 Route::get('/employees/{id}/summary', [EmployeeController::class, 'summary'])->whereNumber('id');
                 Route::get('/employees/{id}/timeline', [EmployeeController::class, 'timeline'])->whereNumber('id');
             });
+            Route::get('/reports/daily', [ReportController::class, 'daily']);
+            Route::get('/reports/apps', [ReportController::class, 'apps']);
+            Route::get('/reports/team', [ReportController::class, 'team']);
             Route::post('/admin/employees', [AdminEmployeeController::class, 'store']);
             Route::patch('/admin/employees/{id}', [AdminEmployeeController::class, 'update']);
+            Route::post('/admin/employees/{id}/resend-invite', [AdminEmployeeController::class, 'resendInvite'])
+                ->whereNumber('id')->middleware('throttle:10,1');
             Route::delete('/admin/employees/{id}', [AdminEmployeeController::class, 'destroy'])->whereNumber('id');
         });
 

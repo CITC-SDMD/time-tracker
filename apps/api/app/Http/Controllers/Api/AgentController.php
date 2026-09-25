@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
 // has validated the envelope.
 class AgentController extends Controller
 {
-    private const TRACKING_STATES = ['ACTIVE', 'IDLE'];
+    private const TRACKING_STATES = ['active', 'idle'];
 
     private const MAX_AGE_DAYS = 30;
 
@@ -36,7 +36,7 @@ class AgentController extends Controller
         $incoming = $data['status'];
         $office = OfficeSetting::current();
         $now = Carbon::now('UTC');
-        $deactivated = $user->status !== 'ACTIVE';
+        $deactivated = $user->status !== 'active';
 
         $result = DB::transaction(function () use ($user, $data, $deviceId, $agentVersion, $incoming, $office, $now, $deactivated) {
             $accepted = [];
@@ -110,10 +110,10 @@ class AgentController extends Controller
 
             // 4.4 / 4.5: insert; a duplicate-key error means another request won the race.
             foreach ($toInsert as $id => $s) {
-                if ($office->window_title_mode === 'APP_ONLY') {
+                if ($office->window_title_mode === 'app_only') {
                     $s['windowTitle'] = null;
                 }
-                $appKey = $s['type'] === 'APPLICATION' ? $this->summaries->appKey($s['processName'], $s['appName']) : null;
+                $appKey = $s['type'] === 'application' ? $this->summaries->appKey($s['processName'], $s['appName']) : null;
                 try {
                     Session::create([
                         'id' => $id,
@@ -194,7 +194,7 @@ class AgentController extends Controller
         $id = $raw['id'] ?? null;
         $type = $raw['type'] ?? null;
         if (! is_string($id) || ! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $id)
-            || ! in_array($type, ['APPLICATION', 'IDLE'], true)) {
+            || ! in_array($type, ['application', 'idle'], true)) {
             return [null, 'INVALID'];
         }
 

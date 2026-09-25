@@ -37,7 +37,7 @@ class MakeOicCommand extends Command
             return self::FAILURE;
         }
 
-        if (User::where('role', 'OIC')->where('status', 'ACTIVE')->exists()) {
+        if (User::where('role', 'oic')->where('status', 'active')->exists()) {
             $this->error('An active OIC already exists. Use the dashboard to manage accounts from here.');
 
             return self::FAILURE;
@@ -49,15 +49,15 @@ class MakeOicCommand extends Command
         // status aren't Fillable (see User.php), so a mass-assignment create() would
         // silently drop them. (This one only "worked" before by accident: MySQL's
         // implicit ENUM default for a missing NOT NULL column is its first defined
-        // value, which happens to be 'OIC' — i.e. it was inserting the right value for
+        // value, which happens to be 'oic' — i.e. it was inserting the right value for
         // the wrong reason, and would fail outright against SQLite or strict MySQL.)
         $oic = new User;
         $oic->name = $name;
         $oic->email = $email;
         $oic->password = Hash::make($temporaryPassword);
-        $oic->role = 'OIC';
+        $oic->role = 'oic';
         $oic->manager_id = null;
-        $oic->status = 'ACTIVE';
+        $oic->status = 'active';
         $oic->save();
 
         $this->info("OIC account created: {$oic->email}");

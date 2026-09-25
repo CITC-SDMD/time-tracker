@@ -32,7 +32,7 @@ class AgentSyncTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -53,7 +53,7 @@ class AgentSyncTest extends TestCase
 
         return array_merge([
             'id' => (string) Str::uuid(),
-            'type' => 'APPLICATION',
+            'type' => 'application',
             'appName' => 'Visual Studio Code',
             'processName' => 'Code.exe',
             'windowTitle' => 'main.rs',
@@ -72,7 +72,7 @@ class AgentSyncTest extends TestCase
             'computerName' => 'DESK-01',
             'dbReset' => false,
             'status' => array_merge([
-                'state' => 'ACTIVE',
+                'state' => 'active',
                 'currentApp' => 'Visual Studio Code',
                 'idleAppName' => null,
                 'since' => Carbon::now('UTC')->subMinutes(30)->toIso8601ZuluString('millisecond'),
@@ -96,7 +96,7 @@ class AgentSyncTest extends TestCase
         $user = User::factory()->create();
         $a = $this->makeSession(['processName' => 'Code.exe'], 10);
         $b = $this->makeSession(['appName' => 'Chrome', 'processName' => 'chrome.exe'], 5);
-        $idle = $this->makeSession(['type' => 'IDLE', 'appName' => null, 'processName' => null, 'idleAppName' => 'Zoom', 'durationSeconds' => 300], 1);
+        $idle = $this->makeSession(['type' => 'idle', 'appName' => null, 'processName' => null, 'idleAppName' => 'Zoom', 'durationSeconds' => 300], 1);
 
         $response = $this->sync($user, $this->body([$a, $b, $idle]));
 
@@ -141,7 +141,7 @@ class AgentSyncTest extends TestCase
     {
         $user = User::factory()->create();
 
-        foreach (['ACTIVE', 'IDLE', 'PAUSED', 'NOT_TRACKING'] as $state) {
+        foreach (['active', 'idle', 'paused', 'not_tracking'] as $state) {
             $this->sync($user, $this->body([], ['state' => $state]))->assertOk();
             $this->assertSame($state, EmployeeStatus::findOrFail($user->id)->state);
         }
@@ -214,7 +214,7 @@ class AgentSyncTest extends TestCase
 
     public function test_window_titles_are_dropped_when_the_office_only_wants_app_names(): void
     {
-        OfficeSetting::current()->update(['window_title_mode' => 'APP_ONLY']);
+        OfficeSetting::current()->update(['window_title_mode' => 'app_only']);
         $user = User::factory()->create();
         $session = $this->makeSession(['windowTitle' => 'Secret plans.docx']);
 
@@ -282,7 +282,7 @@ class AgentSyncTest extends TestCase
         $this->sync($user, $this->body([], ['trackingStartedAt' => $startB]), $this->deviceB)->assertOk();
 
         $early = $this->makeSession([], 30); // ran 35-30 minutes ago, well before B started
-        $this->sync($user, $this->body([$early], ['state' => 'NOT_TRACKING']), $this->deviceA)
+        $this->sync($user, $this->body([$early], ['state' => 'not_tracking']), $this->deviceA)
             ->assertOk()
             ->assertJsonPath('accepted', [$early['id']]);
     }
@@ -304,7 +304,7 @@ class AgentSyncTest extends TestCase
     public function test_a_deactivated_user_keeps_what_happened_before_deactivation_and_is_signed_out(): void
     {
         $user = User::factory()->create();
-        $user->status = 'DEACTIVATED';
+        $user->status = 'inactive';
         $user->deactivated_at = Carbon::now('UTC')->subMinutes(8);
         $user->save();
 

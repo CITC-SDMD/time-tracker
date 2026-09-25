@@ -1,0 +1,183 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\OfficeSetting;
+use App\Models\User;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+
+// a small office for trying the dashboard by hand and for the live tests of docs/DEVELOPMENT_PLAN.md
+// phases 6 and 11: the OIC from UserSeeder, 2 project managers, 3 team leaders and 6 members, all with
+// the password "password", 60 days of daily totals and a mix of live states (tracking, idle, paused,
+// not tracking, offline) with a few timelines for today. never runs in production. run it after
+// `php artisan migrate:fresh --seed` with: php artisan db:seed --class=DemoHierarchySeeder
+// running it again is safe: every person is found by email, and the sessions and totals it writes replace the old ones.
+class DemoHierarchySeeder extends Seeder
+{
+    private const APPS = [
+        'code' => 'Visual Studio Code',
+        'chrome' => 'Google Chrome',
+        'slack' => 'Slack',
+        'excel' => 'Microsoft Excel',
+        'figma' => 'Figma',
+    ];
+
+    public function run(): void
+    {
+        if (app()->isProduction()) {
+            return;
+        }
+
+        mt_srand(2026); // the same office every time
+        $timezone = OfficeSetting::current()->timezone;
+
+        $oic = $this->person('OIC', 'oic@test.com', 'oic', null);
+        $pm1 = $this->person('Paula Reyes', 'pm1@test.com', 'project_manager', $oic);
+        $pm2 = $this->person('Pedro Santos', 'pm2@test.com', 'project_manager', $oic);
+        $tl1 = $this->person('Tina Cruz', 'tl1@test.com', 'team_leader', $pm1);
+        $tl2 = $this->person('Tomas Diaz', 'tl2@test.com', 'team_leader', $pm1);
+        $tl3 = $this->person('Tess Lim', 'tl3@test.com', 'team_leader', $pm2);
+        $members = [
+            $this->person('Dan Ramos', 'dev1@test.com', 'lead_developer', $tl1),
+            $this->person('Dana Uy', 'dev2@test.com', 'developer', $tl1),
+            $this->person('Dex Tan', 'dev3@test.com', 'developer', $tl2),
+            $this->person('Quinn Go', 'qa1@test.com', 'qa', $tl2),
+            $this->person('Cara Sy', 'cs1@test.com', 'client_support', $tl3),
+            $this->person('Sam Ong', 'sa1@test.com', 'system_analyst', $tl3),
+        ];
+
+        // sixty days of totals for everyone below the OIC, weekdays only
+        foreach ([$pm1, $pm2, $tl1, $tl2, $tl3, ...$members] as $user) {
+            for ($back = 1; $back <= 60; $back++) {
+                $day = now($timezone)->subDays($back);
+                if ($day->isWeekend() || mt_rand(1, 10) === 1) {
+                    continue;
+                }
+                $tracked = mt_rand(4 * 3600, 9 * 3600);
+                $active = (int) ($tracked * mt_rand(78, 95) / 100);
+                $apps = $this->split($active);
+                $this->upsertSummary($user, $day->format('Y-m-d'), $tracked, $active, $tracked - $active, $apps,
+                    $day->copy()->setTime(8, mt_rand(0, 59))->utc(), $day->copy()->setTime(8, 0)->addSeconds($tracked + 3600)->utc());
+            }
+        }
+
+        // today: a mix of live states, and real timelines for the first three members and Tina
+        [$dev1, $dev2, $dev3, $qa1, $cs1] = $members;
+        $this->live($dev1, 'active', 'Visual Studio Code', 1);
+        $this->live($dev2, 'idle', null, 2, 'Microsoft Excel');
+        $this->live($dev3, 'paused', null, 3);
+        $this->live($qa1, 'not_tracking', null, 4);
+        $this->live($cs1, 'active', 'Slack', 25); // last synced 25 minutes ago: shows as offline
+        $this->live($tl1, 'active', 'Google Chrome', 1);
+        foreach ([$dev1, $dev2, $tl1] as $user) {
+            $this->todaysSessions($user, $timezone);
+        }
+    }
+
+    private function person(string $name, string $email, string $role, ?User $manager): User
+    {
+        return User::unguarded(fn () => User::updateOrCreate(['email' => $email], [
+            'name' => $name,
+            'password' => Hash::make('password'),
+            'role' => $role,
+            'manager_id' => $manager?->id,
+            'status' => 'active',
+        ]));
+    }
+
+    /** @return array<string, int> active seconds per app key, adding up to $seconds */
+    private function split(int $seconds): array
+    {
+        $keys = array_keys(self::APPS);
+        $weights = array_map(fn () => mt_rand(1, 10), $keys);
+        $apps = [];
+        foreach ($keys as $i => $key) {
+            $apps[$key] = intdiv($seconds * $weights[$i], array_sum($weights));
+        }
+        $apps[$keys[0]] += $seconds - array_sum($apps);
+
+        return $apps;
+    }
+
+    /** @param array<string, int> $apps */
+    private function upsertSummary(User $user, string $day, int $tracked, int $active, int $idle, array $apps, $first, $last): void
+    {
+        DB::table('daily_summaries')->updateOrInsert(['user_id' => $user->id, 'day' => $day], [
+            'tracked_seconds' => $tracked,
+            'active_seconds' => $active,
+            'idle_seconds' => $idle,
+            'apps' => json_encode($apps),
+            'app_names' => json_encode(array_intersect_key(self::APPS, $apps)),
+            'first_activity_at' => $first,
+            'last_activity_at' => $last,
+        ]);
+    }
+
+    private function live(User $user, string $state, ?string $app, int $minutesAgo, ?string $idleApp = null): void
+    {
+        DB::table('employee_statuses')->updateOrInsert(['user_id' => $user->id], [
+            'state' => $state,
+            'current_app' => $app,
+            'idle_app_name' => $idleApp,
+            'since' => now()->subMinutes($minutesAgo + 10),
+            'last_seen_at' => now()->subMinutes($minutesAgo),
+            'clock_skew_seconds' => 0,
+        ]);
+    }
+
+    /** Four hours of alternating app and idle sessions ending a few minutes ago; today's totals follow from them. */
+    private function todaysSessions(User $user, string $timezone): void
+    {
+        DB::table('sessions')->where('user_id', $user->id)->where('started_at', '>=', now()->subDay())->delete();
+
+        $device = (string) Str::uuid();
+        $cursor = now()->subMinutes(5);
+        $keys = array_keys(self::APPS);
+        $totals = []; // day => [tracked, active, idle, apps, first, last]
+
+        for ($block = 0; $block < 10 && $cursor->diffInMinutes(now()) < 240; $block++) {
+            $idle = $block % 4 === 3;
+            $seconds = $idle ? mt_rand(300, 600) : mt_rand(900, 2400);
+            $start = $cursor->copy()->subSeconds($seconds);
+            $key = $keys[mt_rand(0, count($keys) - 1)];
+            $day = $start->copy()->setTimezone($timezone)->format('Y-m-d');
+
+            DB::table('sessions')->insert([
+                'id' => (string) Str::uuid(),
+                'user_id' => $user->id,
+                'device_id' => $device,
+                'type' => $idle ? 'idle' : 'application',
+                'app_name' => $idle ? null : self::APPS[$key],
+                'app_key' => $idle ? null : $key,
+                'process_name' => $idle ? null : $key.'.exe',
+                'window_title' => $idle ? null : self::APPS[$key].' - demo',
+                'idle_app_name' => $idle ? self::APPS[$key] : null,
+                'started_at' => $start,
+                'ended_at' => $cursor,
+                'duration_seconds' => $seconds,
+                'day' => $day,
+                'clock_changed' => false,
+                'received_at' => now(),
+            ]);
+
+            $t = &$totals[$day];
+            $t ??= ['tracked' => 0, 'active' => 0, 'idle' => 0, 'apps' => [], 'first' => $start, 'last' => $cursor];
+            $t['tracked'] += $seconds;
+            $t[$idle ? 'idle' : 'active'] += $seconds;
+            if (! $idle) {
+                $t['apps'][$key] = ($t['apps'][$key] ?? 0) + $seconds;
+            }
+            $t['first'] = $start; // walking backwards in time
+            unset($t);
+
+            $cursor = $start->copy()->subMinutes(mt_rand(1, 5));
+        }
+
+        foreach ($totals as $day => $t) {
+            $this->upsertSummary($user, $day, $t['tracked'], $t['active'], $t['idle'], $t['apps'], $t['first'], $t['last']);
+        }
+    }
+}

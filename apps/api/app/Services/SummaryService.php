@@ -91,7 +91,7 @@ class SummaryService
 
         $apps = json_decode($row->apps ?: '{}', true) ?: [];
         $names = json_decode($row->app_names ?: '{}', true) ?: [];
-        if ($type === 'APPLICATION' && $appKey !== null) {
+        if ($type === 'application' && $appKey !== null) {
             $apps[$appKey] = ($apps[$appKey] ?? 0) + $seconds;
             if ($appName !== null) {
                 $names[$appKey] = $appName;
@@ -105,8 +105,8 @@ class SummaryService
 
         DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->update([
             'tracked_seconds' => $row->tracked_seconds + $seconds,
-            'active_seconds' => $row->active_seconds + ($type === 'APPLICATION' ? $seconds : 0),
-            'idle_seconds' => $row->idle_seconds + ($type === 'IDLE' ? $seconds : 0),
+            'active_seconds' => $row->active_seconds + ($type === 'application' ? $seconds : 0),
+            'idle_seconds' => $row->idle_seconds + ($type === 'idle' ? $seconds : 0),
             'apps' => json_encode((object) $apps),
             'app_names' => json_encode((object) $names),
             'first_activity_at' => ($first === null || $start->lt($first) ? $start : $first)->format('Y-m-d H:i:s.v'),

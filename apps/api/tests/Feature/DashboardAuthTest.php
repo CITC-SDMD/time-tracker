@@ -19,7 +19,7 @@ class DashboardAuthTest extends TestCase
             'id' => 1,
             'timezone' => 'Asia/Manila',
             'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'FULL',
+            'window_title_mode' => 'full',
             'min_agent_version' => '0.1.0',
             'consent_version' => 1,
         ]);
@@ -31,7 +31,7 @@ class DashboardAuthTest extends TestCase
 
         $this->postJson('/auth/login', ['email' => $oic->email, 'password' => 'secret-pass'])
             ->assertOk()
-            ->assertJsonPath('role', 'OIC');
+            ->assertJsonPath('role', 'oic');
 
         $this->getJson('/api/v1/me', ['Origin' => 'http://localhost:3100', 'Referer' => 'http://localhost:3100/'])
             ->assertOk()
@@ -75,5 +75,11 @@ class DashboardAuthTest extends TestCase
         $this->actingAs($oic, 'web')->postJson('/auth/logout')->assertNoContent();
 
         $this->assertGuest('web');
+    }
+
+    public function test_a_signed_out_request_that_does_not_ask_for_json_still_gets_401(): void
+    {
+        // found by the browser tests: it used to fail with a 500 on the missing "login" route
+        $this->get('/api/v1/employees')->assertStatus(401)->assertJsonPath('error.code', 'UNAUTHENTICATED');
     }
 }

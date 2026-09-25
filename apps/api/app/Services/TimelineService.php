@@ -61,8 +61,8 @@ class TimelineService
         $bestTitleSeconds = -1.0;
 
         foreach ($chunks as $chunk) {
-            $idle = $chunk['type'] === 'IDLE';
-            $key = $idle ? 'IDLE|'.($chunk['idle_app_name'] ?? '') : 'ACTIVE|'.($chunk['app_name'] ?? '');
+            $idle = $chunk['type'] === 'idle';
+            $key = $idle ? 'idle|'.($chunk['idle_app_name'] ?? '') : 'active|'.($chunk['app_name'] ?? '');
             $seconds = max(0.0, $this->seconds($chunk['ended']) - $this->seconds($chunk['started']));
 
             if ($current !== null
@@ -89,7 +89,7 @@ class TimelineService
                 'key' => $key,
                 'seconds' => $seconds,
                 'block' => [
-                    'kind' => $idle ? 'IDLE' : 'ACTIVE',
+                    'kind' => $idle ? 'idle' : 'active',
                     'label' => $idle
                         ? ($chunk['idle_app_name'] ? 'Idle (in '.$chunk['idle_app_name'].')' : 'Idle')
                         : ($chunk['app_name'] ?: 'Unknown'),
