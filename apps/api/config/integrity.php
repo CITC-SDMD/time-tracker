@@ -28,9 +28,9 @@ return [
 
     // a chunk that looks like a scripted or hardware wiggle
     'robotic_pattern' => [
-        'min_mouse_events' => 20,
+        'min_mouse_events' => 10,
         'max_interval_cv' => 10,      // regularity of the time between moves, times 100 (0 = perfectly regular)
-        'min_tiny_move_share' => 90,  // moves of a few pixels, in percent
+        'min_tiny_move_share' => 90,  // movement bursts of a few pixels, in percent
         'max_keys' => 2,
         'max_clicks' => 2,
         'min_minutes' => 60,

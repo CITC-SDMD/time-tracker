@@ -29,6 +29,9 @@ pub struct SyncStatusDto {
     /// "physical", "virtual_machine" or "remote_session"; left out when the server has detection off for this person.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<&'static str>,
+    /// Known macro programs found running (names from the server's list only); left out when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub macro_tools: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +67,9 @@ pub struct SyncSettings {
     pub screenshot_interval_minutes: u32,
     #[serde(default)]
     pub screenshot_random: bool,
+    /// The programs to look for by name (the activity check). Older servers do not send it: the built-in list is used.
+    #[serde(default)]
+    pub macro_tools: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +145,7 @@ mod tests {
             since: None,
             tracking_started_at: None,
             environment,
+            macro_tools: Vec::new(),
         };
         assert_eq!(serde_json::to_value(status(Some("virtual_machine"))).unwrap()["environment"], "virtual_machine");
         assert!(serde_json::to_value(status(None)).unwrap().get("environment").is_none());

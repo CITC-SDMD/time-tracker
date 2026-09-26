@@ -2,17 +2,33 @@
 
 use std::sync::Mutex;
 
+use crate::platform::input::InputStats;
 use crate::platform::{ActivityProvider, ForegroundApp};
 
 pub struct FakeActivityProvider {
     current: Mutex<(Option<ForegroundApp>, u64)>,
+    /// What the next `take_input_stats` hands over.
+    stats: Mutex<Option<InputStats>>,
+    /// The last `set_input_capture` the engine made.
+    capture: Mutex<bool>,
 }
 
 impl FakeActivityProvider {
     pub fn new(initial: (Option<ForegroundApp>, u64)) -> Self {
         Self {
             current: Mutex::new(initial),
+            stats: Mutex::new(None),
+            capture: Mutex::new(true),
         }
+    }
+
+    /// The counts the next closed session will carry.
+    pub fn set_stats(&self, stats: InputStats) {
+        *self.stats.lock().unwrap() = Some(stats);
+    }
+
+    pub fn capture_on(&self) -> bool {
+        *self.capture.lock().unwrap()
     }
 
     /// Changes what the provider reports starting from the next call -- tests call
@@ -29,6 +45,14 @@ impl ActivityProvider for FakeActivityProvider {
 
     fn idle_seconds(&self) -> u64 {
         self.current.lock().unwrap().1
+    }
+
+    fn take_input_stats(&self) -> Option<crate::platform::input::InputStats> {
+        self.stats.lock().unwrap().take()
+    }
+
+    fn set_input_capture(&self, on: bool) {
+        *self.capture.lock().unwrap() = on;
     }
 }
 

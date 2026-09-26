@@ -6,6 +6,8 @@ use std::sync::mpsc::Sender;
 use serde::Serialize;
 
 pub mod environment;
+pub mod input;
+pub mod macro_tools;
 
 #[cfg(windows)]
 mod win;
@@ -42,10 +44,22 @@ pub trait ActivityProvider: Send + Sync {
     fn current_activity(&self) -> Option<ForegroundApp>;
     /// Seconds since the last keyboard or mouse input.
     fn idle_seconds(&self) -> u64;
+    /// The counts of input since the last call (the activity check); `None` where the platform cannot tell.
+    fn take_input_stats(&self) -> Option<input::InputStats> {
+        None
+    }
+    /// Switches the counting on or off (the server can turn the detection off for a person).
+    fn set_input_capture(&self, _on: bool) {}
 }
 
 pub fn provider() -> Box<dyn ActivityProvider> {
     imp::provider()
+}
+
+/// Names of the running processes, for the known-macro-program check (see `macro_tools`).
+#[allow(dead_code)]
+pub(crate) fn running_process_names() -> Vec<String> {
+    imp::running_process_names()
 }
 
 /// Starts a background thread that sends lock/unlock/sleep/wake/shutdown events.

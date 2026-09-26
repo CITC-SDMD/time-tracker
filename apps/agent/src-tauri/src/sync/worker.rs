@@ -116,7 +116,17 @@ where
 
         report.reported_state = snapshot.state;
         // the server can switch detection off for this person; until it says so, it is on
-        let detection_on = lock(engine).db().get_app_state("detection_enabled").as_deref() != Some("0");
+        let (detection_on, known_tools) = {
+            let e = lock(engine);
+            let on = e.db().get_app_state("detection_enabled").as_deref() != Some("0");
+            let known = e
+                .db()
+                .get_app_state("macro_tools_json")
+                .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                .filter(|list| !list.is_empty())
+                .unwrap_or_else(crate::platform::macro_tools::default_list);
+            (on, known)
+        };
         let request = SyncRequest {
             client_time: iso_from(chrono::Utc::now()),
             computer_name: computer_name(),
@@ -128,6 +138,7 @@ where
                 since: snapshot.since.map(iso_from),
                 tracking_started_at: snapshot.tracking_started_at.map(iso_from),
                 environment: detection_on.then(|| crate::platform::environment::current().wire()),
+                macro_tools: if detection_on { crate::platform::macro_tools::current(&known_tools) } else { Vec::new() },
             },
             sessions,
         };
@@ -216,6 +227,7 @@ where
     store_settings(&mut e, &response.settings);
 
     let _ = e.db().set_app_state("detection_enabled", if response.commands.detection_enabled { "1" } else { "0" });
+    e.set_detection(response.commands.detection_enabled);
 
     if response.commands.stop_tracking {
         e.stop();
@@ -233,6 +245,9 @@ fn store_settings<C: Clock>(engine: &mut Engine<C>, settings: &SyncSettings) {
     stored["windowTitleMode"] = settings.window_title_mode.clone().into();
     stored["screenshotIntervalMinutes"] = settings.screenshot_interval_minutes.into();
     stored["screenshotRandom"] = settings.screenshot_random.into();
+    if !settings.macro_tools.is_empty() {
+        let _ = engine.db().set_app_state("macro_tools_json", &serde_json::json!(settings.macro_tools).to_string());
+    }
     let _ = engine.db().set_app_state("office_settings_json", &stored.to_string());
     let loaded = load_office_settings(engine.db());
     engine.apply_settings(loaded);

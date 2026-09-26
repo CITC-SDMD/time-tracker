@@ -33,6 +33,8 @@ pub struct Engine<C: Clock> {
     /// When this tracking run began; survives pause/lock, cleared by stop. The server
     /// uses it to decide which PC "started later" under the one-PC rule (docs §10.1).
     tracking_started: Option<DateTime<Utc>>,
+    /// The server's say on the activity check for this person: while off nothing is counted or kept.
+    detection_on: bool,
 }
 
 /// What the sync worker reports as the live status (docs §10.1 request `status`).
@@ -69,6 +71,15 @@ impl<C: Clock> Engine<C> {
             user_id,
             device_id,
             tracking_started: None,
+            detection_on: true,
+        }
+    }
+
+    /// The server told this PC whether the activity check is on for the signed-in person.
+    pub fn set_detection(&mut self, on: bool) {
+        if self.detection_on != on {
+            self.detection_on = on;
+            self.provider.set_input_capture(on);
         }
     }
 
@@ -501,10 +512,15 @@ impl<C: Clock> Engine<C> {
 
     fn close_open(&mut self, at_wall: DateTime<Utc>, clock_changed: bool) {
         if let Some(open) = self.open.take() {
-            if let Err(err) = self
-                .db
-                .close_session(&open.id, at_wall.timestamp_millis(), clock_changed)
-            {
+            // what happened at the keyboard and mouse during this session (counts only), while the check is on
+            let taken = self.provider.take_input_stats();
+            let stats = if self.detection_on { taken } else { None };
+            if let Err(err) = self.db.close_session_with_stats(
+                &open.id,
+                at_wall.timestamp_millis(),
+                clock_changed,
+                stats.as_ref(),
+            ) {
                 tracing::error!(?err, "failed to close session");
             }
         }
@@ -592,6 +608,94 @@ mod tests {
         assert_eq!(sessions[0].app_name.as_deref(), Some("VSCode"));
         assert_eq!(sessions[1].app_name.as_deref(), Some("Chrome"));
         assert_eq!(sessions[0].ended_at, Some(sessions[1].started_at));
+    }
+
+    fn queued_payloads<C: Clock>(engine: &Engine<C>) -> Vec<serde_json::Value> {
+        engine
+            .db()
+            .fetch_ready_queue("test-user", 100, i64::MAX)
+            .unwrap()
+            .iter()
+            .map(|row| serde_json::from_str(&row.payload).unwrap())
+            .collect()
+    }
+
+    fn some_input() -> crate::platform::input::InputStats {
+        crate::platform::input::InputStats {
+            hw_keys: 12,
+            sw_mouse: 340,
+            sw_only_seconds: 30,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_closed_session_carries_the_input_counts_of_its_time() {
+        let (mut engine, clock, provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.start();
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+        provider.set_stats(some_input());
+
+        engine.stop();
+
+        let payloads = queued_payloads(&engine);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["inputStats"]["hwKeys"], 12);
+        assert_eq!(payloads[0]["inputStats"]["swMouse"], 340);
+        assert_eq!(payloads[0]["inputStats"]["swOnlySeconds"], 30);
+    }
+
+    #[test]
+    fn a_session_without_input_counts_sends_no_stats_field() {
+        let (mut engine, clock, _provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.start();
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+
+        engine.stop();
+
+        assert!(queued_payloads(&engine)[0].get("inputStats").is_none());
+    }
+
+    #[test]
+    fn nothing_is_kept_while_the_server_has_the_check_off_for_this_person() {
+        let (mut engine, clock, provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.set_detection(false);
+        assert!(!provider.capture_on());
+        engine.start();
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+        provider.set_stats(some_input());
+
+        engine.stop();
+
+        assert!(queued_payloads(&engine)[0].get("inputStats").is_none());
+
+        engine.set_detection(true);
+        assert!(provider.capture_on());
+    }
+
+    #[test]
+    fn the_counts_belong_to_the_session_that_just_closed_not_the_next_one() {
+        let (mut engine, clock, provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.start();
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+        provider.set_stats(some_input());
+        provider.set(Some(app("Chrome")), 0);
+        clock.advance(Duration::from_secs(2));
+        engine.tick();
+        clock.advance(Duration::from_secs(2));
+        engine.tick(); // Chrome promoted: the VSCode session closes and takes the counts
+
+        engine.stop();
+
+        let payloads = queued_payloads(&engine);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["appName"], "VSCode");
+        assert_eq!(payloads[0]["inputStats"]["hwKeys"], 12);
+        assert!(payloads[1].get("inputStats").is_none());
     }
 
     #[test]

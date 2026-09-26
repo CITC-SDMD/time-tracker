@@ -14,7 +14,10 @@
           Window titles are turned off by your organization: only app names are kept.
         </li>
         <li>When you are idle (no mouse or keyboard use), and which app was on screen then.</li>
-        <li>Whether this computer is a virtual machine or a remote session, read from the computer's model and not from anything you do. Only your organization's admins see it, and it can be switched off for you.</li>
+        <li>Whether this computer is a virtual machine or a remote session, read from the computer's model and not from anything you do.</li>
+        <li>How much mouse and keyboard input there was, and whether it came from a real keyboard and mouse or was sent by software. These are only counts: never which keys you press and never what you type.</li>
+        <li>The names of programs made to click, move the mouse or type for you (for example AutoHotkey), if one is running. The names of your other programs are never sent.</li>
+        <li>This activity check is only a note for your organization's admins to look into, it never changes your tracked time, and it can be switched off for you.</li>
         <li v-if="screenshotMinutes > 0">
           A screenshot of your main screen about every {{ screenshotMinutes }} minutes<span v-if="screenshotRandom">, at a random moment in each block</span>,
           including while you are idle. It is kept permanently on your organization's server. The people your organization allows (usually your manager and the people above them) can see it, and so can you

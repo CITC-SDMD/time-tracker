@@ -7,12 +7,15 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
+use crate::platform::input::InputStats;
+
 /// (schema_version, migration SQL). Future ones are
 /// appended here and applied in order, each preceded by a `tracker.db.bak` copy.
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("migrations/001_init.sql")),
     (2, include_str!("migrations/002_lowercase_enums.sql")),
     (3, include_str!("migrations/003_screenshots.sql")),
+    (4, include_str!("migrations/004_input_stats.sql")),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +82,9 @@ struct SyncPayload {
     ended_at: i64,
     duration_seconds: i64,
     clock_changed: bool,
+    /// The activity check counts of this session; left out when there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_stats: Option<InputStats>,
 }
 
 /// A screenshot waiting to be sent (see `screenshot`).
@@ -260,6 +266,20 @@ impl Db {
         ended_at_ms: i64,
         clock_changed: bool,
     ) -> rusqlite::Result<()> {
+        self.close_session_with_stats(session_id, ended_at_ms, clock_changed, None)
+    }
+
+    /// Like `close_session`, with the counts of the input that happened during the session (they go to the server
+    /// with it, and nowhere else).
+    pub fn close_session_with_stats(
+        &self,
+        session_id: &str,
+        ended_at_ms: i64,
+        clock_changed: bool,
+        stats: Option<&InputStats>,
+    ) -> rusqlite::Result<()> {
+        let stats = stats.filter(|s| !s.is_empty());
+        let stats_json = stats.and_then(|s| serde_json::to_string(s).ok());
         let tx = self.conn.unchecked_transaction()?;
 
         let (started_at, user_id): (i64, String) = tx.query_row(
@@ -277,9 +297,9 @@ impl Db {
 
         tx.execute(
             "UPDATE sessions
-             SET ended_at = ?1, duration_seconds = ?2, clock_changed = ?3, sync_status = 'PENDING'
+             SET ended_at = ?1, duration_seconds = ?2, clock_changed = ?3, sync_status = 'PENDING', input_stats = ?5
              WHERE id = ?4",
-            params![ended_at_ms, duration_seconds, clock_changed as i64, session_id],
+            params![ended_at_ms, duration_seconds, clock_changed as i64, session_id, stats_json],
         )?;
 
         let payload = tx.query_row(
@@ -298,6 +318,7 @@ impl Db {
                     ended_at: ended_at_ms,
                     duration_seconds,
                     clock_changed,
+                    input_stats: stats.cloned(),
                 })
             },
         )?;

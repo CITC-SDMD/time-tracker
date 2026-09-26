@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use windows::core::{w, BOOL, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, LRESULT, WPARAM};
@@ -11,6 +12,13 @@ use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows::Win32::UI::Input::{
+    GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK,
+    RID_INPUT,
+};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
@@ -23,27 +31,60 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINF
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumChildWindows, GetClassNameW,
     GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId, RegisterClassW,
-    TranslateMessage, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMSUSPEND, WINDOW_EX_STYLE, WM_ENDSESSION,
+    TranslateMessage, MSG, PBT_APMRESUMEAUTOMATIC, WM_INPUT, PBT_APMSUSPEND, WINDOW_EX_STYLE, WM_ENDSESSION,
     WM_POWERBROADCAST, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED, WTS_SESSION_LOCK,
     WTS_SESSION_UNLOCK,
 };
 
+use super::input::{InputCollector, InputStats};
 use super::{ActivityProvider, ForegroundApp, SystemEvent};
 
 const MAX_TITLE_CHARS: usize = 512;
 
+/// Where the raw input window puts what it counts (the activity check).
+static COLLECTOR: OnceLock<InputCollector> = OnceLock::new();
+static CLOCK_START: OnceLock<Instant> = OnceLock::new();
+
+fn collector() -> &'static InputCollector {
+    COLLECTOR.get_or_init(InputCollector::new)
+}
+
+/// Milliseconds on a steady clock, for the gaps between mouse moves.
+fn steady_ms() -> u64 {
+    CLOCK_START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
 struct WindowsProvider {
     /// exe path → friendly name. Reading version info is slow-ish, so cache it.
     names: Mutex<HashMap<String, String>>,
+    /// What was seen at the previous look at the system's last-input time.
+    sample: Mutex<SoftwareOnlySample>,
+}
+
+#[derive(Default)]
+struct SoftwareOnlySample {
+    last_input_tick: u32,
+    last_at: Option<Instant>,
+    hardware_two_ago: u64,
+    hardware_before: u64,
 }
 
 pub fn provider() -> Box<dyn ActivityProvider> {
     Box::new(WindowsProvider {
         names: Mutex::new(HashMap::new()),
+        sample: Mutex::new(SoftwareOnlySample::default()),
     })
 }
 
 impl ActivityProvider for WindowsProvider {
+    fn take_input_stats(&self) -> Option<InputStats> {
+        Some(collector().take())
+    }
+
+    fn set_input_capture(&self, on: bool) {
+        collector().set_enabled(on);
+    }
+
     fn current_activity(&self) -> Option<ForegroundApp> {
         let hwnd = unsafe { GetForegroundWindow() };
         if hwnd.is_invalid() {
@@ -100,6 +141,7 @@ impl ActivityProvider for WindowsProvider {
         if !unsafe { GetLastInputInfo(&mut info) }.as_bool() {
             return 0;
         }
+        self.sample_software_only(info.dwTime);
         // Both values are 32-bit tick counts that wrap every ~49 days.
         let now = unsafe { GetTickCount() };
         u64::from(now.wrapping_sub(info.dwTime) / 1000)
@@ -107,6 +149,33 @@ impl ActivityProvider for WindowsProvider {
 }
 
 impl WindowsProvider {
+    /// The system's last-input time moved, yet no hardware event arrived for two looks in a row: the activity came from
+    /// software (a script sent it). Not judged while the window in front cannot be read, because a program running with
+    /// more rights than this one also hides its input from us.
+    fn sample_software_only(&self, last_input_tick: u32) {
+        let now = Instant::now();
+        let hardware_now = collector().hardware_total();
+        let mut s = self.sample.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(last) = s.last_at else {
+            s.last_at = Some(now);
+            s.last_input_tick = last_input_tick;
+            s.hardware_before = hardware_now;
+            s.hardware_two_ago = hardware_now;
+            return;
+        };
+        let elapsed = now.duration_since(last);
+        if elapsed < Duration::from_secs(1) {
+            return; // looked a moment ago already
+        }
+        if last_input_tick != s.last_input_tick && hardware_now == s.hardware_two_ago && foreground_readable() {
+            collector().note_software_only(elapsed.as_secs().min(5));
+        }
+        s.hardware_two_ago = s.hardware_before;
+        s.hardware_before = hardware_now;
+        s.last_input_tick = last_input_tick;
+        s.last_at = Some(now);
+    }
+
     fn friendly_name(&self, path: &str, exe: &str) -> String {
         let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
         names
@@ -118,6 +187,15 @@ impl WindowsProvider {
             })
             .clone()
     }
+}
+
+/// Whether the window in front belongs to a process this one may look at.
+fn foreground_readable() -> bool {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return true;
+    }
+    process_path(window_pid(hwnd)).is_some()
 }
 
 fn named(app_name: &str, process_name: &str, window_title: &str) -> ForegroundApp {
@@ -328,6 +406,77 @@ fn hypervisor_bit() -> bool {
     false
 }
 
+/// Counts one raw input message. Only where the input came from is looked at: real hardware has a device handle, input
+/// sent by software has none. Which key was pressed is never read.
+fn count_raw_input(lparam: LPARAM) {
+    // room for the largest mouse or keyboard message
+    let mut buffer = [0u64; 64];
+    let mut size = std::mem::size_of_val(&buffer) as u32;
+    let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
+    let read = unsafe {
+        GetRawInputData(
+            HRAWINPUT(lparam.0 as *mut c_void),
+            RID_INPUT,
+            Some(buffer.as_mut_ptr() as *mut c_void),
+            &mut size,
+            header_size,
+        )
+    };
+    if read == u32::MAX || (read as usize) < std::mem::size_of::<RAWINPUTHEADER>() {
+        return;
+    }
+    let raw = unsafe { &*(buffer.as_ptr() as *const RAWINPUT) };
+    let hardware = !raw.header.hDevice.is_invalid();
+    let input = collector();
+    match raw.header.dwType {
+        // RIM_TYPEMOUSE
+        0 => {
+            let mouse = unsafe { raw.data.mouse };
+            let buttons = unsafe { mouse.Anonymous.Anonymous.usButtonFlags } as u32;
+            // left, right or middle button went down
+            if buttons & (0x0001 | 0x0004 | 0x0010) != 0 {
+                input.record_click(hardware);
+            }
+            if mouse.usFlags.0 & 0x01 != 0 {
+                input.record_absolute_move(hardware, mouse.lLastX, mouse.lLastY, steady_ms());
+            } else if mouse.lLastX != 0 || mouse.lLastY != 0 {
+                input.record_move(hardware, mouse.lLastX, mouse.lLastY, steady_ms());
+            }
+        }
+        // RIM_TYPEKEYBOARD: only key-down messages are counted (bit 0 of Flags is "break", key up)
+        1 => {
+            let keyboard = unsafe { raw.data.keyboard };
+            if keyboard.Flags & 0x01 == 0 {
+                input.record_key(hardware);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The names of the running processes (only compared with the known-macro list, never sent as they are).
+pub fn running_process_names() -> Vec<String> {
+    let mut names = Vec::new();
+    let Ok(snapshot) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
+        return names;
+    };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
+        loop {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            names.push(String::from_utf16_lossy(&entry.szExeFile[..len]));
+            if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+                break;
+            }
+        }
+    }
+    let _ = unsafe { CloseHandle(snapshot) };
+    names
+}
+
 pub fn start_system_events(tx: Sender<SystemEvent>) {
     if EVENT_TX.set(tx).is_err() {
         return; // already running
@@ -372,6 +521,14 @@ unsafe fn run_event_window() -> windows::core::Result<()> {
         )
     }?;
     unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }?;
+    // raw mouse and keyboard input, for the activity check: counts only, wherever the focus is
+    let devices = [
+        RAWINPUTDEVICE { usUsagePage: 0x01, usUsage: 0x02, dwFlags: RIDEV_INPUTSINK, hwndTarget: hwnd },
+        RAWINPUTDEVICE { usUsagePage: 0x01, usUsage: 0x06, dwFlags: RIDEV_INPUTSINK, hwndTarget: hwnd },
+    ];
+    if unsafe { RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32) }.is_err() {
+        eprintln!("raw input could not be registered: the activity check has no input statistics");
+    }
 
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
@@ -389,6 +546,9 @@ unsafe extern "system" fn event_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_INPUT {
+        count_raw_input(lparam);
+    }
     let event = match msg {
         WM_WTSSESSION_CHANGE => match wparam.0 as u32 {
             WTS_SESSION_LOCK => Some(SystemEvent::Lock),
@@ -407,4 +567,69 @@ unsafe extern "system" fn event_wndproc(
         let _ = tx.send(event);
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// Real Windows input: these send input the way a macro program does and check that it is told from hardware. They need
+/// an interactive desktop, so they only run on request: `cargo test --lib live_input -- --ignored --nocapture`.
+#[cfg(test)]
+mod live_input {
+    use super::*;
+    use std::time::Duration;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSEEVENTF_MOVE, MOUSEINPUT,
+        VIRTUAL_KEY,
+    };
+
+    fn send(inputs: &[INPUT]) {
+        unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
+    }
+
+    fn mouse_step(dx: i32) -> INPUT {
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 { mi: MOUSEINPUT { dx, dy: 0, dwFlags: MOUSEEVENTF_MOVE, ..Default::default() } },
+        }
+    }
+
+    fn key(vk: u16, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(vk),
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an interactive desktop"]
+    fn input_sent_by_software_is_counted_as_software_and_the_system_sees_it_as_activity() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        start_system_events(tx);
+        std::thread::sleep(Duration::from_millis(500));
+        let provider = provider();
+        let _ = collector().take();
+
+        // one look, then software input for a few seconds, looking once a second like the engine does
+        let _ = provider.idle_seconds();
+        for _ in 0..4 {
+            std::thread::sleep(Duration::from_millis(1100));
+            for _ in 0..10 {
+                send(&[mouse_step(1)]);
+                send(&[mouse_step(-1)]);
+            }
+            send(&[key(0x10, false), key(0x10, true)]); // shift down and up
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = provider.idle_seconds();
+        }
+
+        let stats = provider.take_input_stats().unwrap();
+        eprintln!("live counts: {stats:?}");
+        assert!(stats.sw_mouse >= 60, "software mouse moves were {}", stats.sw_mouse);
+        assert!(stats.sw_keys >= 3, "software key presses were {}", stats.sw_keys);
+        assert!(stats.sw_only_seconds >= 1, "software-only seconds were {}", stats.sw_only_seconds);
+    }
 }
