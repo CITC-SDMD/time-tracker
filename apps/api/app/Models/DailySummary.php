@@ -33,6 +33,8 @@ class DailySummary extends Model
             'day' => 'date',
             'apps' => 'array',
             'app_names' => 'array',
+            'integrity_reasons' => 'array',
+            'macro_tools' => 'array',
             'first_activity_at' => 'datetime',
             'last_activity_at' => 'datetime',
         ];

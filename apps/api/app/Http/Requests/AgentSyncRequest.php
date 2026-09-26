@@ -37,6 +37,8 @@ class AgentSyncRequest extends FormRequest
             'status.currentApp' => ['nullable', 'string', 'max:128'],
             'status.idleAppName' => ['nullable', 'string', 'max:128'],
             'status.environment' => ['nullable', 'in:physical,virtual_machine,remote_session'],
+            'status.macroTools' => ['nullable', 'array', 'max:30'],
+            'status.macroTools.*' => ['string', 'max:64'],
             'status.since' => ['nullable', 'date'],
             'status.trackingStartedAt' => ['nullable', 'date'],
             'sessions' => ['present', 'array', 'max:'.self::MAX_SESSIONS],

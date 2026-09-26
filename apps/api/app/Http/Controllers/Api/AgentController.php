@@ -8,6 +8,7 @@ use App\Models\Device;
 use App\Models\EmployeeStatus;
 use App\Models\OrganizationSetting;
 use App\Models\Session;
+use App\Services\IntegrityService;
 use App\Services\SummaryService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,7 @@ class AgentController extends Controller
 
     private const LIVE_WINDOW_MINUTES = 5;
 
-    public function __construct(private SummaryService $summaries) {}
+    public function __construct(private SummaryService $summaries, private IntegrityService $integrity) {}
 
     public function sync(AgentSyncRequest $request): JsonResponse
     {
@@ -109,6 +110,7 @@ class AgentController extends Controller
             }
 
             // 4.4 / 4.5: insert; a duplicate-key error means another request won the race.
+            $touchedDays = [];
             foreach ($toInsert as $id => $s) {
                 if ($office->window_title_mode === 'app_only') {
                     $s['windowTitle'] = null;
@@ -130,6 +132,7 @@ class AgentController extends Controller
                         'duration_seconds' => $s['durationSeconds'],
                         'day' => $this->summaries->dayOf($s['startedAt'], $office->timezone),
                         'clock_changed' => $s['clockChanged'],
+                        'input_stats' => $user->detection_enabled ? $s['inputStats'] : null,
                         'received_at' => $now,
                     ]);
                 } catch (UniqueConstraintViolationException) {
@@ -138,6 +141,7 @@ class AgentController extends Controller
                     continue;
                 }
                 $accepted[] = $id;
+                $touchedDays[$this->summaries->dayOf($s['startedAt'], $office->timezone)] = true;
                 $this->summaries->add(
                     $user->id, $s['type'], $appKey, $s['appName'],
                     $s['startedAt'], $s['endedAt'], $s['durationSeconds'], $office->timezone,
@@ -167,6 +171,19 @@ class AgentController extends Controller
                 if ($environment !== null) {
                     $this->raiseDayEnvironment($user->id, $environment, $office->timezone, $now);
                 }
+                // known macro programs seen running (names from the server's own list only), kept per day
+                $tools = $user->detection_enabled ? $this->integrity->knownTools($incoming['macroTools'] ?? null) : [];
+                if ($tools !== []) {
+                    $this->raiseDayMacroTools($user->id, $tools, $office->timezone, $now);
+                    $touchedDays[$this->summaries->dayOf($now, $office->timezone)] = true;
+                }
+            }
+
+            // the level of every day this request touched is worked out again from its stored chunks
+            if ($user->detection_enabled) {
+                foreach (array_keys($touchedDays) as $day) {
+                    $this->integrity->refreshDay($user->id, $day);
+                }
             }
 
             $device = Device::find($deviceId) ?? new Device(['id' => $deviceId, 'first_seen_at' => $now]);
@@ -192,6 +209,8 @@ class AgentController extends Controller
                 'windowTitleMode' => $office->window_title_mode,
                 'screenshotIntervalMinutes' => $office->screenshot_interval_minutes,
                 'screenshotRandom' => $office->screenshot_random,
+                // the programs the desktop app may report by name if it finds them running
+                'macroTools' => config('integrity.macro_tools'),
             ],
         ]);
     }
@@ -210,6 +229,16 @@ class AgentController extends Controller
         if ($current === null || self::ENVIRONMENT_RANK[$environment] > (self::ENVIRONMENT_RANK[$current] ?? 0)) {
             DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->update(['environment' => $environment]);
         }
+    }
+
+    /** Adds the names of the macro programs seen today to the day's summary. @param list<string> $tools */
+    private function raiseDayMacroTools(int $userId, array $tools, string $timezone, Carbon $now): void
+    {
+        $day = $this->summaries->dayOf($now, $timezone);
+        $current = DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->value('macro_tools');
+        $merged = array_values(array_unique([...(json_decode((string) $current, true) ?: []), ...$tools]));
+        sort($merged);
+        DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->update(['macro_tools' => json_encode($merged)]);
     }
 
     /** @return array{0: ?array, 1: ?string} [parsed session, rejection reason] */
@@ -263,6 +292,7 @@ class AgentController extends Controller
             'endedAt' => $endedAt,
             'durationSeconds' => $duration,
             'clockChanged' => (bool) ($raw['clockChanged'] ?? false),
+            'inputStats' => $this->integrity->cleanStats($raw['inputStats'] ?? null),
         ], null];
     }
 

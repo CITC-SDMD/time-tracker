@@ -80,7 +80,9 @@ class SummaryService
     {
         foreach (DB::table('users')->where('organization_id', $organizationId)->pluck('id') as $userId) {
             DB::transaction(function () use ($userId, $timezone) {
-                DB::table('daily_summaries')->where('user_id', $userId)->lockForUpdate()->get();
+                // what the desktop app reported about the day is not in the sessions: keep it across the rebuild
+                $kept = DB::table('daily_summaries')->where('user_id', $userId)->lockForUpdate()
+                    ->get(['day', 'environment', 'macro_tools'])->keyBy(fn ($row) => (string) $row->day);
                 DB::table('daily_summaries')->where('user_id', $userId)->delete();
 
                 DB::table('sessions')->where('user_id', $userId)->chunkById(500, function ($sessions) use ($userId, $timezone) {
@@ -96,6 +98,16 @@ class SummaryService
                         );
                     }
                 }, 'id');
+
+                $integrity = app(IntegrityService::class);
+                foreach (DB::table('daily_summaries')->where('user_id', $userId)->pluck('day') as $day) {
+                    $flags = $kept->get((string) $day);
+                    if ($flags !== null && ($flags->environment !== null || $flags->macro_tools !== null)) {
+                        DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)
+                            ->update(['environment' => $flags->environment, 'macro_tools' => $flags->macro_tools]);
+                    }
+                    $integrity->refreshDay($userId, (string) $day);
+                }
             });
         }
     }

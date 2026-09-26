@@ -88,6 +88,7 @@ class EmployeeController extends Controller
                 ...($showDetection ? [
                     'detectionEnabled' => (bool) $employee->detection_enabled,
                     'environment' => $status?->environment,
+                    'integrityLevel' => $today?->integrity_level,
                 ] : []),
             ];
         });
@@ -116,7 +117,12 @@ class EmployeeController extends Controller
             ->orderBy('day')
             ->get()
             ->map(fn (DailySummary $row) => [
-                ...($showDetection ? ['environment' => $row->environment] : []),
+                ...($showDetection ? [
+                    'environment' => $row->environment,
+                    'integrityLevel' => $row->integrity_level,
+                    'integrityReasons' => $row->integrity_reasons ?? [],
+                    'macroTools' => $row->macro_tools ?? [],
+                ] : []),
                 'day' => $row->day->format('Y-m-d'),
                 'trackedSeconds' => $row->tracked_seconds,
                 'activeSeconds' => $row->active_seconds,

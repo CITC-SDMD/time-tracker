@@ -31,7 +31,8 @@ class PersonDetectionController extends Controller
 
             if (! $enabled) {
                 DB::table('employee_statuses')->where('user_id', $person->id)->update(['environment' => null]);
-                DB::table('daily_summaries')->where('user_id', $person->id)->update(['environment' => null]);
+                DB::table('daily_summaries')->where('user_id', $person->id)->update(['environment' => null, 'integrity_level' => null, 'integrity_reasons' => null, 'macro_tools' => null]);
+                DB::table('sessions')->where('user_id', $person->id)->whereNotNull('input_stats')->update(['input_stats' => null]);
             }
             AuditLog::record($request->user(), 'detection.toggled', $person, ['enabled' => $enabled]);
         }
