@@ -117,6 +117,16 @@ export interface IntegrityReason {
   minutes: number | null
 }
 
+/** A PC a person is signed in on (GET /me/devices, GET /admin/employees/{id}/devices) */
+export interface SignedInPc {
+  deviceId: string
+  computerName: string | null
+  agentVersion: string | null
+  lastUsedAt: string | null
+  signedInAt: string
+  expiresAt: string | null
+}
+
 export interface EmployeeListItem {
   id: string
   name: string

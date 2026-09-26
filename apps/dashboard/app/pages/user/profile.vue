@@ -180,6 +180,14 @@
         </FormButton>
       </div>
     </UiCard>
+
+    <AppSignedInPcs
+      v-if="!me?.isSuperadmin"
+      class="mt-8"
+      url="/me/devices"
+      title="Desktop app sign-ins"
+      description="The PCs where you are signed in to the desktop app. Sign out a PC you no longer use or have lost: the app there asks for your password before it sends anything again. Signing in stays valid for a week after the last use."
+    />
   </div>
 </template>
 
@@ -193,7 +201,7 @@ definePageMeta({
 })
 
 // A signed-in person's own details and password (docs/DEVELOPMENT_PLAN.md §10: PATCH /me,
-// PUT /me/email, PUT /me/password). Available to every manager role: they change their own name, email and password.
+// PUT /me/email, PUT /me/password, GET /me/devices). Available to every manager role: they change their own name, email and password.
 const { api } = useApi()
 const { me } = useAuth()
 const { timezone } = useFormat()

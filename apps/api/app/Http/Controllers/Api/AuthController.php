@@ -51,7 +51,7 @@ class AuthController extends Controller
         $name = 'agent-'.mb_substr((string) $request->header('X-Device-Id', 'unknown'), 0, 64);
         // signing in again on a PC replaces that PC's earlier token instead of leaving one behind for every login
         $user->tokens()->where('name', $name)->delete();
-        $token = $user->createToken($name, ['agent'])->plainTextToken;
+        $token = $user->createToken($name, ['agent'], now()->addDays(config('sanctum.agent_token_days')))->plainTextToken;
 
         return response()->json([
             'token' => $token,

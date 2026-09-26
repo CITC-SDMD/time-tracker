@@ -151,6 +151,14 @@
         </FormError>
       </UiCard>
 
+      <AppSignedInPcs
+        v-if="canSignOutPcs"
+        class="mb-6"
+        :url="`/admin/employees/${id}/devices`"
+        title="Desktop app sign-ins"
+        description="The PCs where this person is signed in to the desktop app. Sign one out if it was lost or changed hands."
+      />
+
       <UiSpinner v-if="loading" />
 
       <template v-else>
@@ -349,6 +357,7 @@ const screenshots = ref<ScreenshotItem[]>([])
 const screenshotsError = ref<string | null>(null)
 const viewing = ref<number | null>(null)
 // (inside an opened office the settings are not at hand: the section shows for whoever may look, and is empty when off)
+const canSignOutPcs = computed(() => can('people.update') && String(me.value?.id) !== id.value)
 const screenshotsOn = computed(() => (office.inOffice.value ? can('screenshots.view') : (me.value?.settings?.screenshotIntervalMinutes ?? 0) > 0))
 
 const PAGE = 50

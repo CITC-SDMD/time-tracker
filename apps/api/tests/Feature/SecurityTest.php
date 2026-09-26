@@ -112,7 +112,7 @@ class SecurityTest extends TestCase
 
         $this->withToken($token)->getJson('/api/v1/me')->assertOk();
 
-        $this->travel(config('sanctum.expiration') + 1)->minutes();
+        $this->travel(config('sanctum.agent_token_days') + 1)->days();
         $this->app['auth']->forgetGuards(); // the test app keeps the person it resolved before
 
         $this->withToken($token)->getJson('/api/v1/me')->assertStatus(401);

@@ -50,8 +50,8 @@ class SecurityCheck extends Command
                 $problems[] = 'SANCTUM_STATEFUL_DOMAINS still lists "'.trim($domain).'": list only the real dashboard address.';
             }
         }
-        if (! config('sanctum.expiration')) {
-            $problems[] = 'Desktop sign-ins never expire (SANCTUM_TOKEN_EXPIRATION_MINUTES is empty).';
+        if ((int) config('sanctum.agent_token_days') < 1) {
+            $problems[] = 'Desktop sign-ins never expire (AGENT_TOKEN_DAYS is empty or 0). Use 7.';
         }
 
         if (config('logging.channels.single.level', 'debug') === 'debug') {

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\AdminEmployeeController;
 use App\Http\Controllers\Api\AdminSettingsController;
 use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DeviceController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Api\PermissionCatalogController;
@@ -68,6 +69,10 @@ Route::prefix('v1')->group(function () {
             ->whereNumber('id')->middleware('permission:people.update,people.assign_role');
         Route::post('/admin/employees/{id}/resend-invite', [AdminEmployeeController::class, 'resendInvite'])
             ->whereNumber('id')->middleware(['permission:people.update', 'throttle:10,1']);
+        Route::get('/admin/employees/{id}/devices', [DeviceController::class, 'ofPerson'])
+            ->whereNumber('id')->middleware('permission:people.update');
+        Route::delete('/admin/employees/{id}/devices/{deviceId}', [DeviceController::class, 'signOutPerson'])
+            ->whereNumber('id')->middleware(['permission:people.update', 'throttle:20,1']);
         Route::delete('/admin/employees/{id}', [AdminEmployeeController::class, 'destroy'])
             ->whereNumber('id')->middleware('permission:people.update');
 
@@ -89,6 +94,8 @@ Route::prefix('v1')->group(function () {
         Route::put('/me/email', [MeController::class, 'changeEmail'])->middleware('throttle:5,1');
         Route::put('/me/password', [MeController::class, 'changePassword'])->middleware('throttle:5,1');
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
+        Route::get('/me/devices', [DeviceController::class, 'mine']);
+        Route::delete('/me/devices/{deviceId}', [DeviceController::class, 'signOutMine'])->middleware('throttle:20,1');
 
         $insideAnOrganization();
     });

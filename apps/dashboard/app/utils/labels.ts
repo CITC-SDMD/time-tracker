@@ -60,6 +60,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.moved': 'Moved a person to another manager',
   'employee.role_changed': 'Changed a role',
   'employee.invite_resent': 'Sent a new set-password link',
+  'device.signed_out': 'Signed a PC out of the desktop app',
   'detection.toggled': 'Switched the virtual machine detection on or off for a person',
   'employee.invite_failed': 'A set-password email could not be delivered',
   'role.created': 'Made a role',
@@ -139,6 +140,8 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
     }
     case 'platform.settings_updated':
       return `minimum app version ${d.minAgentVersionFrom ?? '?'} → ${d.minAgentVersionTo ?? '?'}`
+    case 'device.signed_out':
+      return typeof d.computerName === 'string' ? d.computerName : ''
     case 'detection.toggled':
       return d.enabled ? 'on' : 'off'
     case 'profile.email_changed':

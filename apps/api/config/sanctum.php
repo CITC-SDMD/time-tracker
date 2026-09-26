@@ -50,9 +50,14 @@ return [
     |
     */
 
-    // 30 days (docs/DEVELOPMENT_PLAN.md §9.2) — after this, the desktop app shows
-    // "Please log in again". No refresh step; a new token is just a fresh login.
-    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 60 * 24 * 30),
+    // docs/DEVELOPMENT_PLAN.md §9.2: when a token has run out the desktop app shows "Please log in again".
+    // No refresh step; a new token is just a fresh login.
+    // Not used: each desktop token carries its own expires_at, which moves forward while the app is in use
+    // (see agent_token_days), so a PC that is used every day never asks again and an unused one stops after a week.
+    'expiration' => null,
+
+    // How many days a desktop token stays valid without being used. Every use after the first day pushes it forward.
+    'agent_token_days' => (int) env('AGENT_TOKEN_DAYS', 7),
 
     /*
     |--------------------------------------------------------------------------

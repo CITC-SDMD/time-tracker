@@ -33,7 +33,23 @@ class LimitAgentToken
             }
         }
 
+        $this->keepAlive($token);
+
         return $next($request);
+    }
+
+    // A desktop token lasts `agent_token_days` from its last use, not from the sign-in: an app used every day never
+    // asks for the password again, a PC nobody touches for that long does. Written at most once a day per PC.
+    private function keepAlive(mixed $token): void
+    {
+        if (! $token instanceof PersonalAccessToken || ! $this->isAgentOnly($token)) {
+            return;
+        }
+
+        $days = (int) config('sanctum.agent_token_days');
+        if ($days > 0 && ($token->expires_at === null || $token->expires_at->lt(now()->addDays($days)->subDay()))) {
+            $token->forceFill(['expires_at' => now()->addDays($days)])->save();
+        }
     }
 
     private function isAgentOnly(PersonalAccessToken $token): bool
