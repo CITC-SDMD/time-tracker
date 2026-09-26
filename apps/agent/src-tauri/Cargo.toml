@@ -32,8 +32,11 @@ keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
+# Phase 10 screenshots: the picture of the main screen, shrunk and encoded as a JPEG.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
+xcap = "0.9"
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

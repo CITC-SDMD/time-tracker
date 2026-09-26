@@ -5,6 +5,8 @@ mod db;
 mod logging;
 mod notify;
 mod platform;
+#[allow(dead_code)] // wired into the app step by step (Phase 10)
+mod screenshot;
 mod sync;
 #[cfg(test)]
 mod testutil;
