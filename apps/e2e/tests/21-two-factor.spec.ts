@@ -1,4 +1,4 @@
-import { as, expect, loginAs, otherPerson, PASSWORD, test } from '../fixtures'
+import { expect, loginAs, otherPerson, PASSWORD, test } from '../fixtures'
 import { artisan } from '../helpers/artisan'
 import { totp } from '../helpers/totp'
 
@@ -11,12 +11,13 @@ test.beforeEach(() => artisan('cache:clear'))
 test.beforeAll(() => artisan('tracker:reset-two-factor', EMAIL))
 test.afterAll(() => artisan('tracker:reset-two-factor', EMAIL))
 
+// signs in for real instead of using the saved session: earlier specs of a whole run may have ended it
 test.describe.serial('two-factor sign-in', () => {
-  test.use(as('tl3'))
-
   let secret = ''
 
-  test('a person turns it on from their profile and gets recovery codes', async ({ page, allow }) => {
+  test('a person turns it on from their profile and gets recovery codes', async ({ browser, allow }) => {
+    const page = await otherPerson(browser)
+    await loginAs(page, EMAIL)
     allow(/POST \/api\/v1\/me\/two-factor(\/confirm)? 422/)
     await page.goto('/user/profile')
     const card = page.getByRole('heading', { name: 'Two-factor sign-in' }).locator('xpath=..')
@@ -43,6 +44,7 @@ test.describe.serial('two-factor sign-in', () => {
     await expect(card.locator('ul.font-mono li')).toHaveCount(8)
     await card.getByRole('button', { name: 'I have saved them' }).click()
     await expect(card.getByText('Two-factor sign-in is on. 8 recovery codes are left.')).toBeVisible()
+    await page.context().close()
   })
 
   test('the password alone no longer signs in: the code is asked for, a wrong one is refused', async ({ browser, allow }) => {
@@ -67,7 +69,8 @@ test.describe.serial('two-factor sign-in', () => {
   })
 
   test('the admin resets it for someone who lost their phone, and the password alone works again', async ({ browser }) => {
-    const admin = await otherPerson(browser, 'oic')
+    const admin = await otherPerson(browser)
+    await loginAs(admin, 'oic@test.com')
     await admin.goto('/user/people')
     await admin.getByRole('link', { name: 'Tess Lim' }).click()
     await expect(admin.getByRole('heading', { name: 'Tess Lim' })).toBeVisible()
