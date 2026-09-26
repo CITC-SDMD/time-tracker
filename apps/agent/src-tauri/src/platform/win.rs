@@ -11,6 +11,7 @@ use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
@@ -278,6 +279,54 @@ fn file_description(path: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 static EVENT_TX: OnceLock<Sender<SystemEvent>> = OnceLock::new();
+
+/// What Windows says about the computer: manufacturer, model and BIOS vendor from the registry, the CPU's hypervisor bit,
+/// and whether this is a Remote Desktop session. Reading these needs no special rights.
+pub fn environment_facts() -> super::environment::Facts {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_REMOTESESSION};
+
+    let read = |name: PCWSTR| registry_text(w!(r"HARDWARE\DESCRIPTION\System\BIOS"), name);
+    super::environment::Facts {
+        manufacturer: read(w!("SystemManufacturer")),
+        product: read(w!("SystemProductName")),
+        bios_vendor: read(w!("BIOSVendor")),
+        hypervisor_present: hypervisor_bit(),
+        remote_session: unsafe { GetSystemMetrics(SM_REMOTESESSION) } != 0,
+    }
+}
+
+/// A text value under HKEY_LOCAL_MACHINE, empty when it is missing.
+fn registry_text(subkey: PCWSTR, value: PCWSTR) -> String {
+    let mut buffer = [0u16; 256];
+    let mut bytes = (buffer.len() * 2) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            subkey,
+            value,
+            RRF_RT_REG_SZ,
+            None,
+            Some(buffer.as_mut_ptr() as *mut c_void),
+            Some(&mut bytes),
+        )
+    };
+    if status.0 != 0 {
+        return String::new();
+    }
+    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len]).trim().to_owned()
+}
+
+#[cfg(target_arch = "x86_64")]
+fn hypervisor_bit() -> bool {
+    // CPUID leaf 1, ECX bit 31: "running under a hypervisor"
+    std::arch::x86_64::__cpuid(1).ecx & (1 << 31) != 0
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn hypervisor_bit() -> bool {
+    false
+}
 
 pub fn start_system_events(tx: Sender<SystemEvent>) {
     if EVENT_TX.set(tx).is_err() {

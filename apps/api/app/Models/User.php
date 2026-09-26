@@ -94,6 +94,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'deactivated_at' => 'datetime',
             'invite_failed_at' => 'datetime',
+            'detection_enabled' => 'boolean',
             'consent_accepted_at' => 'datetime',
             'is_superadmin' => 'boolean',
             'is_owner' => 'boolean',

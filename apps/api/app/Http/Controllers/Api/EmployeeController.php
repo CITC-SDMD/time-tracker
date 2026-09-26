@@ -55,7 +55,10 @@ class EmployeeController extends Controller
             $query->where('status', 'active');
         }
 
-        $employees = $query->get()->map(function (User $employee) {
+        // the detection flags are for superadmins and the organization's admins only
+        $showDetection = $this->access->canSeeDetection($caller);
+
+        $employees = $query->get()->map(function (User $employee) use ($showDetection) {
             $status = $employee->employeeStatus;
             $today = $employee->dailySummaries->first();
 
@@ -82,6 +85,10 @@ class EmployeeController extends Controller
                 'idleSeconds' => $today->idle_seconds ?? 0,
                 'currentApp' => $status?->current_app,
                 'lastActivityAt' => $status?->last_seen_at?->toIso8601String(),
+                ...($showDetection ? [
+                    'detectionEnabled' => (bool) $employee->detection_enabled,
+                    'environment' => $status?->environment,
+                ] : []),
             ];
         });
 
@@ -103,11 +110,13 @@ class EmployeeController extends Controller
             ], 422);
         }
 
+        $showDetection = $this->access->canSeeDetection($request->user());
         $days = DailySummary::where('user_id', $id)
             ->whereBetween('day', [$from->format('Y-m-d'), $to->format('Y-m-d')])
             ->orderBy('day')
             ->get()
             ->map(fn (DailySummary $row) => [
+                ...($showDetection ? ['environment' => $row->environment] : []),
                 'day' => $row->day->format('Y-m-d'),
                 'trackedSeconds' => $row->tracked_seconds,
                 'activeSeconds' => $row->active_seconds,

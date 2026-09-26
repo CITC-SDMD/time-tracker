@@ -103,6 +103,9 @@ export interface AgentSyncResponse {
 }
 
 // GET /api/v1/employees
+/** where the desktop app says it runs */
+export type Environment = 'physical' | 'virtual_machine' | 'remote_session'
+
 export interface EmployeeListItem {
   id: string
   name: string
@@ -122,10 +125,15 @@ export interface EmployeeListItem {
   idleSeconds: number
   currentApp: string | null
   lastActivityAt: string | null
+  /** virtual machine detection: only sent to superadmins and the organization's admins */
+  detectionEnabled?: boolean
+  environment?: Environment | null
 }
 
 // GET /api/v1/employees/{id}/summary
 export interface DailySummary {
+  /** the strongest flag the desktop app raised that day; only sent to superadmins and the organization's admins */
+  environment?: Environment | null
   day: string // YYYY-MM-DD, office timezone
   trackedSeconds: number
   activeSeconds: number

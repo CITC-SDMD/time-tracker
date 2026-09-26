@@ -22,3 +22,8 @@ pub fn provider() -> Box<dyn ActivityProvider> {
 }
 
 pub fn start_system_events(_tx: Sender<SystemEvent>) {}
+
+/// Nothing can be read here: the computer counts as a physical one.
+pub fn environment_facts() -> super::environment::Facts {
+    super::environment::Facts::default()
+}

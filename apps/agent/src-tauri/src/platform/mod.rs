@@ -5,6 +5,8 @@ use std::sync::mpsc::Sender;
 
 use serde::Serialize;
 
+pub mod environment;
+
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]

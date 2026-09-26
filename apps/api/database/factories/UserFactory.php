@@ -38,6 +38,7 @@ class UserFactory extends Factory
             'organization_id' => fn () => OrganizationFactory::forTests()->id,
             'role_id' => fn () => RoleFactory::forTests('developer')->id,
             'status' => 'active',
+            'detection_enabled' => true,
         ];
     }
 

@@ -569,6 +569,7 @@ A **superadmin** is an account with `is_superadmin`, no organization and no orga
 | `organizations.admins.manage` | add, invite again, deactivate and reactivate the admins of an organization |
 | `organizations.data.view` | **open an office** read-only: people, timelines, screenshots, reports, audit log |
 | `organizations.data.manage` | change things inside an office as its admin would (includes looking) |
+| `organizations.detection.manage` | switch the virtual machine detection on or off for one person of an organization (§16) |
 | `platform.settings` | edit platform settings (the oldest allowed desktop app version) |
 | `platform.staff.manage` | add superadmins, edit their permissions, deactivate them |
 | `platform.audit.view` | the platform audit log |
@@ -617,6 +618,7 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 | `GET/POST /api/v1/platform/organizations/{id}/admins`, `PATCH .../{userId}`, `POST .../{userId}/resend-invite` | `organizations.admins.manage` | The Admin role's holders of one organization: add (invite email), deactivate (`LAST_ADMIN`), reactivate, invite again | `Platform\OrganizationAdminController` |
 | `/api/v1/platform/organizations/{id}/office/...` | `organizations.data.view` (writes need `.manage`) | The organization's own routes above (employees, reports, screenshots, roles, settings, audit, admin/employees), run inside it | the same controllers |
 | `GET/POST/PATCH /api/v1/platform/superadmins`, `GET /platform/permissions` | `platform.staff.manage` | Superadmins with their own permissions (anti-escalation, the owner is untouchable) | `Platform\SuperadminController` |
+| `PATCH /api/v1/platform/organizations/{id}/people/{userId}/detection` `{ enabled }` | `organizations.detection.manage` | Switch the virtual machine detection on or off for one person of that organization (default on). Off clears what was stored for them; audited as `detection.toggled` in the organization's audit log | `Platform\PersonDetectionController` |
 | `GET/PUT /api/v1/platform/settings` | `platform.settings` | The oldest allowed desktop app version (older apps get 426) | `Platform\PlatformSettingsController` |
 | `GET /api/v1/platform/audit` | `platform.audit.view` | Everything superadmins did | `Platform\PlatformAuditController` |
 
@@ -1839,6 +1841,7 @@ PASS: within target.
 **What the employee is told (consent screen + "What we track" page):**
 
 - **What is tracked:** start/stop/pause times; which app is in front and for how long; the window title (unless the office turned titles off); when you're idle (no mouse/keyboard for X minutes) and which app was on screen then.
+- **Virtual machine detection (2026-09-28):** the desktop app reads only the computer's manufacturer and model, the BIOS vendor, the hypervisor bit (never on its own) and whether the session is Remote Desktop, and reports `physical`, `virtual_machine` or `remote_session` with each sync (`status.environment`). The server keeps the live value and the strongest non-physical value of each day. It is a **flag for a manager to look into, never a reason to refuse tracking** (a hardened virtual machine can hide itself, a hardware mouse jiggler cannot be seen at all, and honest staff work on virtual desktops). It is **on for everyone**; a superadmin with `organizations.detection.manage` can switch it off or on for one person (the agent is told in `commands.detectionEnabled` on the next sync). Only **superadmins who may look inside the office and the holders of the organization's built-in Admin role** see the flags; other roles never receive them from the API. Organizations must raise the consent version so people accept the new line in "What we track". Counting injected (macro) input and reading the process list are not built.
 - **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, websites. Screenshots are taken only if the OIC has turned them on (main screen only, at the chosen interval, with the consent text saying so).
 - **When:** only while tracking is on (the tray icon shows this). Nothing is tracked while paused, not tracking, locked or asleep.
 - **Who can see it:** people whose role has the permission and reaches you (a role reaches only the person, their team below them in the reporting line, or the whole organization, §9.1). Platform superadmins may open an office if they were given that permission; what they only look at is not logged, what they change is. Other organizations never see it. You can always see your own data in the app.

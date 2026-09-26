@@ -42,7 +42,7 @@ class AgentController extends Controller
             $accepted = [];
             $duplicates = [];
             $rejected = [];
-            $commands = ['stopTracking' => false, 'stopReason' => null, 'signOut' => $deactivated];
+            $commands = ['stopTracking' => false, 'stopReason' => null, 'signOut' => $deactivated, 'detectionEnabled' => (bool) $user->detection_enabled];
 
             // Step 3 of §10.1: validate each session on its own merits.
             $candidates = [];
@@ -160,7 +160,13 @@ class AgentController extends Controller
                 if ($incomingTracking) {
                     $status->tracking_device_since = $trackingStartedAt;
                 }
+                // where the agent runs: only kept while detection is on for this person
+                $environment = $user->detection_enabled ? ($incoming['environment'] ?? null) : null;
+                $status->environment = $environment;
                 $status->save();
+                if ($environment !== null) {
+                    $this->raiseDayEnvironment($user->id, $environment, $office->timezone, $now);
+                }
             }
 
             $device = Device::find($deviceId) ?? new Device(['id' => $deviceId, 'first_seen_at' => $now]);
@@ -188,6 +194,22 @@ class AgentController extends Controller
                 'screenshotRandom' => $office->screenshot_random,
             ],
         ]);
+    }
+
+    /** How strong each environment is as a flag on a day: a day keeps the strongest one seen. */
+    private const ENVIRONMENT_RANK = ['physical' => 0, 'remote_session' => 1, 'virtual_machine' => 2];
+
+    /** Marks today's summary of the person with the strongest non-physical environment seen so far. */
+    private function raiseDayEnvironment(int $userId, string $environment, string $timezone, Carbon $now): void
+    {
+        if ($environment === 'physical') {
+            return;
+        }
+        $day = $this->summaries->dayOf($now, $timezone);
+        $current = DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->value('environment');
+        if ($current === null || self::ENVIRONMENT_RANK[$environment] > (self::ENVIRONMENT_RANK[$current] ?? 0)) {
+            DB::table('daily_summaries')->where('user_id', $userId)->where('day', $day)->update(['environment' => $environment]);
+        }
     }
 
     /** @return array{0: ?array, 1: ?string} [parsed session, rejection reason] */

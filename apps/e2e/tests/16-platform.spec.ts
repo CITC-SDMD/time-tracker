@@ -166,7 +166,7 @@ test.describe.serial('the platform as the owner', () => {
     await dialog(page).getByLabel('Look inside an organization').check()
     await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
     await expect(page.getByText(`We emailed a set-password link to ${LIMITED.email}.`)).toBeVisible()
-    await expect(row(page, LIMITED.name)).toContainText('2 of 9')
+    await expect(row(page, LIMITED.name)).toContainText('2 of 10')
     expect(await nextMailLink(before)).toContain('/reset-password?link=')
 
     await page.goto('/platform/audit')

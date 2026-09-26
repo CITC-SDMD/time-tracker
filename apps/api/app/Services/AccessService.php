@@ -45,6 +45,19 @@ class AccessService
         return in_array($permission, $this->permissions($user), true);
     }
 
+    /**
+     * Whether $user may see the virtual machine detection flags (docs/DEVELOPMENT_PLAN.md §16): superadmins who may
+     * look inside the office they have open, and the people who hold the organization's built-in admin role.
+     */
+    public function canSeeDetection(User $user): bool
+    {
+        if ($user->isSuperadmin()) {
+            return $this->context->id() !== null && $this->superadminCan($user, 'organizations.data.view');
+        }
+
+        return (bool) $user->role?->is_system;
+    }
+
     /** self, team or organization */
     public function scope(User $user): string
     {

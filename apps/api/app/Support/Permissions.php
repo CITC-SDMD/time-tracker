@@ -41,6 +41,7 @@ final class Permissions
         'organizations.admins.manage' => ['group' => 'Organizations', 'label' => 'Manage organization admins', 'description' => 'Add, invite again, deactivate and reactivate the admins of an organization.'],
         'organizations.data.view' => ['group' => 'Inside an organization', 'label' => 'Look inside an organization', 'description' => 'Open an organization read-only: people, timelines, screenshots, reports and audit log.'],
         'organizations.data.manage' => ['group' => 'Inside an organization', 'label' => 'Change things inside an organization', 'description' => 'Do what its admin can do: people, roles and settings. Includes looking.'],
+        'organizations.detection.manage' => ['group' => 'Inside an organization', 'label' => 'Detection: turn it on or off for a person', 'description' => 'Switch the virtual machine detection on or off for one person of an organization.'],
         'platform.settings' => ['group' => 'Platform', 'label' => 'Platform settings', 'description' => 'The oldest desktop app version that may sync.'],
         'platform.staff.manage' => ['group' => 'Platform', 'label' => 'Manage superadmins', 'description' => 'Add superadmins, choose their permissions, deactivate them.'],
         'platform.audit.view' => ['group' => 'Platform', 'label' => 'See the platform audit log', 'description' => 'Organizations created or suspended, and superadmin changes.'],

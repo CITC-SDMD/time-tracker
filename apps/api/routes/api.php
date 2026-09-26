@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\ScreenshotController;
 use App\Http\Controllers\Platform\OrganizationAdminController;
 use App\Http\Controllers\Platform\OrganizationController;
+use App\Http\Controllers\Platform\PersonDetectionController;
 use App\Http\Controllers\Platform\PlatformAuditController;
 use App\Http\Controllers\Platform\PlatformSettingsController;
 use App\Http\Controllers\Platform\SuperadminController;
@@ -104,6 +105,9 @@ Route::prefix('v1')->group(function () {
             // whoever may open an office may also read its name and timezone
             Route::get('/', [OrganizationController::class, 'show'])->middleware('platform:organizations.view,organizations.data.view');
             Route::patch('/', [OrganizationController::class, 'update'])->middleware('platform:organizations.update');
+
+            Route::patch('/people/{id}/detection', [PersonDetectionController::class, 'update'])
+                ->whereNumber('id')->middleware('platform:organizations.detection.manage');
 
             Route::middleware('platform:organizations.admins.manage')->group(function () {
                 Route::get('/admins', [OrganizationAdminController::class, 'index']);

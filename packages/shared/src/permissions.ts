@@ -53,6 +53,7 @@ export type PlatformPermission =
   | 'organizations.admins.manage'
   | 'organizations.data.view'
   | 'organizations.data.manage'
+  | 'organizations.detection.manage'
   | 'platform.settings'
   | 'platform.staff.manage'
   | 'platform.audit.view'

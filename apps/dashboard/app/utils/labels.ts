@@ -1,10 +1,16 @@
-import type { AuditLogEntry, EmployeeListItem, UserStatus } from 'shared'
+import type { AuditLogEntry, EmployeeListItem, Environment, UserStatus } from 'shared'
 
 // The words and colours the dashboard uses for the values the API sends as snake_case codes.
 
 export type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'primary'
 
 type LiveStatus = EmployeeListItem['status']
+
+/** the flags of the virtual machine detection (the physical value raises none) */
+export const ENVIRONMENT_LABEL: Partial<Record<Environment, string>> = {
+  virtual_machine: 'Virtual machine',
+  remote_session: 'Remote session',
+}
 
 export const LIVE_STATUS_LABEL: Record<LiveStatus, string> = {
   active: 'Tracking',
@@ -43,6 +49,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.moved': 'Moved a person to another manager',
   'employee.role_changed': 'Changed a role',
   'employee.invite_resent': 'Sent a new set-password link',
+  'detection.toggled': 'Switched the virtual machine detection on or off for a person',
   'employee.invite_failed': 'A set-password email could not be delivered',
   'role.created': 'Made a role',
   'role.updated': 'Edited a role',
@@ -121,6 +128,8 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
     }
     case 'platform.settings_updated':
       return `minimum app version ${d.minAgentVersionFrom ?? '?'} → ${d.minAgentVersionTo ?? '?'}`
+    case 'detection.toggled':
+      return d.enabled ? 'on' : 'off'
     case 'profile.email_changed':
       return `${d.from ?? '?'} → ${d.to ?? '?'}`
     case 'employee.invite_resent':

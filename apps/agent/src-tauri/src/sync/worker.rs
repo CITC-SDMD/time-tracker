@@ -115,6 +115,8 @@ where
         }
 
         report.reported_state = snapshot.state;
+        // the server can switch detection off for this person; until it says so, it is on
+        let detection_on = lock(engine).db().get_app_state("detection_enabled").as_deref() != Some("0");
         let request = SyncRequest {
             client_time: iso_from(chrono::Utc::now()),
             computer_name: computer_name(),
@@ -125,6 +127,7 @@ where
                 idle_app_name: snapshot.idle_app_name,
                 since: snapshot.since.map(iso_from),
                 tracking_started_at: snapshot.tracking_started_at.map(iso_from),
+                environment: detection_on.then(|| crate::platform::environment::current().wire()),
             },
             sessions,
         };
@@ -211,6 +214,8 @@ where
     let _ = e.db().set_app_state("last_sync_at", &now_ms().to_string());
     let _ = e.db().set_app_state("last_sync_error", "");
     store_settings(&mut e, &response.settings);
+
+    let _ = e.db().set_app_state("detection_enabled", if response.commands.detection_enabled { "1" } else { "0" });
 
     if response.commands.stop_tracking {
         e.stop();

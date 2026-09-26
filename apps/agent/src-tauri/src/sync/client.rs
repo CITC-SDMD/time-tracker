@@ -26,6 +26,9 @@ pub struct SyncStatusDto {
     pub idle_app_name: Option<String>,
     pub since: Option<String>,
     pub tracking_started_at: Option<String>,
+    /// "physical", "virtual_machine" or "remote_session"; left out when the server has detection off for this person.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,7 +37,7 @@ pub struct Rejected {
     pub reason: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncCommands {
     #[serde(default)]
@@ -42,6 +45,13 @@ pub struct SyncCommands {
     pub stop_reason: Option<String>,
     #[serde(default)]
     pub sign_out: bool,
+    /// A superadmin can switch the virtual machine detection off for a person. Older servers do not say: it stays on.
+    #[serde(default = "detection_default")]
+    pub detection_enabled: bool,
+}
+
+fn detection_default() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,6 +120,28 @@ mod tests {
         assert_eq!(wire["endedAt"], "2025-09-25T10:05:00.123Z");
         assert_eq!(wire["durationSeconds"], 300);
         assert_eq!(wire["type"], "application");
+    }
+
+    #[test]
+    fn detection_is_on_unless_the_server_says_otherwise() {
+        let older: SyncCommands = serde_json::from_str(r#"{"stopTracking":false,"stopReason":null,"signOut":false}"#).unwrap();
+        assert!(older.detection_enabled);
+        let off: SyncCommands = serde_json::from_str(r#"{"detectionEnabled":false}"#).unwrap();
+        assert!(!off.detection_enabled);
+    }
+
+    #[test]
+    fn the_environment_is_left_out_of_the_status_when_detection_is_off() {
+        let status = |environment| SyncStatusDto {
+            state: "active",
+            current_app: None,
+            idle_app_name: None,
+            since: None,
+            tracking_started_at: None,
+            environment,
+        };
+        assert_eq!(serde_json::to_value(status(Some("virtual_machine"))).unwrap()["environment"], "virtual_machine");
+        assert!(serde_json::to_value(status(None)).unwrap().get("environment").is_none());
     }
 
     #[test]

@@ -172,6 +172,8 @@ class MeController extends Controller
             'managerName' => $user->manager?->name,
             'consentVersion' => $user->consent_version,
             'consentRequired' => $consentRequired,
+            // false when a superadmin switched the virtual machine detection off for this person: the agent then does not check
+            'detectionEnabled' => (bool) $user->detection_enabled,
             // what the person may do: their role's permissions and how far they reach (self, team, organization)
             'role' => $user->role === null ? null : ['id' => (string) $user->role->id, 'name' => $user->role->name],
             'permissions' => $user->isSuperadmin() ? [] : $access->permissions($user),

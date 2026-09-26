@@ -49,6 +49,12 @@
             >
               Deactivated
             </UiBadge>
+            <UiBadge
+              v-if="person.environment && ENVIRONMENT_LABEL[person.environment]"
+              variant="warning"
+            >
+              {{ ENVIRONMENT_LABEL[person.environment] }}
+            </UiBadge>
           </p>
         </template>
       </UiPageHeader>
@@ -87,6 +93,32 @@
       >
         {{ error }}
       </UiAlert>
+
+      <UiAlert
+        v-if="summary?.environment && ENVIRONMENT_LABEL[summary.environment]"
+        variant="warning"
+        class="mb-6"
+      >
+        The desktop app ran in a {{ summary.environment === 'virtual_machine' ? 'virtual machine' : 'remote session' }} on this day.
+        That is a note to look into, not proof of anything: review the screenshots and the timeline before drawing conclusions.
+      </UiAlert>
+
+      <UiCard
+        v-if="canSwitchDetection"
+        class="mb-6"
+      >
+        <FormCheckbox
+          :key="switchKey"
+          :model-value="person.detectionEnabled === true"
+          :disabled="switching"
+          label="Virtual machine detection is on for this person"
+          hint="Their desktop app reports whether it runs in a virtual machine or a remote session. Only superadmins and this organization's admins see it."
+          @update:model-value="askSwitch"
+        />
+        <FormError v-if="switchError">
+          {{ switchError }}
+        </FormError>
+      </UiCard>
 
       <UiSpinner v-if="loading" />
 
@@ -230,6 +262,17 @@
         </template>
       </template>
     </template>
+
+    <UiConfirmDialog
+      v-model="switchConfirmOpen"
+      :title="wantDetection ? 'Switch detection on?' : 'Switch detection off?'"
+      :message="wantDetection ? 'Their desktop app will report whether it runs in a virtual machine again.' : 'Their desktop app stops reporting it and what was stored for this person is cleared.'"
+      :confirm-label="wantDetection ? 'Switch on' : 'Switch off'"
+      :danger="false"
+      :loading="switching"
+      :error="switchError"
+      @confirm="runSwitch"
+    />
   </div>
 </template>
 
@@ -247,7 +290,7 @@ definePageMeta({
 const route = useRoute()
 const { api } = useApi()
 const { me } = useAuth()
-const { can } = useAccess()
+const { can, canPlatform } = useAccess()
 const office = useOffice()
 const { formatDuration, formatTime, formatDay, today, shiftDay } = useFormat()
 
@@ -370,6 +413,43 @@ async function loadPerson() {
   }
   catch (e) {
     error.value = messageOf(e, 'Could not load this person.')
+  }
+}
+
+// ---- virtual machine detection switch (superadmins with the permission, inside an opened office) ----------
+
+const canSwitchDetection = computed(() => office.inOffice.value && canPlatform('organizations.detection.manage') && person.value?.detectionEnabled !== undefined)
+const switchConfirmOpen = ref(false)
+const switching = ref(false)
+const switchError = ref<string | null>(null)
+const wantDetection = ref(false)
+// the tick box shows what is saved: after a cancelled change it is drawn again from the saved value
+const switchKey = ref(0)
+watch(switchConfirmOpen, (open) => {
+  if (!open)
+    switchKey.value++
+})
+
+function askSwitch(on: boolean) {
+  wantDetection.value = on
+  switchError.value = null
+  switchConfirmOpen.value = true
+}
+
+async function runSwitch() {
+  switching.value = true
+  switchError.value = null
+  try {
+    await api(`/platform/organizations/${office.id.value}/people/${id.value}/detection`, { method: 'PATCH', body: { enabled: wantDetection.value } })
+    switchConfirmOpen.value = false
+    await loadPerson()
+    await load()
+  }
+  catch (e) {
+    switchError.value = messageOf(e, 'Could not change the detection.')
+  }
+  finally {
+    switching.value = false
   }
 }
 

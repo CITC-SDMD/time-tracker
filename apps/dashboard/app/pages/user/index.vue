@@ -87,6 +87,13 @@
         >
           {{ statusText(row as EmployeeListItem) }}
         </UiBadge>
+        <UiBadge
+          v-if="row.environment && ENVIRONMENT_LABEL[row.environment as Environment]"
+          class="ml-2"
+          variant="warning"
+        >
+          {{ ENVIRONMENT_LABEL[row.environment as Environment] }}
+        </UiBadge>
       </template>
       <template #cell-trackedSeconds="{ row }">
         {{ formatDuration(row.trackedSeconds) }}
@@ -105,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import type { EmployeeListItem } from 'shared'
+import type { EmployeeListItem, Environment } from 'shared'
 
 definePageMeta({
   layout: 'user',
