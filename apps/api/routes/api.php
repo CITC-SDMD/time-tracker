@@ -30,6 +30,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('/me', [MeController::class, 'show']);
         Route::patch('/me', [MeController::class, 'update']);
+        Route::put('/me/email', [MeController::class, 'changeEmail'])->middleware('throttle:5,1');
         Route::put('/me/password', [MeController::class, 'changePassword'])->middleware('throttle:5,1');
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
 

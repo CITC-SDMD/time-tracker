@@ -50,6 +50,25 @@ class User extends Authenticatable
         };
     }
 
+    /** Roles a manager may give to someone (never 'oic' or 'superadmin'). */
+    public const array ASSIGNABLE_ROLES = [
+        'project_manager', 'team_leader', 'lead_developer', 'developer', 'client_support', 'qa', 'system_analyst',
+    ];
+
+    /**
+     * The roles a person holding $role may report to: the ones whose direct reports can have $role.
+     * Empty for an OIC (no manager).
+     *
+     * @return list<string>
+     */
+    public static function rolesThatManage(string $role): array
+    {
+        return array_values(array_filter(
+            self::MANAGER_ROLES,
+            fn (string $manager) => in_array($role, self::rolesOneTierBelow($manager), true),
+        ));
+    }
+
     /**
      * The dashboard page where this person picks a new password (welcome and reset emails). The
      * token and email travel as ONE opaque URL-safe value: no "&", "@" or "%" for a mail gateway

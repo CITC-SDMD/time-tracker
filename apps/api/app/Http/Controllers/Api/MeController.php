@@ -7,13 +7,18 @@ use App\Http\Requests\AcceptConsentRequest;
 use App\Models\AuditLog;
 use App\Models\OfficeSetting;
 use App\Models\User;
+use App\Notifications\EmailChangedNotification;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
+use Throwable;
 
-// GET /api/v1/me, PATCH /api/v1/me, PUT /api/v1/me/password, POST /api/v1/me/consent
+// GET /api/v1/me, PATCH /api/v1/me, PUT /api/v1/me/email, PUT /api/v1/me/password, POST /api/v1/me/consent
 // (docs/DEVELOPMENT_PLAN.md §10).
 class MeController extends Controller
 {
@@ -34,7 +39,7 @@ class MeController extends Controller
         return response()->json(self::payload($user));
     }
 
-    /** PATCH /me: a person may change their own display name (email and role are not theirs to change). */
+    /** PATCH /me: a person may change their own display name (the email has its own route because it needs the password; the role is not theirs to change). */
     public function update(Request $request): JsonResponse
     {
         $data = $request->validate(['name' => ['required', 'string', 'max:255']]);
@@ -42,6 +47,62 @@ class MeController extends Controller
         $user = $request->user();
         $user->name = trim($data['name']);
         $user->save();
+
+        return response()->json(self::payload($user));
+    }
+
+    /**
+     * PUT /me/email: a person changes the email they sign in with. It needs the current password, so a
+     * stolen session cannot take the account over, and the OLD address is told (a notice with no link) so
+     * a hijack is noticed. Reset and invite links sent to the old address stop working. Tokens are kept:
+     * the desktop app stays signed in and simply uses the new address next time it asks for a login.
+     */
+    public function changeEmail(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'string', 'email', 'max:255'],
+            'currentPassword' => ['required', 'string'],
+        ]);
+
+        $user = $request->user();
+        $new = trim($data['email']);
+        $old = $user->email;
+
+        if (! Hash::check($data['currentPassword'], $user->password)) {
+            return response()->json([
+                'error' => ['code' => 'WRONG_PASSWORD', 'message' => 'Your current password is not right.'],
+            ], 422);
+        }
+        if (strcasecmp($new, $old) === 0) {
+            return response()->json([
+                'error' => ['code' => 'SAME_EMAIL', 'message' => 'That is already your email address.'],
+            ], 422);
+        }
+        $taken = ['error' => ['code' => 'EMAIL_TAKEN', 'message' => 'A user with this email already exists.']];
+        // compared without regard to case on every database (MySQL already does, SQLite does not)
+        if (User::whereRaw('LOWER(email) = ?', [mb_strtolower($new)])->whereKeyNot($user->id)->exists()) {
+            return response()->json($taken, 409);
+        }
+
+        try {
+            DB::transaction(function () use ($user, $new, $old) {
+                $user->email = $new;
+                $user->save();
+                DB::table('password_reset_tokens')->where('email', $old)->delete();
+                DB::table('password_invite_tokens')->where('email', $old)->delete();
+                AuditLog::record($user, 'profile.email_changed', $user, ['from' => $old, 'to' => $new]);
+            });
+        } catch (UniqueConstraintViolationException) {
+            // someone took it between the check and the save
+            return response()->json($taken, 409);
+        }
+
+        // A failing mail server must not undo the change: it is logged and the person is still told on screen.
+        try {
+            Notification::route('mail', $old)->notify(new EmailChangedNotification($user->name, $new));
+        } catch (Throwable $e) {
+            report($e);
+        }
 
         return response()->json(self::payload($user));
     }

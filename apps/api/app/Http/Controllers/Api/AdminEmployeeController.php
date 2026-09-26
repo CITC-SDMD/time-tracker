@@ -122,10 +122,24 @@ class AdminEmployeeController extends Controller
             ], 403);
         }
 
-        // Checked before anything is changed, so a refused move leaves the account untouched.
+        // A role change is only for someone higher (the checks above already refused yourself and anyone
+        // outside the caller's hierarchy). Checked, with any move, before anything is changed, so a
+        // refused change leaves the account untouched.
+        $newRole = $request->has('role') && $request->string('role')->toString() !== $employee->role
+            ? $request->string('role')->toString()
+            : null;
+        $wantsManager = $request->has('managerId') && $request->integer('managerId') !== $employee->manager_id;
+
+        if ($newRole !== null) {
+            $refusal = $this->checkRoleChange($employee, $newRole, $wantsManager);
+            if ($refusal instanceof JsonResponse) {
+                return $refusal;
+            }
+        }
+
         $newManager = null;
-        if ($request->has('managerId') && $request->integer('managerId') !== $employee->manager_id) {
-            $refusal = $this->checkMove($caller, $employee, $request->integer('managerId'));
+        if ($wantsManager) {
+            $refusal = $this->checkMove($caller, $employee, $request->integer('managerId'), $newRole ?? $employee->role);
             if ($refusal instanceof JsonResponse) {
                 return $refusal;
             }
@@ -136,9 +150,19 @@ class AdminEmployeeController extends Controller
             $employee->name = $request->string('name');
         }
 
+        $previousManager = $employee->manager;
         if ($newManager) {
-            $previousManager = $employee->manager;
             $employee->manager_id = $newManager->id;
+        }
+        if ($newRole !== null) {
+            AuditLog::record($caller, 'employee.role_changed', $employee, [
+                'from' => $employee->role,
+                'to' => $newRole,
+                'managerFrom' => $previousManager?->name,
+                'managerTo' => ($newManager ?? $previousManager)?->name,
+            ]);
+            $employee->role = $newRole;
+        } elseif ($newManager) {
             AuditLog::record($caller, 'employee.moved', $employee, [
                 'from' => $previousManager?->name,
                 'to' => $newManager->name,
@@ -209,12 +233,39 @@ class AdminEmployeeController extends Controller
     }
 
     /**
+     * Whether $employee may take $newRole (someone higher has already been established). Returns the
+     * refusal to send back, or null when it is fine. The people reporting to them must still fit the new
+     * role (a manager with a team cannot become a developer), and when their current manager could not
+     * manage the new role a new manager has to be chosen in the same request ($wantsManager).
+     */
+    private function checkRoleChange(User $employee, string $newRole, bool $wantsManager): ?JsonResponse
+    {
+        if ($employee->role === 'oic') {
+            return $this->refuse(400, 'CANNOT_CHANGE_OIC', 'The role of an OIC cannot be changed.');
+        }
+
+        $fits = User::rolesOneTierBelow($newRole);
+        if ($employee->directReports()->get()->contains(fn (User $report) => ! in_array($report->role, $fits, true))) {
+            return $this->refuse(409, 'HAS_REPORTS', "{$employee->name} has people reporting to them who could not report to that role. Move those people first.");
+        }
+
+        $currentManagerFits = $employee->manager !== null
+            && in_array($newRole, User::rolesOneTierBelow($employee->manager->role), true);
+        if (! $currentManagerFits && ! $wantsManager) {
+            return $this->refuse(422, 'MANAGER_REQUIRED', 'Choose who they will report to in their new role.');
+        }
+
+        return null;
+    }
+
+    /**
      * Whether $caller may move $employee under the manager with id $managerId. Returns the new
      * manager when yes, or the refusal to send back. The new manager must be someone the caller can
-     * see, active, and hold the role exactly one tier above the person being moved, so the tree
-     * keeps its shape (and can never loop) without any extra validation.
+     * see, active, and hold the role exactly one tier above $role (the person's role after any role
+     * change in the same request), so the tree keeps its shape (and can never loop) without any extra
+     * validation.
      */
-    private function checkMove(User $caller, User $employee, int $managerId): User|JsonResponse
+    private function checkMove(User $caller, User $employee, int $managerId, string $role): User|JsonResponse
     {
         if ($employee->role === 'oic') {
             return $this->refuse(400, 'CANNOT_MOVE_OIC', 'An OIC has no manager.');
@@ -227,7 +278,7 @@ class AdminEmployeeController extends Controller
         if ($newManager->status !== 'active') {
             return $this->refuse(422, 'MANAGER_INACTIVE', "{$newManager->name} is deactivated and cannot manage anyone.");
         }
-        if (! in_array($employee->role, User::rolesOneTierBelow($newManager->role), true)) {
+        if (! in_array($role, User::rolesOneTierBelow($newManager->role), true)) {
             return $this->refuse(422, 'WRONG_TIER', "{$newManager->name} cannot manage this role. A person reports to the role one tier above their own.");
         }
 
