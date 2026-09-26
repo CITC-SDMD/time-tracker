@@ -23,7 +23,8 @@ These are fixed. Do not change them without asking the project owner.
 | Detailed session data | Kept **permanently** on the office server. |
 | Daily summaries | Kept **permanently** on the office server. |
 | Tracking on many PCs | **One computer at a time.** Starting on a second PC stops the first. |
-| Screenshots | **Not part of this project.** No screenshot feature, no screenshot storage. |
+| Screenshots | **Yes (decision of 2026-09-25, reversing the earlier "no").** Stored on the office server, so there is no paid storage. The OIC sets the interval (or turns them off) in office settings; see Phase 10 for consent, access and the storage budget. |
+| Website tracking | **Not wanted** (decision of 2026-09-25). Phase 9 is dropped. |
 | Productivity scores | **Never.** We show facts only. |
 | Keystrokes / webcam / hidden tracking | **Never.** |
 
@@ -1545,24 +1546,38 @@ PASS: works.
 
 ---
 
-### Phase 9 — (Optional) Browser Website Tracking
+### Phase 9 — Dropped: Browser Website Tracking
 
-Only after the MVP has been stable for a few weeks.
-
-**Tasks (outline)**
-1. A Chrome/Edge extension (Manifest V3) that reads **only the domain** of the active tab (e.g. `github.com`). No page content, no full URLs, no incognito tabs.
-2. The extension talks to the desktop app through **Native Messaging** (a small host registered by the installer). It does not talk to the internet.
-3. The engine adds an optional `domain` field to APPLICATION sessions for browsers. Domain changes act like app switches.
-4. Office setting: `websiteTracking: OFF | DOMAIN_ONLY` (default OFF). Update the consent screen and bump `consentVersion`.
-5. Dashboard: a domain breakdown on the employee page.
-
-**Tests (outline):** the domain is recorded correctly; incognito is not recorded; setting OFF records nothing; the consent screen shows up again after enabling; no full URLs are ever stored.
+The owner decided website tracking is **not needed** (2026-09-25). Nothing is built for it: no browser extension, no domain field, no office setting. If it is ever wanted again it needs a new decision and new consent text.
 
 ---
 
-### Phase 10 — Removed: Screenshots
+### Phase 10 — Screenshots
 
-Screenshots are **not part of this project** (decision: no paid screenshot storage). Do not build screenshot capture, upload or storage. If this is ever reconsidered, it needs a new decision, new consent text and a storage budget.
+**Decision (2026-09-25):** screenshots are wanted. They are kept on the office server, so the earlier objection (paid screenshot storage) no longer applies. This phase supplies what the earlier decision demanded: consent text, a storage budget and rules for who sees what.
+
+**Rules**
+- The OIC sets the interval in office settings: **Off** (default), 5, 10, 15 or 30 minutes, optionally at a random moment inside each block. Desktop apps pick the setting up with the next sync.
+- A screenshot is taken **only while tracking is on, including idle time** (a meeting or a quiet spell still shows the screen). Never while paused, stopped, locked or asleep, and never before the person has accepted the current consent.
+- Only the **main screen**, as a JPEG about 1280 px wide (plus a 320 px thumbnail). No keystrokes, no webcam, no microphone, no scoring.
+- Turning screenshots on requires raising the consent version in the same change (the API refuses otherwise), so everyone accepts the new notice before the first shot.
+- **Who sees them:** the person (read-only) and everyone above them in the hierarchy, the same rule as timelines. Employees cannot delete them. Every gallery view is written to the audit log (once per person, day and viewer).
+- **Kept permanently** on the office server, like all other data. Files live in the server's private storage (`storage/app/private/screenshots/`), never in a public folder, and are only sent through the API after the hierarchy check.
+- **Storage budget:** about 150 KB per shot. At a 10 minute interval that is about 48 shots, 7 to 8 MB per person per day, about 2 GB per person per year (about 4 GB at 5 minutes). For 20 people, plan for 40 to 80 GB a year on a dedicated disk, and include the screenshots folder in backups. The Settings page shows the space used.
+
+**Tasks**
+0. **Spike:** prove a screen capture on Windows (capture time under 300 ms, CPU under 2%) before anything else in the agent.
+1. API: `screenshots` table, two `office_settings` columns, `POST /agent/screenshots`, list / thumb / image endpoints, audit, tests (§8, §10).
+2. Dashboard: settings section, screenshot gallery and viewer on the person page.
+3. Agent: capture loop, local queue, upload after sync, consent and "what we track" text, "My screenshots" page.
+4. Playwright tests, live tests with a real PC, results written here.
+
+**Tests (outline)**
+- A shot appears within one interval; none while paused, stopped or locked; an idle shot is taken.
+- Offline for 10 minutes, then every shot arrives once; a repeated upload is not stored twice.
+- An interval change reaches the app within one sync; turning screenshots on shows the consent screen again.
+- A manager sees the shots of their own branch and gets 403 for anyone else's; the person sees their own; a signed-out request gets 401; no file path is ever in an API answer.
+- Wrong file type, oversized image, future or very old time, and screenshots switched off are all refused.
 
 ---
 
@@ -1708,7 +1723,7 @@ PASS: within target.
 **What the employee is told (consent screen + "What we track" page):**
 
 - **What is tracked:** start/stop/pause times; which app is in front and for how long; the window title (unless the office turned titles off); when you're idle (no mouse/keyboard for X minutes) and which app was on screen then.
-- **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, screenshots (never), websites (unless turned on later, with new consent).
+- **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, websites. Screenshots are taken only if the OIC has turned them on (main screen only, at the chosen interval, with the consent text saying so).
 - **When:** only while tracking is on (the tray icon shows this). Nothing is tracked while paused, not tracking, locked or asleep.
 - **Who can see it:** your manager and whoever is above them in the hierarchy — for example a Developer's data is visible to their Team Leader, that Team Leader's Project Manager, and the OIC, but not to other teams (§9.1). You can always see your own data in the app.
 - **How long it's kept:** permanently on the office server.
@@ -1764,8 +1779,8 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] 1-week pilot done with no data-loss bugs open.
 - [ ] `docs/SETUP.md` and `docs/RELEASE.md` written.
 
-**Not in the MVP:** website tracking, reports/CSV, macOS/Linux.
-**Not in the project at all:** screenshots.
+**Not in the MVP:** screenshots (Phase 10, built after the MVP), reports/CSV, macOS/Linux.
+**Not in the project at all:** website tracking.
 
 ---
 
@@ -1781,7 +1796,9 @@ The MVP is complete when **all** of these are true on the release build:
 8. **Phase 7** — Pilot week + fixes.
 9. **Phase 8** — Installer + updates → **MVP done.**
 10. **Phase 11** — Reports (the most useful next step for an office).
-11. **Phase 9** — Website tracking, only if really needed, with new consent.
+11. **Phase 10** — Screenshots (on the office server, OIC-controlled).
+
+*Phase 9 (website tracking) is dropped.*
 
 **Rules for whoever implements this:**
 - Finish and test one phase before starting the next.
