@@ -56,19 +56,32 @@ test.describe('sign in', () => {
     await expect(page).toHaveURL(/\/user$/)
   })
 
-  test('the superadmin lands on the superadmin area', async ({ page }) => {
+  test('the superadmin lands on the platform pages', async ({ page }) => {
     await loginAs(page, ACCOUNTS.admin)
-    await expect(page).toHaveURL(/\/superadmin/)
+    await expect(page).toHaveURL(/\/platform$/)
+    await expect(page.getByRole('heading', { name: 'Organizations' })).toBeVisible()
   })
 
-  test('an individual contributor cannot use the dashboard', async ({ page, allow }) => {
-    allow(/POST \/auth\/login 4\d\d/)
+  test('someone whose role has no permissions can sign in and sees only their own overview', async ({ page }) => {
+    await loginAs(page, ACCOUNTS.dev1)
+    await expect(page).toHaveURL(/\/user$/)
+    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+    await expect(page.getByRole('row')).toHaveCount(2) // the header and themselves
+    await expect(page.getByRole('row').filter({ hasText: 'Dan Ramos' })).toBeVisible()
+    for (const name of ['People', 'Reports', 'Roles', 'Settings', 'Audit log'])
+      await expect(page.getByRole('link', { name, exact: true })).toHaveCount(0)
+  })
+
+  test('a person of a suspended organization is told so', async ({ page, allow }) => {
+    void PASSWORD
+    allow(/POST \/auth\/login 403/)
+    // a wrong-organization check lives in the platform spec; here only the wording of the refusal
+    await page.route('**/auth/login', route => route.fulfill({ status: 403, contentType: 'application/json', body: '{"error":{"code":"ORG_SUSPENDED","message":"Your organization is suspended. Ask the platform administrator."}}' }))
     await page.goto('/')
-    await page.getByLabel('Email address').fill(ACCOUNTS.dev1)
-    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByLabel('Email address').fill(ACCOUNTS.oic)
+    await page.getByLabel('Password').fill('whatever-123')
     await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page).toHaveURL(/\/$/)
-    await expect(page.getByText(/managers only/i).first()).toBeVisible()
+    await expect(page.getByText('Your organization is suspended.')).toBeVisible()
   })
 
   test('signing in is refused after too many wrong tries', async ({ page, allow }) => {

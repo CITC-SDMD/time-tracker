@@ -10,11 +10,11 @@ These are fixed. Do not change them without asking the project owner.
 
 | Topic | Decision |
 |---|---|
-| Who uses it | **One office only.** Internal tool, not a public product. No sign-up page. |
-| Accounts | A **manager creates accounts for their own direct reports** from the dashboard (§9.1) — not a single "Admin" role. |
-| Roles | An 8-role hierarchy, not just Admin/Employee — see §9.1. **OIC** → **Project Manager** → **Team Leader** → (**Lead Developer**, **Developer**, **Client Support**, **QA**, **System Analyst**). Everyone tracks their own time the same way; what differs is dashboard access and whose data you can see. |
+| Who uses it | **Many government offices ("organizations") on one platform** (decision of 2026-09-26, reversing the earlier "one office only"). Each organization designs its own roles, because no two offices share a hierarchy. Only a **platform superadmin** creates an organization (no sign-up page). Older text in this document that says "the office" means an organization. |
+| Accounts | A superadmin adds the **Admin** of an organization (§9.4). The Admin creates the organization's roles and accounts; anyone whose role holds the permission may add people (§9.1). |
+| Roles | **Custom roles with permission checkboxes** (decision of 2026-09-26): each organization makes its own roles from a fixed list of permissions, and each role reaches only the person, their team or the whole organization (§9.1). Who reports to whom is a free tree with no tier rules. A new organization starts with only its built-in **Admin** role. Superadmins have one role with their own permissions (§9.4). Everyone tracks their own time the same way. |
 | Database | **MySQL/MariaDB only** (server, self-hosted on the office server). SQLite only on the employee's computer. |
-| Hosting | **Self-hosted on the office server**, reachable from the internet under a domain name (WFH employees are not on the office LAN). HTTPS via a reverse proxy (nginx) with a Let's Encrypt certificate. |
+| Hosting | **Self-hosted on the platform's server**, reachable from the internet under a domain name (WFH employees are not on an office LAN). One installer and one address for every organization: an account belongs to one organization and emails are unique across the platform. HTTPS via a reverse proxy (nginx) with a Let's Encrypt certificate. |
 | Platform | **Windows 10 / 11** first. |
 | Pause | Employees **can pause** tracking. |
 | Editing time | Employees **cannot edit or delete** their time. |
@@ -23,7 +23,7 @@ These are fixed. Do not change them without asking the project owner.
 | Detailed session data | Kept **permanently** on the office server. |
 | Daily summaries | Kept **permanently** on the office server. |
 | Tracking on many PCs | **One computer at a time.** Starting on a second PC stops the first. |
-| Screenshots | **Yes (decision of 2026-09-25, reversing the earlier "no").** Stored on the office server, so there is no paid storage. The OIC sets the interval (or turns them off) in office settings; see Phase 10 for consent, access and the storage budget. |
+| Screenshots | **Yes (decision of 2026-09-25, reversing the earlier "no").** Stored on the platform's storage server. Each organization's admin sets the interval (or turns them off) in its settings; see Phase 10 for consent, access and the storage budget. |
 | Website tracking | **Not wanted** (decision of 2026-09-25). Phase 9 is dropped. |
 | Productivity scores | **Never.** We show facts only. |
 | Keystrokes / webcam / hidden tracking | **Never.** |
@@ -348,18 +348,41 @@ CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 ## 8. Database Design (MySQL)
 
-There is only one office, so there is no `organizations` table. All times are stored in UTC (`TIMESTAMP` columns); Laravel converts to the office timezone for display. Table names are Laravel's default snake_case plurals; models are singular (`User`, `EmployeeStatus`, `Session`, `DailySummary`, `Device`, `OfficeSetting`, `AuditLog`).
+The platform serves many organizations from one database (decision of 2026-09-26): every tenant table carries an `organization_id`, and every query of the application is limited to the request's organization by a global scope (§9.5). All times are stored in UTC (`TIMESTAMP` columns); Laravel converts to the organization's timezone for display. Table names are Laravel's default snake_case plurals; models are singular (`User`, `Organization`, `Role`, `Session`).
 
 ```sql
+CREATE TABLE organizations (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(255) NOT NULL,
+  slug        VARCHAR(255) NOT NULL UNIQUE,
+  status      ENUM('active','suspended') NOT NULL DEFAULT 'active',  -- suspended: nobody can sign in, nothing is deleted
+  created_at, updated_at TIMESTAMP
+);
+
+CREATE TABLE roles (                                    -- made by each organization from the fixed permission list (§9.1)
+  id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  organization_id  BIGINT UNSIGNED NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name             VARCHAR(100) NOT NULL,
+  description      VARCHAR(255) NULL,
+  scope            ENUM('self','team','organization') NOT NULL DEFAULT 'self',
+  permissions      JSON NOT NULL,                       -- list of permission keys, validated against App\Support\Permissions
+  is_system        BOOLEAN NOT NULL DEFAULT 0,          -- the built-in admin role: permissions and scope are locked
+  created_at, updated_at TIMESTAMP,
+  UNIQUE (organization_id, name)
+);
+
 CREATE TABLE users (
   id                   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  organization_id      BIGINT UNSIGNED NULL REFERENCES organizations(id),   -- NULL only for platform superadmins
+  role_id              BIGINT UNSIGNED NULL REFERENCES roles(id),           -- NULL only for platform superadmins
+  is_superadmin        BOOLEAN NOT NULL DEFAULT 0,      -- platform staff (§9.4)
+  is_owner             BOOLEAN NOT NULL DEFAULT 0,      -- the main superadmin: always every platform permission
+  superadmin_permissions JSON NULL,                     -- a superadmin's own platform permissions
   name                 VARCHAR(255) NOT NULL,
-  email                VARCHAR(255) NOT NULL UNIQUE,
+  email                VARCHAR(255) NOT NULL UNIQUE,    -- unique across every organization
   password             VARCHAR(255) NOT NULL,          -- Laravel hashed (bcrypt/argon2id)
-  role                 ENUM('OIC','PROJECT_MANAGER','TEAM_LEADER','LEAD_DEVELOPER',
-                             'DEVELOPER','CLIENT_SUPPORT','QA','SYSTEM_ANALYST') NOT NULL,
-  manager_id           BIGINT UNSIGNED NULL REFERENCES users(id),  -- self-referencing; NULL only for OIC
-  status               ENUM('ACTIVE','DEACTIVATED') NOT NULL DEFAULT 'ACTIVE',
+  manager_id           BIGINT UNSIGNED NULL REFERENCES users(id),  -- the reporting line: free, same organization, no loops
+  status               ENUM('active','inactive') NOT NULL DEFAULT 'active',
   deactivated_at       TIMESTAMP NULL,
   consent_version      INT NULL,
   consent_accepted_at  TIMESTAMP NULL,
@@ -369,7 +392,9 @@ CREATE TABLE users (
 );
 ```
 
-**The hierarchy (§9.1):** `OIC` → `PROJECT_MANAGER` → `TEAM_LEADER` → (`LEAD_DEVELOPER`, `DEVELOPER`, `CLIENT_SUPPORT`, `QA`, `SYSTEM_ANALYST`). `manager_id` must point at a user exactly one level up — enforced in the `AdminEmployeeController@store` Form Request, not a database constraint (MySQL `CHECK` can't reference another row's column). There is exactly one `OIC` row with `manager_id = NULL`; every other row has a `manager_id`.
+**The reporting line (§9.1):** `manager_id` is a free tree inside one organization. Nothing forces a tier: any person can report to any other person of the organization. What the application checks is that the manager is in the same organization, is active, and that no loop is made (a person is never put under someone below them). What a person may *see* is decided by their role's scope and permissions (§9.1), not by the shape of the tree.
+
+**Tenant columns:** `organization_id` is also on `employee_statuses`, `sessions`, `daily_summaries`, `devices`, `screenshots`, `audit_logs` (NULL for platform actions), `roles` and `organization_settings`. The columns are nullable in the database only because platform rows have no organization; the models fill them from the request's organization and a test fails if a model with the column lacks the scope. Composite indexes such as `(organization_id, day)` keep per-organization reads fast.
 
 ```sql
 CREATE TABLE employee_statuses (                       -- one live-status row per employee
@@ -429,15 +454,20 @@ CREATE TABLE devices (
   last_seen_at    TIMESTAMP NOT NULL
 );
 
-CREATE TABLE office_settings (                          -- single row, id = 1
-  id                       TINYINT PRIMARY KEY DEFAULT 1,
+CREATE TABLE organization_settings (                  -- one row per organization (was the single office_settings row)
+  id                       BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  organization_id          BIGINT UNSIGNED NOT NULL UNIQUE REFERENCES organizations(id),
   timezone                 VARCHAR(64) NOT NULL,         -- e.g. "Asia/Manila" — defines what "a day" is
   idle_threshold_seconds   INT NOT NULL DEFAULT 300,
-  window_title_mode        ENUM('FULL','APP_ONLY') NOT NULL DEFAULT 'FULL',
-  min_agent_version        VARCHAR(32) NOT NULL,
+  window_title_mode        ENUM('full','app_only') NOT NULL DEFAULT 'full',
   consent_version          INT NOT NULL DEFAULT 1,
   screenshot_interval_minutes TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- Phase 10: 0 = off, else 5, 10, 15 or 30
   screenshot_random        BOOLEAN NOT NULL DEFAULT FALSE          -- one shot at a random moment inside each block
+);
+
+CREATE TABLE platform_settings (                        -- single row, id = 1: what only the platform decides
+  id                 TINYINT PRIMARY KEY DEFAULT 1,
+  min_agent_version  VARCHAR(32) NOT NULL              -- the oldest desktop app that may still sync (HTTP 426 below it)
 );
 
 -- Phase 10: one row per screenshot. The picture and its 320 px thumbnail are files on the private
@@ -456,6 +486,7 @@ CREATE TABLE screenshots (
 
 CREATE TABLE audit_logs (
   id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  organization_id  BIGINT UNSIGNED NULL REFERENCES organizations(id),   -- NULL for platform actions (organization created, superadmin added)
   actor_user_id    BIGINT UNSIGNED NOT NULL REFERENCES users(id),
   action           VARCHAR(64) NOT NULL,
   target_user_id   BIGINT UNSIGNED NULL REFERENCES users(id),
@@ -480,48 +511,76 @@ CREATE TABLE audit_logs (
 
 ## 9. Authentication and Authorization
 
-### 9.1 Roles and hierarchy
+### 9.1 Roles, permissions and reach (organizations)
 
-**Who may change what (added with the email and role change):** everyone changes their **own** name, email (with the current password) and password from **Your profile**. Nobody changes their own role. Only someone **above** a person (their manager, or anyone further up the chain) changes that person's **role**, and may promote or demote across tiers provided the tree stays valid: a person reports to someone exactly one tier above their role, the new manager must be someone the changer can see (so a Team Leader cannot promote anyone, and a Project Manager cannot create another Project Manager), and a manager with a team cannot be moved to a tier that cannot hold that team until the team has been moved.
+**Each organization designs its own roles** (decision of 2026-09-26). A role is a name, a **scope** (how far it reaches) and a list of **permissions** ticked from a fixed list that the platform defines. Every account holds exactly one role of its organization. A new organization starts with **only the built-in Admin role** (`is_system`: every permission, the whole organization, only its name and description can be changed, at least one active holder at all times, `LAST_ADMIN`). The admin then makes the other roles and adds people.
 
-Every account has exactly one role, and (except the OIC) exactly one manager, forming a 4-level tree:
+**Permissions** (`App\Support\Permissions`, mirrored as keys in `packages/shared`; the labels come from `GET /api/v1/permissions`). Everyone can always see their own data (own day, screenshots, profile), so none of these is needed for that.
 
-```text
-OIC
- └─ PROJECT_MANAGER (one or more)
-     └─ TEAM_LEADER (one or more per PM)
-         └─ LEAD_DEVELOPER, DEVELOPER, CLIENT_SUPPORT, QA, SYSTEM_ANALYST (any number per Team Leader)
-```
+| Key | Meaning |
+|---|---|
+| `people.view` | see the people list and who is tracking now |
+| `people.create` | add people |
+| `people.update` | edit a name, deactivate or reactivate, send a new link, move to another manager, delete an unused account |
+| `people.assign_role` | change someone's role |
+| `timeline.view` | open a person's day and timeline |
+| `screenshots.view` | open a person's screenshots |
+| `reports.view` / `reports.export` | reports, CSV downloads |
+| `settings.manage` | the organization's settings |
+| `audit.view` | the organization's audit log |
+| `roles.manage` | make, edit and delete roles |
 
-Everyone — every role, including the OIC — logs into the **desktop app** the same way and tracks their own time the same way. What differs by role is **dashboard access** and **whose data you can see there**:
+**Scope** is one per role: `self` (only the person), `team` (the person and everyone below them in the reporting line, at any depth) or `organization` (everyone in the organization). A permission applies to the people inside the scope. Valid pairs, checked when a role is saved: any permission needs scope `team` or `organization`, and `settings.manage`, `audit.view` and `roles.manage` need `organization`.
 
-| Role tier | Roles | Dashboard access | Can see |
-|---|---|---|---|
-| **Manager roles** | `OIC`, `PROJECT_MANAGER`, `TEAM_LEADER` | Yes | Their own data, **plus** everyone below them in the tree (their direct reports and all of *those* reports' reports, recursively). An OIC sees the whole office; a Team Leader sees just their own team. |
-| **Individual-contributor roles** | `LEAD_DEVELOPER`, `DEVELOPER`, `CLIENT_SUPPORT`, `QA`, `SYSTEM_ANALYST` | No | Only their own data (in the desktop app's own Today/history screens — same as the old "Employee" behavior). |
+**Nobody gives more than they have (anti-escalation).** A role can only be made, edited or given by someone who holds every permission in it and whose own scope is at least as wide. Nobody changes their own role, edits the role they hold, or the role of someone who holds more than they do (`ROLE_ESCALATION`, `CANNOT_EDIT_OWN_ROLE`). A role people hold cannot be deleted (`ROLE_IN_USE`).
 
-Two things are **manager-role-wide but not hierarchy-scoped**, i.e. OIC-only rather than "any manager who can see that data": **office settings** (idle threshold, timezone, window title mode, minimum agent version, consent version) and the **audit log**. These are organization-wide, not per-team, so splitting them by hierarchy isn't worth the complexity yet — a Team Leader doesn't get a settings screen or an audit view, even for their own team. (Team-scoped audit/settings would be a reasonable later addition if it's ever needed — not in the MVP.)
+**The reporting line** is a free tree in one organization: a new person reports to whoever adds them unless another manager in the adder's reach is chosen, and someone whose scope is the whole organization may leave a person with no manager. Moving a person needs `people.update`, a manager in the mover's reach who is active, and no loop (`WOULD_CREATE_LOOP`). Giving a role and moving are separate changes; nobody's manager changes because their role did.
 
-**Creating accounts:** a manager creates an account **one level below their own role**, as their own direct report (`manager_id` = the creator's id): an OIC creates Project Managers, a Project Manager creates Team Leaders, a Team Leader creates any of the five individual-contributor roles. Nobody creates an account two or more levels below themselves directly — an OIC doesn't hand-create a Developer; the Developer's Team Leader does. This keeps the tree's shape self-enforcing instead of needing separate validation for "is this a sane org chart."
-
-**Visibility check, in code terms:** `User::visibleTo(User $viewer): bool` is true when `target.id === viewer.id`, or when `viewer` holds a manager role and `target.id` is in `viewer.allDescendantIds()` (computed by loading `id, manager_id` for the whole `users` table — small, one office — and walking the tree in PHP; see `HierarchyService`). The same descendant set gates the employee list, summary/timeline access, and who a manager is allowed to deactivate or edit.
+**Visibility check, in code terms:** `AccessService::visibleUserIds(User)` returns the person alone, the person plus `HierarchyService::allDescendantIds` (scope `team`) or every person of the organization (scope `organization`). `canSee(user, targetId, permission)` is true for the person themselves, or when the role holds the permission and the target is in reach. The same reach gates the people list, days and timelines, screenshots, reports, and who a person may deactivate or edit. Everyone can sign in to the dashboard: what they see follows their permissions (the sidebar and each page ask for one), and the API checks every one again.
 
 ### 9.2 How login works
 
-- **Desktop app:** the Vue login screen sends email + password to Rust (`invoke("login")`). Rust calls `POST /api/v1/auth/login` on the Laravel API. Laravel checks the password (`Hash::check`) and, if it's correct and the user is `ACTIVE`, issues a **Sanctum personal access token** (`$user->createToken('agent-<deviceId>', ['agent'])`, expiring per `sanctum.expiration` — e.g. 30 days). Rust keeps that **token in Windows Credential Manager** and sends it as `Authorization: Bearer <token>` on every request. The Vue screens never hold the token. There is no separate "ID token" / "refresh token" split like Firebase had — the Sanctum token *is* the credential, and Laravel checks the user's live `status` on every request, so a deactivation takes effect immediately without any token-refresh dance.
-- **Dashboard:** Sanctum's **SPA authentication** (session cookie + CSRF, not a bearer token) — this works because the dashboard is served from the same domain as the API (§2). Login posts to `/login`; Laravel sets a session cookie; subsequent `/api/v1/...` calls are authenticated by that cookie automatically. An individual-contributor account can technically log in (correct password), but every dashboard route then 403s per §9.1 — the login page itself shows "This dashboard is for managers only."
-- **Forgot password:** "Forgot password" button → Laravel's built-in password-reset flow (`Password::sendResetLink`), emailed via the SMTP relay configured in `.env` (see the Email row in §3 — **TODO** until a relay is chosen).
-- **First OIC (one-time, manual):** run `php artisan tracker:make-oic "Name" email@office.com` (a small custom artisan command we write in Phase 2) — it creates the `users` row directly with `role = 'OIC'`, `manager_id = NULL`, `status = 'ACTIVE'`, and a temporary password printed to the console (or an emailed reset link, if mail is configured). Write these steps in `docs/SETUP.md`. Every other account is created through the normal manager-creates-a-direct-report flow, starting from this one OIC.
-- **Adding accounts:** a manager enters a name + email in the dashboard and picks a role — restricted by the UI (and re-checked server-side) to the one role tier below their own. Laravel creates the `users` row with a random unusable password and `manager_id` = the creator, then sends a password-reset email so the new person sets their own password (same mechanism as "Forgot password"). If mail isn't configured yet, the dashboard shows the reset link directly so the manager can send it manually.
+- **Desktop app:** the Vue login screen sends email + password to Rust (`invoke("login")`). Rust calls `POST /api/v1/auth/login` on the Laravel API. Laravel checks the password (`Hash::check`) and, if it's correct and the user is `active`, issues a **Sanctum personal access token** (`$user->createToken('agent-<deviceId>', ['agent'])`, expiring per `sanctum.expiration` — e.g. 30 days). Rust keeps that **token in Windows Credential Manager** and sends it as `Authorization: Bearer <token>` on every request. The Vue screens never hold the token. The Sanctum token *is* the credential, and Laravel checks the user's live `status` on every request, so a deactivation takes effect immediately without any token-refresh dance.
+- **Which organization?** The account carries its `organization_id`; nobody types an office code. The server finds the account by email (unique across every organization) and every later request works inside that account's organization. Superadmins belong to no organization and do not use the desktop app. A **suspended** organization is refused at sign-in (`ORG_SUSPENDED`), on every request, and at sync; nothing is deleted.
+- **Dashboard:** Sanctum's **SPA authentication** (session cookie + CSRF, not a bearer token) — this works because the dashboard is served from the same domain as the API (§2). Every account with a password may sign in; a person of an organization lands on their organization's pages, a superadmin on the platform pages.
+- **Forgot password:** "Forgot password" button → Laravel's built-in password-reset flow (`Password::sendResetLink`), emailed via the SMTP relay configured in `.env` (see the Email row in §3).
+- **The platform owner (one-time, manual):** `php artisan tracker:make-superadmin "Name" email@example.com` creates the main superadmin with every platform permission and a temporary password printed to the console. **Organizations** are then created from the dashboard, or with `php artisan tracker:make-organization "Office name" "Admin name" admin@example.com`. Write these steps in `docs/SETUP.md`.
+- **Adding accounts:** a person whose role holds `people.create` enters a name and email, picks a role they may give and (optionally) who the person reports to. Laravel creates the `users` row in the caller's organization with a random unusable password, then sends a set-password email (the same mechanism as "Forgot password"; the link works for 3 days). If mail isn't configured yet, the dashboard shows the link so it can be sent by hand.
 
 ### 9.3 What the Laravel API checks on every request
 
 1. `Authorization: Bearer <Sanctum token>` header (agent) or a valid session cookie + CSRF token (dashboard).
-2. Sanctum resolves the token/cookie to a `User` via its own `personal_access_tokens` table (hashed lookup) or the session — built into the framework, no manual signature/JWKS handling needed.
+2. Sanctum resolves the token/cookie to a `User` via its own `personal_access_tokens` table (hashed lookup) or the session.
 3. Token `expires_at` (if set) is in the future; otherwise `401`.
-4. Middleware `EnsureActiveUser` loads the authenticated user and requires `status = 'ACTIVE'` (with one exception for unsent data, see §10) — checked on every request, not cached, since it's a single indexed lookup on the same DB the request is already touching.
-5. Role/hierarchy check for the route: `EnsureManager` (any of the three manager roles — gates dashboard routes generally), `EnsureOic` (settings, audit), or `EnsureSelfOrVisible($paramId)` (self, or `$paramId` is in the viewer's descendant set per §9.1) for the per-employee routes.
-6. **The user id always comes from the authenticated session/token**, never the request body. Any `uid`, `userId`, `role` or `employeeId` field in the body is ignored by the Form Request's validation rules (not just unused — it's not even a recognized field). For `/employees/{id}/...` routes: a manager → any id in their descendant set. Anyone → their own id. Otherwise `403`.
+4. `EnsureActiveUser`: `status = 'active'` and the organization is not suspended — checked on every request, not cached (with one exception for unsent data, see §10).
+5. `SetOrganizationContext` puts the request **inside the person's organization**; from here on every model of the tenant tables is limited to it, so an id from another organization does not exist (**404**, never 403).
+6. `permission:<key>` middleware for the route (any of several when listed); `self-or-visible:<key>` for per-person routes (the person themselves, or in reach with the permission). Inside a route, controllers check the target is in reach (`403 FORBIDDEN`), never the caller themselves for account changes (`CANNOT_MODIFY_SELF`), and the anti-escalation rules of §9.1.
+7. **The user id always comes from the authenticated session/token**, never the request body. Any `uid`, `userId`, `role` or `employeeId` field in the body is ignored. `roleId` and `managerId` are accepted only where documented and always validated against the caller's organization and reach.
+
+### 9.4 The platform layer (superadmins)
+
+A **superadmin** is an account with `is_superadmin`, no organization and no organization role. There is one role, "superadmin", and **each account has its own list of platform permissions** (`App\Support\Permissions::SUPERADMIN`). Anything a superadmin has no permission for is hidden from them (`GET /me` lists their permissions; the sidebar and buttons follow them) and refused by the API (`403 PERMISSION_DENIED`).
+
+| Key | Meaning |
+|---|---|
+| `organizations.view` | list organizations, open a profile, usage numbers |
+| `organizations.create` | create an organization |
+| `organizations.update` | rename, suspend, reactivate |
+| `organizations.admins.manage` | add, invite again, deactivate and reactivate the admins of an organization |
+| `organizations.data.view` | **open an office** read-only: people, timelines, screenshots, reports, audit log |
+| `organizations.data.manage` | change things inside an office as its admin would (includes looking) |
+| `platform.settings` | edit platform settings (the oldest allowed desktop app version) |
+| `platform.staff.manage` | add superadmins, edit their permissions, deactivate them |
+| `platform.audit.view` | the platform audit log |
+
+- The **owner** (`is_owner`) always holds every permission and cannot be edited or deactivated. Anti-escalation applies: a superadmin only gives permissions they hold, and cannot change their own or the owner's.
+- **Creating an organization** makes its settings and its Admin role only. The organization's profile page has an **Admins** section: a superadmin with `organizations.admins.manage` adds the people who hold the Admin role (name and email, the set-password email is sent), can add several, deactivate and reactivate them, and invite again. The last active admin cannot be deactivated unless the organization is suspended.
+- **Opening an office:** `/api/v1/platform/organizations/{id}/office/...` are the organization's own routes, run inside that organization. There the superadmin acts as a virtual organization-wide role: every organization permission with `organizations.data.manage`, the read set (people, timelines, screenshots, reports, audit) with `organizations.data.view`, and nothing without either. The dashboard reuses its organization pages under `/platform/organizations/{id}/office` with a banner.
+- **Logging:** a superadmin **looking** at an office's data is **not logged** (owner decision of 2026-09-26): `timeline.viewed`, `screenshots.viewed` and `report.exported` are skipped for superadmins. **Changes** a superadmin makes inside an office are audited like any change, in that organization, under their name. Platform-only actions (`organization.created`, `organization.renamed`, `organization.suspended`, `organization.reactivated`, `superadmin.created`, `superadmin.permissions_changed`, `platform.settings_updated`) carry no organization and are read with `platform.audit.view` (which lists everything superadmins did).
+
+### 9.5 Keeping organizations apart
+
+One database, an `organization_id` on every tenant row, and several layers so a forgotten filter cannot leak: the `BelongsToOrganization` global scope and auto-fill on every tenant model (a test fails if a model with the column lacks it); the request's organization is set right after sign-in and cleared at the start and end of every request; route ids resolve through the scoped query (404 for another organization); `HierarchyService` reads only the organization's people; screenshot files live under `org_{organization_id}/...` on the storage disk; a systematic test (`TenantIsolationTest`) calls every route with a person of organization B against organization A's ids. Emails are unique across the platform. Pre-sign-in lookups (login, password reset) are the only places that read without the scope, and they do so explicitly.
 
 ---
 
@@ -533,24 +592,32 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 |---|---|---|---|
 | `GET /health` | anyone | `{ ok: true, version }` | plain route, no controller |
 | `POST /api/v1/auth/login` | anyone | Email + password → Sanctum token (agent) | `AuthController@login` |
-| `GET /api/v1/me` | logged in | Own profile, role, office settings, whether consent is needed | `MeController@show` |
+| `GET /api/v1/me` | logged in | Own profile, `role {id,name}`, `permissions`, `scope`, `organization {id,name,timezone}`, `settings`, `isSuperadmin`, `platformPermissions`, whether consent is needed | `MeController@show` |
 | `POST /api/v1/me/consent` | logged in | Record consent `{ consentVersion }` | `MeController@acceptConsent` |
-| `PATCH /api/v1/me` | logged in | Change own `name` (email and role are not theirs to change) | `MeController@update` |
+| `PATCH /api/v1/me` | logged in | Change own `name` (email, role and manager are not theirs to change here) | `MeController@update` |
 | `PUT /api/v1/me/email` | logged in | Change own email `{ email, currentPassword }`; wrong password 422 `WRONG_PASSWORD`, same address 422 `SAME_EMAIL`, an address anyone else uses (any case) 409 `EMAIL_TAKEN`. The old address gets a notice (no link), reset and invite links for it stop working, the change is audited as `profile.email_changed`, and tokens are kept (the desktop app stays signed in); throttled 5/min | `MeController@changeEmail` |
 | `PUT /api/v1/me/password` | logged in | Change own password `{ currentPassword, password, password_confirmation }`; wrong current or unchanged password = 422; revokes every token (desktop asks to log in again); throttled 5/min | `MeController@changePassword` |
 | `POST /api/v1/agent/sync` | logged in (agent) | Sends status + up to 100 closed sessions. Gets back results + commands. | `AgentController@sync` |
-| `GET /api/v1/employees` | manager | List of people in the caller's hierarchy (§9.1) with live status and today's totals | `EmployeeController@index` |
-| `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | self, or a manager whose hierarchy includes `{id}` | Daily totals per day (max 31 days) | `EmployeeController@summary` |
-| `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | self, or a manager whose hierarchy includes `{id}` | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
-| `POST /api/v1/admin/employees` | manager | Create a direct report `{ name, email, role }` — role must be exactly one tier below the caller's (§9.1) | `AdminEmployeeController@store` |
-| `PATCH /api/v1/admin/employees/{id}` | a manager whose hierarchy includes `{id}` | Change `name`, `status` (deactivate / reactivate), `role` or `managerId` (**move** to another manager). **A role change is only for someone above the person** (anyone in the chain above them, never themselves): the role must be one of Project Manager, Team Leader or the five contributor roles (never `oic` or `superadmin`, and an OIC's role is never changed); a change to another tier needs `managerId` in the same request (422 `MANAGER_REQUIRED`) checked against the **new** role; the people reporting to them must still fit the new role (409 `HAS_REPORTS`); audited as one `employee.role_changed` entry with the old and new role and manager. The new manager must be someone the caller can see, be active, and hold the role exactly one tier above the person's role (so the tree keeps its shape and cannot loop); an OIC is never moved; nothing is applied when the move is refused. Audited as `employee.moved` | `AdminEmployeeController@update` |
-| `POST /api/v1/admin/employees/{id}/resend-invite` | a manager whose hierarchy includes `{id}` | Email a fresh 3-day set-password link to an active account (returns the link instead when the mail cannot be sent). Audited as `employee.invite_resent`; throttled 10/min | `AdminEmployeeController@resendInvite` |
-| `GET /api/v1/reports/daily`, `/reports/apps`, `/reports/team` `?from=&to=&uid=&format=json|csv` | manager (own hierarchy) | Phase 11 reports from `daily_summaries`: one row per person per day / active time per app / totals per person. Max 92 days; `uid` outside the hierarchy = 403; CSV has `HH:MM` and seconds, a UTF-8 BOM, and neutralises cells starting with `= + - @`; a CSV download is audited as `report.exported` | `ReportController` |
-| `POST /api/v1/agent/screenshots` | logged in (agent) | Phase 10. Multipart `id` (uuid), `takenAt`, `deviceId`, `width`, `height`, `image` (one JPEG, at most 1.5 MB and 3840 px, checked by content). `201 stored`; `200 duplicate` for a repeated id; `409 SCREENSHOTS_DISABLED` when the office has them off (the app then drops its copy); `409 CONFLICT` for another person's id; `422` for a bad file or time; `503 STORAGE_UNAVAILABLE` when the storage server cannot be reached (nothing is kept; the app retries). `throttle:60,1` | `ScreenshotController@store` |
-| `GET /api/v1/employees/{id}/screenshots?day=YYYY-MM-DD` | self, or a manager whose hierarchy includes `{id}` | The office-timezone day's screenshots, oldest first: `[{ id, takenAt, width, height }]`. Looking at someone else's day is audited (`screenshots.viewed`, once per viewer, person and day within 30 minutes) | `ScreenshotController@index` |
-| `GET /api/v1/screenshots/{id}/thumb` and `/image` | self, or a manager who can see the owner | The JPEG, streamed from the storage disk after the hierarchy check (`Cache-Control: private, max-age=3600`). `401` signed out, `403` outside the hierarchy, `404` unknown. If the thumbnail is not made yet, the full picture is sent. No path, bucket or link ever appears in an answer | `ScreenshotController@show` |
-| `GET /api/v1/admin/settings` / `PUT` | OIC only | Read / change office settings, including `screenshotIntervalMinutes` (0, 5, 10, 15, 30), `screenshotRandom` and, read-only, `screenshotStorageBytes`. Turning screenshots on (from 0) without raising `consentVersion` in the same request is `422 SCREENSHOTS_NEED_CONSENT` | `AdminSettingsController` |
-| `GET /api/v1/admin/audit?cursor=&action=&q=&from=&to=` | OIC only | Audit log, newest first, 50 per page; optional filters: exact `action`, `q` (name of who did it or who it was done to), `from`/`to` (office-timezone days) | `AdminAuditController@index` |
+| `GET /api/v1/employees` | logged in | The people in the caller's reach (§9.1) with `role` (its name), `roleId`, live status and today's totals; without `people.view` only the caller's own row | `EmployeeController@index` |
+| `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | self, or `timeline.view` and in reach | Daily totals per day (max 31 days). Another organization's id is 404 | `EmployeeController@summary` |
+| `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | self, or `timeline.view` and in reach | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
+| `POST /api/v1/admin/employees` | `people.create` | Add a person `{ name, email, roleId, managerId? }`: the role must be one the caller may give (`ROLE_ESCALATION`, `ROLE_NOT_FOUND`); the manager defaults to the caller, must be in reach and active (`null` only for someone reaching the organization: else `MANAGER_REQUIRED`); an email used anywhere on the platform is `409 EMAIL_TAKEN` | `AdminEmployeeController@store` |
+| `PATCH /api/v1/admin/employees/{id}` | `people.update` for `name`/`status`/`managerId`, `people.assign_role` for `roleId`; the person in reach | Change `name`, `status` (deactivate / reactivate; the last active admin is `LAST_ADMIN`), `roleId` (nobody gives more than they have, nor changes the role of someone who holds more; audited as `employee.role_changed`, with the managers when both change) or `managerId` (**move**: in reach, active, no loop `WOULD_CREATE_LOOP`; `null` only for someone reaching the organization; audited as `employee.moved`). Nothing is applied when anything is refused | `AdminEmployeeController@update` |
+| `POST /api/v1/admin/employees/{id}/resend-invite` | `people.update`, person in reach | Email a fresh 3-day set-password link to an active account (returns the link instead when the mail cannot be sent). Audited as `employee.invite_resent`; throttled 10/min | `AdminEmployeeController@resendInvite` |
+| `GET /api/v1/reports/daily`, `/reports/apps`, `/reports/team` `?from=&to=&uid=&format=json|csv` | `reports.view` (`reports.export` for CSV) | Phase 11 reports from `daily_summaries`, limited to the caller's reach: one row per person per day / active time per app / totals per person. Max 92 days; `uid` outside the reach = 403, in another organization = 404; CSV has `HH:MM` and seconds, a UTF-8 BOM, and neutralises cells starting with `= + - @`; a CSV download is audited as `report.exported` (not for superadmins) | `ReportController` |
+| `POST /api/v1/agent/screenshots` | logged in (agent) | Phase 10. Multipart `id` (uuid), `takenAt`, `deviceId`, `width`, `height`, `image` (one JPEG, at most 1.5 MB and 3840 px, checked by content). `201 stored`; `200 duplicate` for a repeated id; `409 SCREENSHOTS_DISABLED` when the organization has them off (the app then drops its copy); `409 CONFLICT` for another person's id; `422` for a bad file or time; `503 STORAGE_UNAVAILABLE` when the storage server cannot be reached (nothing is kept; the app retries). Files are stored under `org_{organization_id}/{user}/...`. `throttle:60,1` | `ScreenshotController@store` |
+| `GET /api/v1/employees/{id}/screenshots?day=YYYY-MM-DD` | self, or `screenshots.view` and in reach | The organization-timezone day's screenshots, oldest first: `[{ id, takenAt, width, height }]`. Looking at someone else's day is audited (`screenshots.viewed`, once per viewer, person and day within 30 minutes; not for superadmins) | `ScreenshotController@index` |
+| `GET /api/v1/screenshots/{id}/thumb` and `/image` | self, or `screenshots.view` and in reach | The JPEG, streamed from the storage disk after the reach check (`Cache-Control: private, max-age=3600`). `401` signed out, `403` outside the reach, `404` unknown or another organization. If the thumbnail is not made yet, the full picture is sent. No path, bucket or link ever appears in an answer | `ScreenshotController@show` |
+| `GET /api/v1/admin/settings` / `PUT` | `settings.manage` | Read / change the organization's settings (timezone, idle limit, window titles, consent version), including `screenshotIntervalMinutes` (0, 5, 10, 15, 30), `screenshotRandom` and, read-only, `screenshotStorageBytes`. Turning screenshots on (from 0) without raising `consentVersion` in the same request is `422 SCREENSHOTS_NEED_CONSENT` | `AdminSettingsController` |
+| `GET /api/v1/admin/audit?cursor=&action=&q=&from=&to=` | `audit.view` | The organization's audit log, newest first, 50 per page; optional filters: exact `action`, `q` (name of who did it or who it was done to), `from`/`to` (organization-timezone days) | `AdminAuditController@index` |
+| `GET /api/v1/permissions` | logged in | The fixed permission list with labels and the three scopes | `PermissionCatalogController@organization` |
+| `GET/POST /api/v1/roles`, `PATCH/DELETE /api/v1/roles/{id}` | `roles.manage` (the list also for `people.create` / `people.assign_role`) | The organization's roles `{ id, name, description, scope, permissions, isSystem, memberCount, assignable }`. Rules of §9.1: valid scope/permission pairs (`INVALID_ROLE`), `ROLE_ESCALATION`, `ROLE_NAME_TAKEN`, `CANNOT_EDIT_OWN_ROLE`, `ROLE_LOCKED` (the admin role), `ROLE_IN_USE`. Audited as `role.created` / `role.updated` / `role.deleted` | `RoleController` |
+| `GET/POST /api/v1/platform/organizations`, `GET/PATCH /platform/organizations/{id}` | superadmin: `organizations.view` / `.create` / `.update` | Organizations with numbers only (people, admins, storage bytes); create (settings + Admin role only), rename, suspend / reactivate | `Platform\OrganizationController` |
+| `GET/POST /api/v1/platform/organizations/{id}/admins`, `PATCH .../{userId}`, `POST .../{userId}/resend-invite` | `organizations.admins.manage` | The Admin role's holders of one organization: add (invite email), deactivate (`LAST_ADMIN`), reactivate, invite again | `Platform\OrganizationAdminController` |
+| `/api/v1/platform/organizations/{id}/office/...` | `organizations.data.view` (writes need `.manage`) | The organization's own routes above (employees, reports, screenshots, roles, settings, audit, admin/employees), run inside it | the same controllers |
+| `GET/POST/PATCH /api/v1/platform/superadmins`, `GET /platform/permissions` | `platform.staff.manage` | Superadmins with their own permissions (anti-escalation, the owner is untouchable) | `Platform\SuperadminController` |
+| `GET/PUT /api/v1/platform/settings` | `platform.settings` | The oldest allowed desktop app version (older apps get 426) | `Platform\PlatformSettingsController` |
+| `GET /api/v1/platform/audit` | `platform.audit.view` | Everything superadmins did | `Platform\PlatformAuditController` |
 
 **Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the number of DB round-trips. A single session is just a batch of one.
 
@@ -848,6 +915,8 @@ PASS: only the API can reach the database.
 ---
 
 ### Phase 2 — Login, Users and Roles
+
+> **Superseded in part (2026-09-26):** this phase was built as written and then generalised to many organizations with custom roles and permissions (Phase 12, §9). The OIC / Project Manager / Team Leader tiers, `tracker:make-oic` and the "one tier below" rule described here are history; read §9 for the rules that apply now.
 
 **Tasks**
 1. `composer require laravel/sanctum`, publish its config/migration, run `php artisan migrate`.
@@ -1654,6 +1723,21 @@ PASS: within target.
 
 ---
 
+### Phase 12 — Organizations and custom roles (multi-tenant)
+
+**Why:** the boss said other government offices will use the platform and they do not share one hierarchy. Decisions of 2026-09-26: one database with an `organization_id` on every tenant row; **custom roles with permission checkboxes** made by each organization; login by email only (the account carries its organization); only superadmins create organizations; a new organization starts with only its Admin role and the Admin builds everything else; superadmins have all access, with their own limited permissions, and their reading is not logged (§9.4).
+
+**Built:**
+- Migrations: `organizations`, `roles`, `organization_settings` (was `office_settings`), `platform_settings`, `organization_id` on every tenant table, `users.role_id` and the superadmin columns; the old single office moves into the first organization ("Main Office", with roles made from the old fixed ones) by migration `2026_09_27_000003`, tested against a database in the old shape and run on the real MySQL dev database.
+- API: the permission catalog, `AccessService` (permissions, reach, anti-escalation), `BelongsToOrganization` scoping, roles CRUD, people rules without tiers, the platform layer (organizations, their admins, superadmins, platform settings and audit, opening an office), suspension, screenshot files under `org_<id>/`, `tracker:make-superadmin` and `tracker:make-organization`.
+- Dashboard: the sidebar and every page follow the person's permissions; new Roles page; People page without tiers; the platform pages; the organization pages reused for an opened office with a banner.
+- Desktop app: reads the new `Me` (organization, settings) and an older stored one; copy says "organization".
+- Tests: PHP suite (`TenantIsolationTest`, `RoleManagementTest`, `RoleAssignmentTest`, `PlatformTest`, `OfficeToOrganizationMigrationTest`, `AccessServiceTest` and the reworked older ones), Rust DTO tests, and the browser suite with two organizations.
+
+**Not included (ask if wanted):** self-signup; per-organization subdomain, branding or mail server; seats, quotas or billing; deleting or exporting an organization (suspending keeps everything); permissions with their own reach (one scope per role); the same email in two organizations; a separate unit tree (division / section).
+
+---
+
 ## 13. Edge Cases — Expected Behavior
 
 | # | Situation | What should happen |
@@ -1723,7 +1807,8 @@ PASS: within target.
 
 - [ ] **Laravel auth:** email/password only, hashed with bcrypt/argon2id. Password-reset emails for new accounts; managers never see passwords.
 - [ ] **Token checks:** Sanctum token validated on every request (hashed lookup, not a raw string compare); `expires_at` enforced; revoked immediately on logout or deactivation (`$user->tokens()->delete()`).
-- [ ] **Authorization:** every route has a role/hierarchy check; `/employees/{id}` uses the self-or-visible check (§9.1); settings and audit are OIC-only; covered by tests.
+- [ ] **Authorization:** every route has a permission check (`permission:` / `self-or-visible:` / `platform:`); `/employees/{id}` uses the self-or-visible check with the reach of the role (§9.1); nobody gives more than they have; covered by tests.
+- [ ] **Tenant isolation:** every tenant table carries `organization_id`; every model is limited to the request's organization; another organization's ids are 404 on every route; `TenantIsolationTest` and the browser isolation spec pass (§9.5).
 - [ ] **Never trust the client:** the user id comes from the authenticated Sanctum token/session, role from the `users` table. Body fields like `uid`/`role` are ignored (not recognized by the Form Request).
 - [ ] **Deactivation works immediately:** `EnsureActiveUser` checks `status` on every request (no cache — it's one indexed lookup already alongside the auth check), and deactivation revokes all existing tokens.
 - [ ] **Input validation:** a Laravel Form Request on every endpoint that takes a body or query; size limits; max 100 sessions per sync.
@@ -1735,7 +1820,7 @@ PASS: within target.
 - [ ] **Local token storage:** Sanctum token in Windows Credential Manager, never in files or SQLite.
 - [ ] **Local SQLite:** stored in the user's own `%APPDATA%` (other Windows users can't read it); no passwords or tokens in it. Encryption is not in the MVP (the data is the employee's own activity).
 - [ ] **Update files:** served read-only from the office server's `/updates/` directory; only the GitHub release workflow can write to it (SSH deploy key, no public upload endpoint).
-- [ ] **Audit logs:** manager actions and timeline views recorded; kept permanently; readable only by the OIC.
+- [ ] **Audit logs:** changes and timeline / screenshot views recorded; kept permanently; readable by whoever holds `audit.view` in the organization, and platform actions by `platform.audit.view`. A superadmin only looking at an office is not logged (decision of 2026-09-26).
 - [ ] **Data retention:** the server keeps all data permanently (no pruning). Only the employee PC's local SQLite purges already-synced rows after 7 days.
 - [ ] **Logs:** no tokens, keys, passwords or window titles in logs.
 - [ ] **Code signing:** installer and exe signed; updater signature checked.
@@ -1793,13 +1878,13 @@ The MVP is complete when **all** of these are true on the release build:
 - [ ] The office server is HTTPS-only with a valid, auto-renewing certificate.
 
 **Dashboard**
-- [ ] Manager-only login (OIC / Project Manager / Team Leader); individual-contributor roles are rejected with a clear message.
-- [ ] Overview with live status (tracking / idle / not tracking / offline) and today's totals, scoped to the caller's hierarchy.
+- [ ] Everyone can sign in and sees only what their role's permissions allow; a superadmin sees only what their platform permissions allow.
+- [ ] Overview with live status (tracking / idle / not tracking / offline) and today's totals, limited to the caller's reach.
 - [ ] Employee table: Name, Role, Status, Tracked, Active, Idle, Current app, Last activity.
-- [ ] Employee page: totals, app breakdown, timeline, session list — reachable only within the caller's hierarchy.
+- [ ] Employee page: totals, app breakdown, timeline, session list — reachable only within the caller's reach (or the person themselves).
 - [ ] Today / Yesterday / pick a date.
-- [ ] Add a direct report (role locked to one tier below the caller) and deactivate/reactivate anyone in the caller's hierarchy.
-- [ ] Office settings and audit log, both OIC-only.
+- [ ] Add a person (only with a role the caller may give) and deactivate/reactivate anyone in reach; roles made by each organization (Roles page); superadmins create organizations and their admins.
+- [ ] Organization settings and audit log for whoever holds those permissions; platform settings and platform audit log for superadmins.
 
 **Process**
 - [ ] All test plans for Phases 0–8 pass.

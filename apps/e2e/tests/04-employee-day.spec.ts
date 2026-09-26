@@ -21,7 +21,7 @@ test.describe('a person\'s day as the OIC', () => {
     await expect(page.getByRole('heading', { name: 'Sessions' })).toBeVisible()
     expect(await page.locator('tbody tr').count()).toBeGreaterThan(0)
     await expect(page.getByRole('columnheader', { name: 'Duration' })).toBeVisible()
-    await expect(page.getByText('office time')).toBeVisible()
+    await expect(page.getByText('organization time')).toBeVisible()
   })
 
   test('the app list is at most five apps plus Other', async ({ page }) => {

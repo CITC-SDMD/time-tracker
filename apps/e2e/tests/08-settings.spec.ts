@@ -1,20 +1,19 @@
 import { apiGet, as, expect, idOf, test } from '../fixtures'
 
 const idle = (page: import('@playwright/test').Page) => page.getByLabel('Idle limit (minutes)')
-const version = (page: import('@playwright/test').Page) => page.getByLabel('Minimum desktop app version')
 const consent = (page: import('@playwright/test').Page) => page.getByLabel('Consent version')
 const save = (page: import('@playwright/test').Page) => page.getByRole('button', { name: 'Save settings' })
 
-test.describe.serial('office settings as the OIC', () => {
+test.describe.serial('organization settings as the admin', () => {
   test.use(as('oic'))
 
-  test('READ: shows the current office settings, nothing to save yet', async ({ page }) => {
+  test('READ: shows the current organization settings, nothing to save yet', async ({ page }) => {
     await page.goto('/user/settings')
-    await expect(page.getByRole('heading', { name: 'Office settings' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Organization settings' })).toBeVisible()
     await expect(idle(page)).toHaveValue('5')
     await expect(page.getByLabel('Full window titles')).toBeChecked()
-    await expect(page.getByLabel('Office timezone')).toHaveValue('Asia/Manila')
-    await expect(version(page)).toHaveValue('0.1.0')
+    await expect(page.getByLabel('Organization timezone')).toHaveValue('Asia/Manila')
+    await expect(page.getByLabel('Minimum desktop app version')).toHaveCount(0) // the platform's setting now
     await expect(consent(page)).toHaveValue('1')
     await expect(save(page)).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Discard changes' })).toBeDisabled()
@@ -34,14 +33,6 @@ test.describe.serial('office settings as the OIC', () => {
     await idle(page).blur()
     await expect(page.getByText('Enter the idle limit in minutes.')).toBeVisible()
     await idle(page).fill('5')
-
-    await version(page).fill('1.2')
-    await version(page).blur()
-    await expect(page.getByText('Use the form 1.2.3.')).toBeVisible()
-    await version(page).fill('')
-    await version(page).blur()
-    await expect(page.getByText('Enter a version.')).toBeVisible()
-    await version(page).fill('0.1.0')
 
     await consent(page).fill('0')
     await consent(page).blur()
@@ -78,23 +69,21 @@ test.describe.serial('office settings as the OIC', () => {
     await expect(idle(page)).toHaveValue('5')
     await idle(page).fill('10')
     await page.getByLabel('App names only').check()
-    await version(page).fill('0.2.0')
     await save(page).click()
     await expect(page.getByText('Settings saved.')).toBeVisible()
     await expect(save(page)).toBeDisabled()
     await page.reload()
     await expect(idle(page)).toHaveValue('10')
     await expect(page.getByLabel('App names only')).toBeChecked()
-    await expect(version(page)).toHaveValue('0.2.0')
     const api = await (await apiGet(page, '/admin/settings')).json()
-    expect(api).toMatchObject({ idleThresholdSeconds: 600, windowTitleMode: 'app_only', minAgentVersion: '0.2.0' })
+    expect(api).toMatchObject({ idleThresholdSeconds: 600, windowTitleMode: 'app_only' })
   })
 
   test('UPDATE: a new timezone applies to every time shown straight away', async ({ page }) => {
     await page.goto('/user')
     const before = await page.getByRole('row').filter({ hasText: 'Cara Sy' }).textContent()
     await page.goto('/user/settings')
-    await page.getByLabel('Office timezone').selectOption('Pacific/Auckland')
+    await page.getByLabel('Organization timezone').selectOption('Pacific/Auckland')
     await save(page).click()
     await expect(page.getByText('Settings saved.')).toBeVisible()
     await page.goto('/user/profile')
@@ -103,7 +92,7 @@ test.describe.serial('office settings as the OIC', () => {
     const after = await page.getByRole('row').filter({ hasText: 'Cara Sy' }).textContent()
     expect(after).not.toBe(before)
     await page.goto('/user/settings')
-    await page.getByLabel('Office timezone').selectOption('Asia/Manila')
+    await page.getByLabel('Organization timezone').selectOption('Asia/Manila')
     await save(page).click()
     await expect(page.getByText('Settings saved.')).toBeVisible()
   })
@@ -113,7 +102,6 @@ test.describe.serial('office settings as the OIC', () => {
     await expect(idle(page)).toHaveValue('10')
     await idle(page).fill('5')
     await page.getByLabel('Full window titles').check()
-    await version(page).fill('0.1.0')
     await save(page).click()
     await expect(page.getByText('Settings saved.')).toBeVisible()
   })
@@ -122,7 +110,7 @@ test.describe.serial('office settings as the OIC', () => {
     await page.goto('/user/settings')
     const xsrf = decodeURIComponent((await page.context().cookies()).find(c => c.name === 'XSRF-TOKEN')?.value ?? '')
     const headers = { Accept: 'application/json', Origin: 'http://localhost:3101', Referer: 'http://localhost:3101/', 'X-XSRF-TOKEN': xsrf }
-    for (const bad of [{ idleThresholdSeconds: 5 }, { timezone: 'Mars/Base' }, { minAgentVersion: 'banana' }, { windowTitleMode: 'everything' }, { consentVersion: 0 }]) {
+    for (const bad of [{ idleThresholdSeconds: 5 }, { timezone: 'Mars/Base' }, { windowTitleMode: 'everything' }, { consentVersion: 0 }]) {
       const res = await page.request.put('/api/v1/admin/settings', { headers, data: bad })
       expect(res.status(), JSON.stringify(bad)).toBe(422)
     }
@@ -144,13 +132,13 @@ test.describe.serial('office settings as the OIC', () => {
 
   test('every change is in the audit log', async ({ page }) => {
     await page.goto('/user/audit')
-    await expect(page.locator('td', { hasText: 'Changed office settings' }).first()).toBeVisible()
+    await expect(page.locator('td', { hasText: 'Changed organization settings' }).first()).toBeVisible()
     const id = await idOf(page, 'oic@test.com')
     expect(id).toBeTruthy()
   })
 })
 
-test.describe('settings are for the OIC only', () => {
+test.describe('settings need their own permission', () => {
   for (const who of ['pm1', 'tl1'] as const) {
     test.describe(who, () => {
       test.use(as(who))

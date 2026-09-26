@@ -84,7 +84,7 @@ test.describe.serial('forgot and reset password', () => {
     await page.getByLabel('Password').fill(NEW_PASSWORD)
     const fresh = page.waitForResponse(r => r.url().includes('/auth/login'))
     await page.getByRole('button', { name: 'Sign in' }).click()
-    expect((await fresh).status()).toBe(403)
+    expect((await fresh).status()).toBe(200)
   })
 })
 

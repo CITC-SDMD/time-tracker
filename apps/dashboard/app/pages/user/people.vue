@@ -417,7 +417,8 @@ const NO_MANAGER = 'none'
 
 // ---- add a person ----------------------------------------------------------------------------
 
-const canAdd = computed(() => can('people.create') && !readOnly.value)
+// shown once the roles are known, so the form always has its choices
+const canAdd = computed(() => can('people.create') && !readOnly.value && rolesLoaded.value)
 // only roles the person may give (nobody gives more than they have)
 const addRoleOptions = computed(() => roles.value.filter(r => r.assignable).map(r => ({ value: r.id, label: r.name })))
 const addManagerOptions = computed(() => [

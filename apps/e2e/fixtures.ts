@@ -10,7 +10,12 @@ export const ACCOUNTS = {
   tl2: 'tl2@test.com',
   tl3: 'tl3@test.com',
   dev1: 'dev1@test.com',
+  // the platform owner: a superadmin, in no organization
   admin: 'admin@test.com',
+  // a second organization ("Other Office") for the isolation checks: its admin, a lead and a staff member
+  adminB: 'admin.b@test.com',
+  leadB: 'lead.b@test.com',
+  staffB: 'b1@test.com',
 } as const
 
 export interface Problem {
@@ -60,7 +65,7 @@ export async function loginAs(page: Page, email: string, password = PASSWORD): P
   await page.getByLabel('Email address').fill(email)
   await page.getByLabel('Password').fill(password)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.waitForURL(/\/(user|superadmin)/)
+  await page.waitForURL(/\/(user|platform)/)
 }
 
 /** The saved session of a demo account (made once in global-setup): `test.use(as('oic'))`. */
@@ -75,6 +80,14 @@ export async function idOf(page: Page, email: string): Promise<string> {
   const found = list.find(p => p.email === email)
   if (!found) throw new Error(`${email} is not visible to this account`)
   return String(found.id)
+}
+
+/** The id of one of the organization's roles by its name, through the API as whoever the page is signed in as. */
+export async function roleIdOf(page: Page, name: string): Promise<number> {
+  const list = await (await apiGet(page, '/roles')).json() as { id: string, name: string }[]
+  const found = list.find(r => r.name === name)
+  if (!found) throw new Error(`there is no role called ${name}`)
+  return Number(found.id)
 }
 
 /** Sanctum treats a call as coming from the dashboard (and so uses the session cookie) only when it carries the dashboard's origin. */

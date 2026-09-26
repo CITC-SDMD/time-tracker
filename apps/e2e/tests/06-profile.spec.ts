@@ -19,7 +19,8 @@ test.describe.serial('profile', () => {
     await expect(page.getByText('Team Leader', { exact: true })).toBeVisible()
     await expect(page.getByText('Pedro Santos', { exact: true })).toBeVisible()
     await expect(page.getByText('Asia/Manila')).toBeVisible()
-    await expect(page.getByText('Your role is set by the people above you.')).toBeVisible()
+    await expect(page.getByText('Your role is set by the people above you in your organization.')).toBeVisible()
+    await expect(page.getByText('Demo Office', { exact: true }).first()).toBeVisible()
   })
 
   test('the sidebar and the menu both lead to the profile', async ({ page }) => {
@@ -242,7 +243,7 @@ test.describe('profile for other roles', () => {
     await loginAs(page, ACCOUNTS.oic)
     await page.goto('/user/profile')
     await expect(page.getByText('No one', { exact: true })).toBeVisible()
-    await expect(page.getByText('OIC', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Admin', { exact: true }).first()).toBeVisible() // the name of the role the demo organization gave its admin
   })
 
   test('signed-out visitors are sent to sign in', async ({ page }) => {

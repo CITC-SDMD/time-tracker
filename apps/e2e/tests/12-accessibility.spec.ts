@@ -40,7 +40,7 @@ for (const mode of ['light', 'dark'] as const) {
 
     test('the Add dialog', async ({ page }, testInfo) => {
       await page.goto('/user/people')
-      await page.getByRole('button', { name: 'Add Project Manager' }).click()
+      await page.getByRole('button', { name: 'Add a person' }).click()
       await expect(page.locator('[id^="headlessui-dialog-panel"]')).toHaveCSS('opacity', '1')
       await scan(page, `${mode}-add-dialog`, testInfo)
     })
@@ -77,7 +77,7 @@ test.describe('keyboard use', () => {
 
     test('the Add dialog traps focus, closes with Escape, and gives focus back', async ({ page }) => {
       await page.goto('/user/people')
-      const opener = page.getByRole('button', { name: 'Add Project Manager' })
+      const opener = page.getByRole('button', { name: 'Add a person' })
       await opener.focus()
       await page.keyboard.press('Enter')
       await expect(page.getByRole('dialog').getByLabel('Full name')).toBeFocused()

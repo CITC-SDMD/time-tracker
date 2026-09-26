@@ -20,7 +20,7 @@ test.describe('overview as the OIC', () => {
   test('shows the whole office with the right columns', async ({ page }) => {
     await page.goto('/user')
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
-    await expect(page.getByText('Everyone in the office, right now and today.')).toBeVisible()
+    await expect(page.getByText('Everyone in the organization, right now and today.')).toBeVisible()
     await expect(page.getByRole('row')).toHaveCount(OFFICE.length + 1)
     for (const name of OFFICE) await expect(page.getByRole('row').filter({ hasText: name }).first()).toBeVisible()
     for (const col of ['Name', 'Role', 'Status', 'Tracked', 'Active', 'Idle', 'Current app', 'Last activity'])
@@ -112,9 +112,9 @@ test.describe('overview as the OIC', () => {
     await expect(page.getByText('Something went wrong.')).toBeVisible()
   })
 
-  test('the sidebar lists every OIC page and marks the current one', async ({ page }) => {
+  test('the sidebar lists every page the admin has permission for and marks the current one', async ({ page }) => {
     await page.goto('/user')
-    for (const name of ['Overview', 'People', 'Reports', 'Settings', 'Audit log'])
+    for (const name of ['Overview', 'People', 'Reports', 'Roles', 'Settings', 'Audit log'])
       await expect(page.getByRole('link', { name, exact: true }).first()).toBeVisible()
     await expect(page.getByRole('link', { name: 'Overview', exact: true }).first()).toHaveAttribute('aria-current', 'page')
   })
@@ -123,7 +123,7 @@ test.describe('overview as the OIC', () => {
 test.describe('overview as a project manager', () => {
   test.use(as('pm1'))
 
-  test('shows only their own branch and no OIC-only pages', async ({ page }) => {
+  test('shows only their own branch and no pages their role has no permission for', async ({ page }) => {
     await page.goto('/user')
     const names = ['Paula Reyes', 'Tina Cruz', 'Tomas Diaz', 'Dan Ramos', 'Dana Uy', 'Dex Tan', 'Quinn Go']
     await expect(page.getByRole('row')).toHaveCount(names.length + 1)
@@ -132,6 +132,7 @@ test.describe('overview as a project manager', () => {
     await expect(page.getByText('You and everyone who reports to you, right now and today.')).toBeVisible()
     await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'Audit log', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Roles', exact: true })).toHaveCount(0)
   })
 })
 

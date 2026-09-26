@@ -1,20 +1,22 @@
 import type { Page } from '@playwright/test'
-import { ACCOUNTS, PASSWORD, as, expect, idOf, loginAs, otherPerson, test } from '../fixtures'
+import { ACCOUNTS, DASH_HEADERS, PASSWORD, as, expect, idOf, loginAs, otherPerson, roleIdOf, test } from '../fixtures'
 import { artisan } from '../helpers/artisan'
 import { mailLinkCount, nextMailLink } from '../helpers/mail'
 
-const NEW_PM = { name: 'Quentin Estrada', email: 'quentin.e2e@test.com' }
+const NEW_PERSON = { name: 'Quentin Estrada', email: 'quentin.e2e@test.com' }
 const NEW_PASSWORD = 'quentin-secret-99'
 
 // a person's row is found by the link on their name, since the Manager column repeats other names
 const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByRole('link', { name, exact: true }) })
-const openAdd = (page: Page) => page.getByRole('button', { name: 'Add Project Manager' }).click()
+const openAdd = (page: Page) => page.getByRole('button', { name: 'Add a person' }).click()
 const dialog = (page: Page) => page.getByRole('dialog')
+const options = (page: Page, label: string) => dialog(page).getByLabel(label).locator('option').allTextContents()
 
 test.beforeEach(() => artisan('cache:clear'))
 
-// Create, read, update and delete of an account, the way the OIC does them.
-test.describe.serial('people as the OIC', () => {
+// Add, read, change and delete the accounts of an organization, the way its admin does. There are no tiers: any role can
+// report to any person, and the roles offered are the ones the organization made.
+test.describe.serial('people as the admin', () => {
   test.use(as('oic'))
 
   // ---- READ ----------------------------------------------------------------------------------
@@ -28,9 +30,11 @@ test.describe.serial('people as the OIC', () => {
     await expect(row(page, 'Tina Cruz')).toContainText('Team Leader')
     await expect(row(page, 'Tina Cruz')).toContainText('Paula Reyes')
     await expect(row(page, 'Paula Reyes')).toContainText('OIC')
-    await expect(row(page, 'Dan Ramos')).toContainText('tl1@test.com'.replace('tl1', 'dev1'))
+    await expect(row(page, 'Dan Ramos')).toContainText('dev1@test.com')
     await expect(row(page, 'Dan Ramos')).toContainText('Active')
     await expect(row(page, 'OIC')).toContainText('(you)')
+    // the people of the other organization are not here
+    await expect(page.getByText('Bea Admin')).toHaveCount(0)
   })
 
   test('READ: search and the role and account filters narrow the list', async ({ page }) => {
@@ -57,13 +61,15 @@ test.describe.serial('people as the OIC', () => {
     await expect(page.getByRole('heading', { name: 'Tomas Diaz' })).toBeVisible()
   })
 
-  test('the OIC row has no actions and the OIC can only add a Project Manager', async ({ page }) => {
+  test('your own row has no actions, and every role of the organization can be given', async ({ page }) => {
     await page.goto('/user/people')
     await expect(row(page, 'OIC').getByRole('button')).toHaveCount(0)
     await openAdd(page)
-    const role = dialog(page).getByLabel('Role')
-    await expect(role.locator('option')).toHaveText(['Project Manager'])
-    await expect(role).toHaveValue('project_manager')
+    const roles = await options(page, 'Role')
+    expect(roles).toEqual(expect.arrayContaining(['Choose a role', 'Project Manager', 'Team Leader', 'Lead Developer', 'Developer', 'Client Support', 'QA', 'System Analyst']))
+    // who they will report to: anyone active, the admin themselves first by default
+    await expect(dialog(page).getByLabel('Reports to')).toHaveValue(/\d+/)
+    expect(await options(page, 'Reports to')).toEqual(expect.arrayContaining(['OIC (you)', 'Paula Reyes (Project Manager)', 'Dan Ramos (Lead Developer)', 'No manager']))
   })
 
   // ---- CREATE --------------------------------------------------------------------------------
@@ -78,6 +84,7 @@ test.describe.serial('people as the OIC', () => {
     await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
     await expect(dialog(page).getByText('Enter their full name.')).toBeVisible()
     await expect(dialog(page).getByText('Enter their email address.')).toBeVisible()
+    await expect(dialog(page).getByText('Choose a role.')).toBeVisible()
     await dialog(page).getByLabel('Email').fill('not-an-email')
     await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
     await expect(dialog(page).getByText('Enter a valid email address.')).toBeVisible()
@@ -100,35 +107,39 @@ test.describe.serial('people as the OIC', () => {
     await expect(row(page, 'Never Saved')).toHaveCount(0)
   })
 
-  test('CREATE: a duplicate email is refused with the server\'s message', async ({ page, allow }) => {
+  test('CREATE: an email already used, here or in another organization, is refused with the server\'s message', async ({ page, allow }) => {
     allow(/POST \/api\/v1\/admin\/employees (409|422)/)
     await page.goto('/user/people')
-    await openAdd(page)
-    await dialog(page).getByLabel('Full name').fill('Another Paula')
-    await dialog(page).getByLabel('Email').fill('pm1@test.com')
-    await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
-    await expect(dialog(page).getByText(/already|taken|in use/i)).toBeVisible()
-    await expect(dialog(page).getByLabel("Full name")).toBeVisible()
+    for (const email of ['pm1@test.com', 'Admin.B@test.com']) {
+      await openAdd(page)
+      await dialog(page).getByLabel('Full name').fill('Another Person')
+      await dialog(page).getByLabel('Email').fill(email)
+      await dialog(page).getByLabel('Role').selectOption({ label: 'Developer' })
+      await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
+      await expect(dialog(page).getByText(/already|taken|in use/i)).toBeVisible()
+      await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+    }
   })
 
-  test('CREATE: a new Project Manager is added, listed under the OIC, and emailed a link', async ({ page }) => {
+  test('CREATE: a new Project Manager is added, listed under the admin, and emailed a link', async ({ page }) => {
     const before = mailLinkCount()
     await page.goto('/user/people')
     await openAdd(page)
-    await dialog(page).getByLabel('Full name').fill(`  ${NEW_PM.name}  `)
-    await dialog(page).getByLabel('Email').fill(NEW_PM.email)
+    await dialog(page).getByLabel('Full name').fill(`  ${NEW_PERSON.name}  `)
+    await dialog(page).getByLabel('Email').fill(NEW_PERSON.email)
+    await dialog(page).getByLabel('Role').selectOption({ label: 'Project Manager' })
     await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
     await expect(dialog(page)).toHaveCount(0)
-    await expect(page.getByText(`We emailed a set-password link to ${NEW_PM.email}.`)).toBeVisible()
-    await expect(row(page, NEW_PM.name)).toContainText('Project Manager')
-    await expect(row(page, NEW_PM.name)).toContainText('OIC')
-    await expect(row(page, NEW_PM.name)).toContainText('Active')
+    await expect(page.getByText(`We emailed a set-password link to ${NEW_PERSON.email}.`)).toBeVisible()
+    await expect(row(page, NEW_PERSON.name)).toContainText('Project Manager')
+    await expect(row(page, NEW_PERSON.name)).toContainText('OIC')
+    await expect(row(page, NEW_PERSON.name)).toContainText('Active')
     await expect(page.getByRole('row')).toHaveCount(14)
     const link = await nextMailLink(before)
     expect(link).toContain('/reset-password?link=')
   })
 
-  test('CREATE: the new person picks a password from the emailed link and signs in as a manager', async ({ browser }) => {
+  test('CREATE: the new person picks a password from the emailed link and sees what their role allows', async ({ browser }) => {
     const before = mailLinkCount() - 1 // the welcome mail of the previous test is the newest one
     const link = await nextMailLink(Math.max(before, 0))
     const them = await otherPerson(browser)
@@ -137,17 +148,19 @@ test.describe.serial('people as the OIC', () => {
     await them.getByLabel('Type it again').fill(NEW_PASSWORD)
     await them.getByRole('button', { name: 'Set password' }).click()
     await expect(them.getByText('Your password is set.')).toBeVisible()
-    await loginAs(them, NEW_PM.email, NEW_PASSWORD)
+    await loginAs(them, NEW_PERSON.email, NEW_PASSWORD)
     await expect(them).toHaveURL(/\/user$/)
-    await expect(them.getByRole('link', { name: 'Settings', exact: true })).toHaveCount(0)
+    // a Project Manager role: people and reports, no settings, audit log or roles
+    for (const name of ['People', 'Reports']) await expect(them.getByRole('link', { name, exact: true }).first()).toBeVisible()
+    for (const name of ['Settings', 'Audit log', 'Roles']) await expect(them.getByRole('link', { name, exact: true })).toHaveCount(0)
     await them.goto('/user/people')
-    await expect(them.getByRole('button', { name: 'Add Team Leader' })).toBeVisible()
+    await expect(them.getByRole('button', { name: 'Add a person' })).toBeVisible()
     await them.context().close()
   })
 
-  test('CREATE: the new person is now in the office totals', async ({ page }) => {
+  test('CREATE: the new person is now in the organization totals', async ({ page }) => {
     await page.goto('/user')
-    await expect(page.getByRole('row').filter({ hasText: NEW_PM.name })).toBeVisible()
+    await expect(page.getByRole('row').filter({ hasText: NEW_PERSON.name })).toBeVisible()
     await expect(page.getByRole('row')).toHaveCount(14)
   })
 
@@ -156,25 +169,28 @@ test.describe.serial('people as the OIC', () => {
   test('UPDATE: Resend link sends a fresh link that works', async ({ page, browser }) => {
     const before = mailLinkCount()
     await page.goto('/user/people')
-    await row(page, NEW_PM.name).getByRole('button', { name: 'Resend link' }).click()
-    await expect(page.getByText(`We emailed a new set-password link to ${NEW_PM.email}.`)).toBeVisible()
+    await row(page, NEW_PERSON.name).getByRole('button', { name: 'Resend link' }).click()
+    await expect(page.getByText(`We emailed a new set-password link to ${NEW_PERSON.email}.`)).toBeVisible()
     const link = await nextMailLink(before)
     const them = await otherPerson(browser)
     await them.goto(link)
-    await expect(them.getByText(`For ${NEW_PM.email}`)).toBeVisible()
+    await expect(them.getByText(`For ${NEW_PERSON.email}`)).toBeVisible()
     await them.context().close()
   })
 
   // ---- UPDATE: move --------------------------------------------------------------------------
 
-  test('UPDATE: the move form lists only valid managers and asks for a choice', async ({ page }) => {
+  test('UPDATE: the move form offers anyone active who is not above the loop, and asks for a choice', async ({ page }) => {
     await page.goto('/user/people')
     await row(page, 'Tess Lim').getByRole('button', { name: 'Move' }).click()
     await expect(dialog(page).getByRole('heading', { name: 'Move Tess Lim' })).toBeVisible()
     await expect(dialog(page).getByText('currently reports to Pedro Santos')).toBeVisible()
-    const options = await dialog(page).getByLabel('New manager').locator('option').allTextContents()
-    // Project Managers only (one tier above), never the current manager, never a team leader or member
-    expect(options).toEqual(['Choose a manager', 'Paula Reyes (Project Manager)', `${NEW_PM.name} (Project Manager)`])
+    const managers = await options(page, 'New manager')
+    // no tiers: team leaders and members can be managers too. Never herself, her current manager, or her own team.
+    expect(managers).toEqual(expect.arrayContaining(['Choose a manager', 'Paula Reyes (Project Manager)', 'Tina Cruz (Team Leader)', 'Dan Ramos (Lead Developer)', `${NEW_PERSON.name} (Project Manager)`, 'No manager']))
+    expect(managers.some(o => o.startsWith('OIC'))).toBe(true)
+    for (const gone of ['Tess Lim', 'Pedro Santos', 'Cara Sy', 'Sam Ong'])
+      expect(managers.some(o => o.startsWith(gone)), gone).toBe(false)
     await dialog(page).getByRole('button', { name: 'Move', exact: true }).click()
     await expect(dialog(page).getByText('Choose the new manager.')).toBeVisible()
     await dialog(page).getByRole('button', { name: 'Cancel' }).click()
@@ -199,55 +215,60 @@ test.describe.serial('people as the OIC', () => {
     await pedro.context().close()
   })
 
-  test('UPDATE: moving back restores the original shape', async ({ page }) => {
+  test('UPDATE: a person can be put under someone of any role, and back', async ({ page }) => {
     await page.goto('/user/people')
+    // a team leader under a lead developer: nothing forbids it
+    await row(page, 'Tess Lim').getByRole('button', { name: 'Move' }).click()
+    await dialog(page).getByLabel('New manager').selectOption({ label: 'Dan Ramos (Lead Developer)' })
+    await dialog(page).getByRole('button', { name: 'Move', exact: true }).click()
+    await expect(row(page, 'Tess Lim')).toContainText('Dan Ramos')
     await row(page, 'Tess Lim').getByRole('button', { name: 'Move' }).click()
     await dialog(page).getByLabel('New manager').selectOption({ label: 'Pedro Santos (Project Manager)' })
     await dialog(page).getByRole('button', { name: 'Move', exact: true }).click()
     await expect(row(page, 'Tess Lim')).toContainText('Pedro Santos')
   })
 
-  test('UPDATE: a team member can be moved to another team leader, a project manager cannot be moved', async ({ page }) => {
+  test('UPDATE: nobody is offered a manager below them, so no loop can be made', async ({ page }) => {
     await page.goto('/user/people')
-    await row(page, 'Sam Ong').getByRole('button', { name: 'Move' }).click()
-    const options = await dialog(page).getByLabel('New manager').locator('option').allTextContents()
-    expect(options).toEqual(['Choose a manager', 'Tina Cruz (Team Leader)', 'Tomas Diaz (Team Leader)'])
-    await dialog(page).getByLabel('New manager').selectOption({ label: 'Tomas Diaz (Team Leader)' })
+    await row(page, 'Paula Reyes').getByRole('button', { name: 'Move' }).click()
+    const managers = await options(page, 'New manager')
+    for (const below of ['Tina Cruz', 'Tomas Diaz', 'Dan Ramos', 'Dana Uy', 'Dex Tan', 'Quinn Go'])
+      expect(managers.some(o => o.startsWith(below)), below).toBe(false)
+    expect(managers).toContain('Pedro Santos (Project Manager)')
+    await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+  })
+
+  test('UPDATE: someone reaching the whole organization can leave a person without a manager, and put them back', async ({ page }) => {
+    await page.goto('/user/people')
+    await row(page, NEW_PERSON.name).getByRole('button', { name: 'Move' }).click()
+    await dialog(page).getByLabel('New manager').selectOption({ label: 'No manager' })
     await dialog(page).getByRole('button', { name: 'Move', exact: true }).click()
-    await expect(row(page, 'Sam Ong')).toContainText('Tomas Diaz')
-    // put Sam back
-    await row(page, 'Sam Ong').getByRole('button', { name: 'Move' }).click()
-    await dialog(page).getByLabel('New manager').selectOption({ label: 'Tess Lim (Team Leader)' })
+    await expect(page.getByText(`${NEW_PERSON.name} no longer reports to anyone.`)).toBeVisible()
+    await expect(row(page, NEW_PERSON.name)).toContainText('—')
+    await row(page, NEW_PERSON.name).getByRole('button', { name: 'Move' }).click()
+    const admin = (await options(page, 'New manager')).find(o => o.startsWith('OIC ('))!
+    await dialog(page).getByLabel('New manager').selectOption({ label: admin })
     await dialog(page).getByRole('button', { name: 'Move', exact: true }).click()
-    await expect(row(page, 'Sam Ong')).toContainText('Tess Lim')
-    // Paula can only go under the OIC, who is the only manager above her, and she already has them
-    await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Move' })).toHaveCount(0)
+    await expect(row(page, NEW_PERSON.name)).toContainText('OIC')
   })
 
   // ---- UPDATE: change a role -----------------------------------------------------------------
 
-  test('UPDATE role: the form offers the roles that can work and asks for a manager only when the level changes', async ({ page }) => {
+  test('UPDATE role: the form offers the other roles of the organization and never asks for a manager', async ({ page }) => {
     await page.goto('/user/people')
     await row(page, 'Sam Ong').getByRole('button', { name: 'Change role' }).click()
     await expect(dialog(page).getByRole('heading', { name: 'Change the role of Sam Ong' })).toBeVisible()
-    const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
-    expect(roles).toEqual(['Choose a role', 'Project Manager', 'Team Leader', 'Lead Developer', 'Developer', 'Client Support', 'QA'])
-
-    // same level: no manager to choose
-    await dialog(page).getByLabel('New role').selectOption({ label: 'QA' })
+    const roles = await options(page, 'New role')
+    expect(roles).toEqual(expect.arrayContaining(['Choose a role', 'Project Manager', 'Team Leader', 'Lead Developer', 'Developer', 'Client Support', 'QA']))
+    expect(roles).not.toContain('System Analyst') // the role Sam already has
     await expect(dialog(page).getByLabel('Reports to')).toHaveCount(0)
-
-    // another level: the people who could take them, and a choice is required
-    await dialog(page).getByLabel('New role').selectOption({ label: 'Team Leader' })
-    const managers = await dialog(page).getByLabel('Reports to').locator('option').allTextContents()
-    expect(managers.sort()).toEqual(['Choose who they will report to', 'Paula Reyes (Project Manager)', 'Pedro Santos (Project Manager)', `${NEW_PM.name} (Project Manager)`].sort())
     await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
-    await expect(dialog(page).getByText('Choose who they will report to.')).toBeVisible()
+    await expect(dialog(page).getByText('Choose the new role.')).toBeVisible()
     await dialog(page).getByRole('button', { name: 'Cancel' }).click()
     await expect(row(page, 'Sam Ong')).toContainText('System Analyst')
   })
 
-  test('UPDATE role: a change within the same level keeps the manager, and is put back', async ({ page }) => {
+  test('UPDATE role: a change keeps the manager, and is put back', async ({ page }) => {
     await page.goto('/user/people')
     await row(page, 'Sam Ong').getByRole('button', { name: 'Change role' }).click()
     await dialog(page).getByLabel('New role').selectOption({ label: 'QA' })
@@ -262,42 +283,32 @@ test.describe.serial('people as the OIC', () => {
     await expect(row(page, 'Sam Ong')).toContainText('System Analyst')
   })
 
-  test('UPDATE role: a developer is promoted to Team Leader under a Project Manager, then demoted back', async ({ page }) => {
+  test('UPDATE role: a developer becomes a Team Leader without moving, then goes back', async ({ page }) => {
     await page.goto('/user/people')
     await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
     await dialog(page).getByLabel('New role').selectOption({ label: 'Team Leader' })
-    await dialog(page).getByLabel('Reports to').selectOption({ label: 'Pedro Santos (Project Manager)' })
     await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
     await expect(page.getByText('Dana Uy is now Team Leader.')).toBeVisible()
     await expect(row(page, 'Dana Uy')).toContainText('Team Leader')
-    await expect(row(page, 'Dana Uy')).toContainText('Pedro Santos')
+    await expect(row(page, 'Dana Uy')).toContainText('Tina Cruz') // still reports to Tina
 
-    // and back to Developer under Tina Cruz (Team Leaders only)
     await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
     await dialog(page).getByLabel('New role').selectOption({ label: 'Developer' })
-    const teamLeaders = await dialog(page).getByLabel('Reports to').locator('option').allTextContents()
-    expect(teamLeaders.every(o => o === 'Choose who they will report to' || o.endsWith('(Team Leader)'))).toBe(true)
-    await dialog(page).getByLabel('Reports to').selectOption({ label: 'Tina Cruz (Team Leader)' })
     await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
     await expect(row(page, 'Dana Uy')).toContainText('Developer')
-    await expect(row(page, 'Dana Uy')).toContainText('Tina Cruz')
   })
 
-  test('UPDATE role: a Team Leader with a team cannot become a Project Manager until the team has moved', async ({ page }) => {
+  test('UPDATE role: a manager with a team can take another role, the team stays with them', async ({ page }) => {
     await page.goto('/user/people')
     await row(page, 'Tina Cruz').getByRole('button', { name: 'Change role' }).click()
     await dialog(page).getByLabel('New role').selectOption({ label: 'Project Manager' })
-    await dialog(page).getByLabel('Reports to').selectOption({ label: 'OIC (OIC)' })
-    await expect(dialog(page).getByText('Tina Cruz has people reporting to them who could not report to a Project Manager. Move those people first.')).toBeVisible()
-    await expect(dialog(page).getByRole('button', { name: 'Change role', exact: true })).toBeDisabled()
-    await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(row(page, 'Tina Cruz')).toContainText('Project Manager')
+    await expect(row(page, 'Dan Ramos')).toContainText('Tina Cruz')
+    await row(page, 'Tina Cruz').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'Team Leader' })
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
     await expect(row(page, 'Tina Cruz')).toContainText('Team Leader')
-  })
-
-  test('UPDATE role: nobody gets a Change role button on themselves or on an OIC', async ({ page }) => {
-    await page.goto('/user/people')
-    await expect(row(page, 'OIC').getByRole('button', { name: 'Change role' })).toHaveCount(0)
-    await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Change role' })).toHaveCount(1)
   })
 
   // ---- UPDATE: deactivate / reactivate -------------------------------------------------------
@@ -310,7 +321,7 @@ test.describe.serial('people as the OIC', () => {
     await expect(row(page, 'Tomas Diaz')).toContainText('Active')
   })
 
-  test('UPDATE: deactivating a manager signs them out and blocks sign-in, reactivating restores it', async ({ page, browser, allow }) => {
+  test('UPDATE: deactivating a person signs them out and blocks sign-in, reactivating restores it', async ({ page, browser, allow }) => {
     allow(/\/(auth\/login|api\/v1\/.*) (401|403)/)
     const tomas = await otherPerson(browser, 'tl2')
     await tomas.goto('/user')
@@ -344,8 +355,8 @@ test.describe.serial('people as the OIC', () => {
     await expect(page.getByText('Tomas Diaz was reactivated.')).toBeVisible()
     await expect(row(page, 'Tomas Diaz')).toContainText('Active')
     // he can use the dashboard again (his old session works again, or he signs in afresh: either way he gets in)
-    await tomas.goto("/user")
-    await expect(tomas.getByRole("heading", { name: "Overview" })).toBeVisible()
+    await tomas.goto('/user')
+    await expect(tomas.getByRole('heading', { name: 'Overview' })).toBeVisible()
     await tomas.context().close()
   })
 
@@ -364,17 +375,17 @@ test.describe.serial('people as the OIC', () => {
 
   test('DELETE: Cancel keeps an unused account', async ({ page }) => {
     await page.goto('/user/people')
-    await row(page, NEW_PM.name).getByRole('button', { name: 'Delete' }).click()
+    await row(page, NEW_PERSON.name).getByRole('button', { name: 'Delete' }).click()
     await dialog(page).getByRole('button', { name: 'Cancel' }).click()
-    await expect(row(page, NEW_PM.name)).toBeVisible()
+    await expect(row(page, NEW_PERSON.name)).toBeVisible()
   })
 
   test('DELETE: an unused account is deleted and disappears everywhere', async ({ page }) => {
     await page.goto('/user/people')
-    await row(page, NEW_PM.name).getByRole('button', { name: 'Delete' }).click()
+    await row(page, NEW_PERSON.name).getByRole('button', { name: 'Delete' }).click()
     await dialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
-    await expect(page.getByText(`${NEW_PM.name} was deleted.`)).toBeVisible()
-    await expect(row(page, NEW_PM.name)).toHaveCount(0)
+    await expect(page.getByText(`${NEW_PERSON.name} was deleted.`)).toBeVisible()
+    await expect(row(page, NEW_PERSON.name)).toHaveCount(0)
     await expect(page.getByRole('row')).toHaveCount(13)
     await page.goto('/user')
     await expect(page.getByRole('row')).toHaveCount(13)
@@ -384,7 +395,7 @@ test.describe.serial('people as the OIC', () => {
     allow(/POST \/auth\/login 401/)
     const them = await otherPerson(browser)
     await them.goto('/')
-    await them.getByLabel('Email address').fill(NEW_PM.email)
+    await them.getByLabel('Email address').fill(NEW_PERSON.email)
     await them.getByLabel('Password').fill(NEW_PASSWORD)
     await them.getByRole('button', { name: 'Sign in' }).click()
     await expect(them.getByText(/incorrect email or password/i)).toBeVisible()
@@ -395,9 +406,11 @@ test.describe.serial('people as the OIC', () => {
     await page.goto('/user/audit')
     for (const label of ['Added an account', 'Sent a new set-password link', 'Moved a person to another manager', 'Changed a role', 'Deactivated an account', 'Reactivated an account', 'Deleted an account'])
       await expect(page.locator('td', { hasText: label }).first()).toBeVisible()
-    // the role change says what became what, and who the person now reports to
-    await expect(page.getByRole('row').filter({ hasText: 'Changed a role' }).filter({ hasText: 'Developer → Team Leader, now reports to Pedro Santos' })).toBeVisible()
+    // the role change says what became what
     await expect(page.getByRole('row').filter({ hasText: 'Changed a role' }).filter({ hasText: 'System Analyst → QA' })).toBeVisible()
+    await expect(page.getByRole('row').filter({ hasText: 'Changed a role' }).filter({ hasText: 'Developer → Team Leader' })).toBeVisible()
+    // and a move says who it was to
+    await expect(page.getByRole('row').filter({ hasText: 'Moved a person to another manager' }).filter({ hasText: 'no one' }).first()).toBeVisible()
   })
 })
 
@@ -409,12 +422,13 @@ test.describe('people when the mail cannot be sent', () => {
     const url = 'http://localhost:3101/reset-password?link=abc'
     await page.route('**/api/v1/admin/employees', async (route) => {
       if (route.request().method() !== 'POST') return route.continue()
-      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: '999', name: 'Mail Failed', email: 'mf@test.com', role: 'project_manager', emailSent: false, setPasswordUrl: url }) })
+      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: '999', name: 'Mail Failed', email: 'mf@test.com', role: 'Project Manager', roleId: '2', emailSent: false, setPasswordUrl: url }) })
     })
     await page.goto('/user/people')
     await openAdd(page)
     await dialog(page).getByLabel('Full name').fill('Mail Failed')
     await dialog(page).getByLabel('Email').fill('mf@test.com')
+    await dialog(page).getByLabel('Role').selectOption({ label: 'Project Manager' })
     await dialog(page).getByRole('button', { name: 'Add and email link' }).click()
     await expect(page.getByText('was added, but the email could not be sent.')).toBeVisible()
     await expect(page.getByText(url)).toBeVisible()
@@ -428,65 +442,69 @@ test.describe('people as a project manager and a team leader', () => {
   test.describe('project manager', () => {
     test.use(as('pm1'))
 
-    test('sees only their branch, adds only Team Leaders, and cannot move across branches', async ({ page }) => {
+    test('sees only their branch, adds people under themselves, and is never offered the admin role', async ({ page }) => {
       await page.goto('/user/people')
       await expect(page.getByRole('row')).toHaveCount(8)
       await expect(page.getByText('You and everyone who reports to you.')).toBeVisible()
-      await page.getByRole('button', { name: 'Add Team Leader' }).click()
-      await expect(dialog(page).getByLabel('Role').locator('option')).toHaveText(['Team Leader'])
+      await openAdd(page)
+      const roles = await options(page, 'Role')
+      expect(roles).toEqual(expect.arrayContaining(['Team Leader', 'Project Manager', 'Developer', 'QA']))
+      expect(roles).not.toContain('OIC') // holds settings, the audit log and roles: more than a project manager has
+      expect(roles).not.toContain('Admin')
+      // reaching a team, they cannot leave someone without a manager
+      expect(await options(page, 'Reports to')).not.toContain('No manager')
+      await expect(dialog(page).getByLabel('Reports to')).toHaveValue(/\d+/)
       await dialog(page).getByRole('button', { name: 'Cancel' }).click()
       await expect(row(page, 'Pedro Santos')).toHaveCount(0)
     })
 
-    test('can change a team member to a Team Leader (under themselves) but cannot create a second Project Manager', async ({ page }) => {
+    test('can give any role up to their own, but never touches the admin', async ({ page }) => {
       await page.goto('/user/people')
       await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
-      const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
-      // no Project Manager: the only person who could manage one, the OIC, is out of their sight
-      expect(roles).toEqual(['Choose a role', 'Team Leader', 'Lead Developer', 'Client Support', 'QA', 'System Analyst'])
+      const roles = await options(page, 'New role')
+      expect(roles).toEqual(expect.arrayContaining(['Choose a role', 'Team Leader', 'Project Manager', 'Lead Developer', 'Client Support', 'QA', 'System Analyst']))
+      expect(roles).not.toContain('Developer') // the role Dana has
       await dialog(page).getByRole('button', { name: 'Cancel' }).click()
-      await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Change role' })).toHaveCount(0)
+      // the admin is not in their reach at all
+      await expect(row(page, 'OIC')).toHaveCount(0)
     })
   })
 
   test.describe('team leader', () => {
     test.use(as('tl1'))
 
-    test('can add team members of every contributor role', async ({ page }) => {
+    test('can add team members of any role their own role allows', async ({ page }) => {
       await page.goto('/user/people')
-      await page.getByRole('button', { name: 'Add person' }).click()
-      const roles = await dialog(page).getByLabel('Role').locator('option').allTextContents()
+      await openAdd(page)
+      const roles = await options(page, 'Role')
       expect(roles).toEqual(expect.arrayContaining(['Lead Developer', 'Developer', 'Client Support', 'QA', 'System Analyst']))
-      expect(roles).not.toContain('Team Leader')
+      expect(roles).not.toContain('OIC')
       await dialog(page).getByRole('button', { name: 'Cancel' }).click()
     })
 
-    test('can change a team member between the contributor roles only, and not their own role', async ({ page }) => {
+    test('the API refuses the admin role and anyone outside the team', async ({ page }) => {
       await page.goto('/user/people')
-      await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
-      const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
-      // no Team Leader or Project Manager: there is nobody they could see to report to
-      expect(roles).toEqual(['Choose a role', 'Lead Developer', 'Client Support', 'QA', 'System Analyst'])
-      await dialog(page).getByRole('button', { name: 'Cancel' }).click()
-      await expect(row(page, 'Tina Cruz').getByRole('button', { name: 'Change role' })).toHaveCount(0)
-    })
-
-    test('the API refuses to add a Project Manager or to touch someone outside the team', async ({ page }) => {
-      await page.goto('/user/people')
-      const headers = { Accept: 'application/json', Origin: 'http://localhost:3101', Referer: 'http://localhost:3101/' }
       const xsrf = decodeURIComponent((await page.context().cookies()).find(c => c.name === 'XSRF-TOKEN')?.value ?? '')
-      const other = await (async () => {
-        const oic = await otherPerson(page.context().browser()!, 'oic')
-        await oic.goto('/user')
-        const id = await idOf(oic, 'dev3@test.com')
-        await oic.context().close()
-        return id
-      })()
-      const badRole = await page.request.post('/api/v1/admin/employees', { headers: { ...headers, 'X-XSRF-TOKEN': xsrf }, data: { name: 'X', email: 'x@test.com', role: 'project_manager' } })
-      expect([403, 422]).toContain(badRole.status())
-      const outside = await page.request.patch(`/api/v1/admin/employees/${other}`, { headers: { ...headers, 'X-XSRF-TOKEN': xsrf }, data: { status: 'inactive' } })
+      const headers = { ...DASH_HEADERS, 'X-XSRF-TOKEN': xsrf }
+      const admin = await otherPerson(page.context().browser()!, 'oic')
+      await admin.goto('/user')
+      const other = await idOf(admin, 'dev3@test.com')
+      const adminRoleId = await roleIdOf(admin, 'Admin').catch(() => roleIdOf(admin, 'OIC'))
+      await admin.context().close()
+      const tooMuch = await page.request.post('/api/v1/admin/employees', { headers, data: { name: 'X', email: 'x@test.com', roleId: adminRoleId } })
+      expect(tooMuch.status()).toBe(403)
+      expect((await tooMuch.json()).error.code).toBe('ROLE_ESCALATION')
+      const outside = await page.request.patch(`/api/v1/admin/employees/${other}`, { headers, data: { status: 'inactive' } })
       expect(outside.status()).toBe(403)
     })
+  })
+})
+
+test.describe('someone whose role has no permissions', () => {
+  test('has no People page: it sends them back to their own overview', async ({ page }) => {
+    await loginAs(page, ACCOUNTS.dev1)
+    await page.goto('/user/people')
+    await expect(page).toHaveURL(/\/user$/)
   })
 })
 

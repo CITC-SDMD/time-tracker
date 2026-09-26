@@ -130,7 +130,7 @@ test.describe('every surface has its own colour in both modes', () => {
       await page.emulateMedia({ colorScheme: mode })
       await page.addInitScript(m => localStorage.setItem('theme', m), mode)
       await page.goto('/user/people')
-      await page.getByRole('button', { name: 'Add Project Manager' }).click()
+      await page.getByRole('button', { name: 'Add a person' }).click()
       const input = page.getByRole('dialog').getByLabel('Full name')
       await expect(input).toBeVisible()
       // wait for the open animation to finish, or the panel is still see-through
@@ -160,7 +160,7 @@ test.describe('on a phone', () => {
     await expect(page.getByRole('link', { name: 'People', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'Open sidebar' }).click()
     const dialog = page.getByRole('dialog')
-    for (const name of ['Overview', 'People', 'Reports', 'Settings', 'Audit log']) await expect(dialog.getByRole('link', { name, exact: true })).toBeVisible()
+    for (const name of ['Overview', 'People', 'Reports', 'Roles', 'Settings', 'Audit log']) await expect(dialog.getByRole('link', { name, exact: true })).toBeVisible()
     await dialog.getByRole('link', { name: 'People', exact: true }).click()
     await expect(page).toHaveURL(/\/user\/people$/)
     await expect(page.getByRole('heading', { name: 'People' })).toBeVisible()
@@ -179,7 +179,7 @@ test.describe('on a phone', () => {
 
   test('the Add form fits the screen and can be completed with the keyboard', async ({ page }) => {
     await page.goto('/user/people')
-    await page.getByRole('button', { name: 'Add Project Manager' }).click()
+    await page.getByRole('button', { name: 'Add a person' }).click()
     const box = await page.getByRole('dialog').getByLabel('Full name').boundingBox()
     expect(box!.x).toBeGreaterThanOrEqual(0)
     expect(box!.x + box!.width).toBeLessThanOrEqual(375)

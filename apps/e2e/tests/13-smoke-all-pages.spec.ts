@@ -4,7 +4,7 @@ import { as, expect, idOf, test } from '../fixtures'
 // shared fixture already fails a test on any console error or warning, uncaught exception or
 // unexpected 4xx/5xx, so all that is asserted here is that the page rendered and fits the screen.
 const ROLES = {
-  oic: ['/user', '/user/people', '/user/reports', '/user/settings', '/user/audit', '/user/profile'],
+  oic: ['/user', '/user/people', '/user/reports', '/user/roles', '/user/settings', '/user/audit', '/user/profile'],
   pm1: ['/user', '/user/people', '/user/reports', '/user/profile'],
   tl1: ['/user', '/user/people', '/user/reports', '/user/profile'],
 } as const
@@ -48,14 +48,17 @@ for (const [role, pages] of Object.entries(ROLES) as [keyof typeof ROLES, readon
   }
 }
 
-test.describe('the superadmin area', () => {
+test.describe('the platform pages', () => {
   test.use(as('admin'))
 
-  test('opens without errors', async ({ page }) => {
-    await page.goto('/superadmin')
-    await expect(page).toHaveURL(/\/superadmin/)
-    await page.waitForLoadState('networkidle')
-  })
+  for (const path of ['/platform', '/platform/superadmins', '/platform/settings', '/platform/audit', '/user/profile']) {
+    test(`${path} opens without errors`, async ({ page }) => {
+      await page.goto(path)
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+      await page.waitForLoadState('networkidle')
+      await expect(page.locator('[role="alert"]')).toHaveCount(0)
+    })
+  }
 })
 
 test.describe('unknown pages', () => {

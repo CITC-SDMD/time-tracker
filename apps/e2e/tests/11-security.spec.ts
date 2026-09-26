@@ -1,8 +1,9 @@
-import { DASH_HEADERS, as, expect, test } from '../fixtures'
+import { DASH_HEADERS, as, expect, roleIdOf, test } from '../fixtures'
 import { artisan } from '../helpers/artisan'
 
-const USER_PAGES = ['/user', '/user/people', '/user/reports', '/user/settings', '/user/audit', '/user/profile', '/user/employees/1']
-const OIC_API = ['/admin/settings', '/admin/audit']
+const USER_PAGES = ['/user', '/user/people', '/user/reports', '/user/roles', '/user/settings', '/user/audit', '/user/profile', '/user/employees/1', '/platform', '/platform/superadmins']
+// what needs a permission a project manager's role does not hold
+const ADMIN_API = ['/admin/settings', '/admin/audit']
 const MANAGER_API = ['/employees', '/reports/daily?from=2026-01-01&to=2026-01-07', '/reports/apps?from=2026-01-01&to=2026-01-07', '/reports/team?from=2026-01-01&to=2026-01-07']
 
 test.beforeEach(() => artisan('cache:clear'))
@@ -17,15 +18,15 @@ test.describe('signed out', () => {
   }
 
   test('every API route refuses a signed-out caller with 401 and never a 500', async ({ page }) => {
-    for (const path of [...OIC_API, ...MANAGER_API, '/me']) {
+    for (const path of [...ADMIN_API, ...MANAGER_API, '/me', '/platform/organizations']) {
       const res = await page.request.get(`/api/v1${path}`, { headers: DASH_HEADERS })
       expect(res.status(), path).toBe(401)
       expect((await res.json()).error.code).toBe('UNAUTHENTICATED')
     }
   })
 
-  test('the superadmin area is closed too', async ({ page }) => {
-    await page.goto('/superadmin')
+  test('the platform pages are closed too', async ({ page }) => {
+    await page.goto('/platform')
     await expect(page).toHaveURL(/\/$/)
   })
 })
@@ -33,27 +34,31 @@ test.describe('signed out', () => {
 test.describe('a project manager', () => {
   test.use(as('pm1'))
 
-  test('cannot open the superadmin area, settings or the audit log', async ({ page }) => {
-    for (const path of ['/superadmin', '/user/settings', '/user/audit']) {
+  test('cannot open the platform pages, roles, settings or the audit log', async ({ page }) => {
+    for (const path of ['/platform', '/platform/superadmins', '/user/roles', '/user/settings', '/user/audit']) {
       await page.goto(path)
       await expect(page).toHaveURL(/\/user$/)
     }
   })
 
-  test('the OIC-only API answers 403', async ({ page }) => {
-    for (const path of OIC_API) expect((await page.request.get(`/api/v1${path}`, { headers: DASH_HEADERS })).status(), path).toBe(403)
+  test('what needs a permission their role lacks answers 403', async ({ page }) => {
+    for (const path of ADMIN_API) expect((await page.request.get(`/api/v1${path}`, { headers: DASH_HEADERS })).status(), path).toBe(403)
     const xsrf = decodeURIComponent((await page.context().cookies()).find(c => c.name === 'XSRF-TOKEN')?.value ?? '')
+    const role = await page.request.post('/api/v1/roles', { headers: { ...DASH_HEADERS, 'X-XSRF-TOKEN': xsrf }, data: { name: 'Sneaky', scope: 'self', permissions: [] } })
+    expect(role.status()).toBe(403) // making roles needs roles.manage
     const put = await page.request.put('/api/v1/admin/settings', { headers: { ...DASH_HEADERS, 'X-XSRF-TOKEN': xsrf }, data: { idleThresholdSeconds: 60 } })
     expect(put.status()).toBe(403)
   })
 })
 
-test.describe('the OIC', () => {
+test.describe('the admin', () => {
   test.use(as('oic'))
 
-  test('cannot open the superadmin area', async ({ page }) => {
-    await page.goto('/superadmin')
+  test('cannot open the platform pages, and the platform API answers 403', async ({ page }) => {
+    await page.goto('/platform')
     await expect(page).toHaveURL(/\/user$/)
+    for (const path of ['/platform/organizations', '/platform/superadmins', '/platform/settings', '/platform/audit'])
+      expect((await page.request.get(`/api/v1${path}`, { headers: DASH_HEADERS })).status(), path).toBe(403)
   })
 
   test('a write without the CSRF token is refused and changes nothing', async ({ page }) => {
@@ -110,7 +115,7 @@ test.describe('the OIC', () => {
     const xsrf = decodeURIComponent((await page.context().cookies()).find(c => c.name === 'XSRF-TOKEN')?.value ?? '')
     const created = await page.request.post('/api/v1/admin/employees', {
       headers: { ...DASH_HEADERS, 'X-XSRF-TOKEN': xsrf },
-      data: { name: '<img src=x onerror="window.__pwned=1">Mallory', email: 'mallory.e2e@test.com', role: 'project_manager' },
+      data: { name: '<img src=x onerror="window.__pwned=1">Mallory', email: 'mallory.e2e@test.com', roleId: await roleIdOf(page, 'Project Manager') },
     })
     expect(created.status()).toBe(201)
     await page.reload()

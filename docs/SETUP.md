@@ -68,11 +68,11 @@ Edit `.env`: set `DB_DATABASE=tracker_dev`, `DB_USERNAME=tracker`, `DB_PASSWORD=
 
 ```powershell
 php artisan migrate --seed
-php artisan tracker:make-oic "Your Name" you@example.com
+php artisan tracker:make-superadmin "Your Name" you@example.com
 php artisan serve
 ```
 
-Write down the temporary password `tracker:make-oic` prints — that's the only account that exists until you create Project Managers, Team Leaders, and so on from the dashboard (docs/DEVELOPMENT_PLAN.md §9.1-§9.2).
+Write down the temporary password `tracker:make-superadmin` prints: that is the platform owner, the only account until you create organizations. Sign in to the dashboard, create an organization and add its admin on its profile page (or run `php artisan tracker:make-organization "Office name" "Admin name" admin@example.com`); the admin then makes their own roles and people (docs/DEVELOPMENT_PLAN.md §9).
 
 **Trying the dashboard with a filled-in office (development only):** after `php artisan migrate:fresh --seed`, run `php artisan db:seed --class=DemoHierarchySeeder`. It adds 2 project managers, 3 team leaders and 6 members under `oic@test.com` (all with the password `password`, e.g. `pm1@test.com`, `tl1@test.com`, `dev1@test.com`), 60 days of daily totals, every live state (tracking, idle, paused, not tracking, offline) and today's timelines for a few of them. It does nothing in production and can be run again.
 
@@ -224,7 +224,7 @@ MAIL_FROM_NAME="Time Tracker"
 
 ```bash
 php artisan migrate --seed
-php artisan tracker:make-oic "Your Name" you@yourcompany.com
+php artisan tracker:make-superadmin "Your Name" you@yourcompany.com
 ```
 
 Write down the temporary password it prints and use it for the first dashboard login. Once mail is set up, "Forgot password?" on the login page lets you choose your own.
@@ -347,7 +347,7 @@ sudo systemctl restart tracker-queue      # after every deploy, so it runs the n
 
 If the worker is stopped, uploads still work and the dashboard shows the full picture in place of the thumbnail until the job runs. `php artisan media-library:regenerate` rebuilds thumbnails.
 
-**Space and backups:** about 150 KB per picture (roughly 2 GB per person per year at a 10-minute interval). The OIC's Settings page shows the space used. The pictures live on the storage server, so back that up (see the PDF), and keep the MySQL dump too: it holds who and when for each picture.
+**Space and backups:** about 150 KB per picture (roughly 2 GB per person per year at a 10-minute interval). Each organization's Settings page (and its profile page for superadmins) shows the space used; files live under `org_<id>/` on the storage disk. The pictures live on the storage server, so back that up (see the PDF), and keep the MySQL dump too: it holds who and when for each picture.
 
 ### 8. Firewall
 

@@ -1,4 +1,4 @@
-import { DASH_HEADERS, apiGet, as, expect, idOf, test } from '../fixtures'
+import { DASH_HEADERS, apiGet, as, expect, idOf, roleIdOf, test } from '../fixtures'
 
 const from = (page: import('@playwright/test').Page) => page.getByLabel('From', { exact: true })
 const to = (page: import('@playwright/test').Page) => page.getByLabel('To', { exact: true })
@@ -19,7 +19,7 @@ test.describe.serial('audit log as the OIC', () => {
     const xsrf = decodeURIComponent((await ctx.cookies()).find(c => c.name === 'XSRF-TOKEN')?.value ?? '')
     const headers = { ...DASH_HEADERS, 'X-XSRF-TOKEN': xsrf }
     await page.request.put('/api/v1/admin/settings', { headers, data: { idleThresholdSeconds: 300 } })
-    const ghost = await page.request.post('/api/v1/admin/employees', { headers, data: { name: 'Audit Ghost', email: 'ghost.e2e@test.com', role: 'project_manager' } })
+    const ghost = await page.request.post('/api/v1/admin/employees', { headers, data: { name: 'Audit Ghost', email: 'ghost.e2e@test.com', roleId: await roleIdOf(page, 'Project Manager') } })
     await page.request.delete(`/api/v1/admin/employees/${(await ghost.json()).id}`, { headers })
     await ctx.close()
   })
@@ -54,11 +54,11 @@ test.describe.serial('audit log as the OIC', () => {
     await expect(more).toHaveCount(0)
   })
 
-  test('every action the office has written has a plain-words label', async ({ page }) => {
+  test('every action the organization has written has a plain-words label', async ({ page }) => {
     await page.goto('/user/audit')
     await expect(page.getByLabel('Action').locator('option').first()).toHaveText('All actions')
     const actions = await page.getByLabel('Action').locator('option').allTextContents()
-    for (const label of ['Added an account', 'Deactivated an account', 'Reactivated an account', 'Deleted an account', 'Moved a person to another manager', 'Sent a new set-password link', 'Changed office settings', 'Viewed a timeline', 'Reset a password with an emailed link', 'Changed their password', 'Downloaded a report'])
+    for (const label of ['Added an account', 'Deactivated an account', 'Reactivated an account', 'Deleted an account', 'Moved a person to another manager', 'Sent a new set-password link', 'Changed organization settings', 'Viewed a timeline', 'Reset a password with an emailed link', 'Changed their password', 'Downloaded a report'])
       expect(actions).toContain(label)
     // no raw codes leak into the table
     const text = await page.locator('tbody').innerText()
@@ -68,10 +68,10 @@ test.describe.serial('audit log as the OIC', () => {
   test('the Action filter narrows the list and Clear filters brings it back', async ({ page }) => {
     await page.goto('/user/audit')
     await expect(page.locator('tbody tr')).toHaveCount(50)
-    await page.getByLabel('Action').selectOption({ label: 'Changed office settings' })
-    await expect(page.locator('tbody tr').first()).toContainText('Changed office settings')
+    await page.getByLabel('Action').selectOption({ label: 'Changed organization settings' })
+    await expect(page.locator('tbody tr').first()).toContainText('Changed organization settings')
     const kinds = new Set((await page.locator('tbody tr td:nth-child(3)').allTextContents()).map(t => t.trim()))
-    expect([...kinds]).toEqual(['Changed office settings'])
+    expect([...kinds]).toEqual(['Changed organization settings'])
     await page.getByRole('button', { name: 'Clear filters' }).click()
     await expect(page.locator('tbody tr')).toHaveCount(50)
     await expect(page.getByLabel('Action')).toHaveValue('')
