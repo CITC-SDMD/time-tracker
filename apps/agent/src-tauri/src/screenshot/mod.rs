@@ -75,12 +75,13 @@ pub fn capture_step<C: Clock>(
     user_id: &str,
     now: i64,
 ) -> Capture {
-    let (state, settings, last) = {
+    let (state, settings, last, cipher) = {
         let e = lock(engine);
         (
             e.state(),
             load_office_settings(e.db()),
             e.db().get_app_state(&last_taken_key(user_id)).and_then(|v| v.parse::<i64>().ok()),
+            e.db().cipher().clone(),
         )
     };
     if state != TrackingState::Tracking {
@@ -103,7 +104,7 @@ pub fn capture_step<C: Clock>(
     };
     let id = uuid::Uuid::now_v7().to_string();
     let path = dir.join(format!("{id}.jpg"));
-    if let Err(error) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, &shot.jpeg)) {
+    if let Err(error) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, cipher.seal_bytes(&shot.jpeg))) {
         tracing::warn!(%error, "screenshot could not be saved");
         return Capture::Failed;
     }
@@ -155,10 +156,11 @@ pub async fn upload_step<C: Clock>(
         let next = lock(engine).db().next_screenshot_to_send(user_id, now_ms()).ok().flatten();
         let Some(row) = next else { break };
 
-        let jpeg = match std::fs::read(&row.path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                // the file is gone (cleaned up by hand): there is nothing left to send
+        let cipher = lock(engine).db().cipher().clone();
+        let jpeg = match std::fs::read(&row.path).map(|bytes| cipher.open_bytes(&bytes)) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                // the file is gone (cleaned up by hand) or cannot be read (its key is gone): there is nothing left to send
                 let _ = lock(engine).db().delete_screenshot(&row.id);
                 report.dropped += 1;
                 continue;

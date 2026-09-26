@@ -66,7 +66,8 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("tracker.db");
-            let db = db::Db::open(&db_path)?;
+            let (cipher, key_is_new) = db::crypt::Cipher::load_or_create();
+            let db = db::Db::open(&db_path, cipher, key_is_new)?;
 
             let settings = tracker::load_office_settings(&db);
             let user_id = db

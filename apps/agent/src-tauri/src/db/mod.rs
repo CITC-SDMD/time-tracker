@@ -9,6 +9,12 @@ use serde::Serialize;
 
 use crate::platform::input::InputStats;
 
+pub mod crypt;
+use crypt::Cipher;
+
+/// `app_state` values that hold personal details and are stored encrypted (the rest are switches and addresses).
+const SEALED_STATE_KEYS: &[&str] = &["me_json"];
+
 /// (schema_version, migration SQL). Future ones are
 /// appended here and applied in order, each preceded by a `tracker.db.bak` copy.
 const MIGRATIONS: &[(i64, &str)] = &[
@@ -101,18 +107,22 @@ pub struct ScreenshotRow {
 
 pub struct Db {
     conn: Connection,
+    cipher: Cipher,
 }
 
 impl Db {
     /// Opens (creating if absent) the database at `db_path`, verifies integrity, and
     /// runs any pending migrations. A failed integrity check quarantines the old file
-    /// (renamed `tracker.db.corrupt-<unix_ms>`) and starts fresh — see docs §7.4.
-    pub fn open(db_path: &Path) -> rusqlite::Result<Self> {
+    /// (renamed `tracker.db.corrupt-<unix_ms>`) and starts fresh — see docs §7.4. The same happens when the file
+    /// holds encrypted values but the key is new (`key_is_new`): the key they belong to is gone, so they can never
+    /// be read again, and a fresh file is better than an app that cannot start.
+    pub fn open(db_path: &Path, cipher: Cipher, key_is_new: bool) -> rusqlite::Result<Self> {
         let conn = Connection::open(db_path)?;
         Self::configure(&conn)?;
 
         let quick_check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
-        if quick_check != "ok" {
+        let lost_key = key_is_new && cipher.enabled() && Self::holds_sealed_values(&conn);
+        if quick_check != "ok" || lost_key {
             drop(conn);
             let corrupt_path = db_path.with_file_name(format!(
                 "tracker.db.corrupt-{}",
@@ -121,28 +131,127 @@ impl Db {
             let _ = std::fs::rename(db_path, &corrupt_path);
             tracing::error!(
                 corrupt_path = %corrupt_path.display(),
-                "tracker.db failed PRAGMA quick_check; quarantined and recreated"
+                lost_key,
+                "tracker.db is unusable (failed PRAGMA quick_check, or its encryption key is gone); quarantined and recreated"
             );
 
             let conn = Connection::open(db_path)?;
             Self::configure(&conn)?;
-            let db = Self { conn };
+            let db = Self { conn, cipher };
             db.migrate(Some(db_path))?;
+            db.encrypt_existing(Some(db_path))?;
             // Tell the server on the next sync that this PC's history was lost (`dbReset`).
             db.set_app_state("db_reset_pending", "1")?;
             return Ok(db);
         }
 
-        let db = Self { conn };
+        let db = Self { conn, cipher };
         db.migrate(Some(db_path))?;
+        db.encrypt_existing(Some(db_path))?;
         Ok(db)
+    }
+
+    /// The key holder, for the waiting screenshot files.
+    pub fn cipher(&self) -> &Cipher {
+        &self.cipher
+    }
+
+    /// Whether any sealed value is in the file (it may be a database of an older layout: no such tables yet).
+    fn holds_sealed_values(conn: &Connection) -> bool {
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sessions WHERE app_name LIKE 'enc1:%' OR window_title LIKE 'enc1:%')
+                 OR EXISTS (SELECT 1 FROM sync_queue WHERE payload LIKE 'enc1:%')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|found| found != 0)
+        .unwrap_or(false)
+    }
+
+    /// One text column value as it is stored.
+    fn seal_opt(&self, value: Option<&str>) -> Option<String> {
+        value.map(|v| self.cipher.seal(v))
+    }
+
+    /// One text column value as it was written; a sealed value that cannot be read counts as missing.
+    fn open_opt(&self, stored: Option<String>) -> Option<String> {
+        stored.and_then(|v| self.cipher.open(&v))
+    }
+
+    /// Encrypts, once, what an older version stored in the clear: window titles, application names, the send queue,
+    /// the personal details in `app_state` and the pictures waiting on disk. Safe to run again (sealed values are
+    /// skipped). Afterwards the pre-migration copy (`tracker.db.bak`) is removed, since it holds the clear text, and
+    /// the file is compacted so old pages with clear text do not linger in it.
+    fn encrypt_existing(&self, db_path: Option<&Path>) -> rusqlite::Result<()> {
+        if !self.cipher.enabled() || self.get_app_state("db_encrypted").as_deref() == Some("1") {
+            return Ok(());
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut rows = tx.prepare("SELECT id, app_name, process_name, window_title, idle_app_name FROM sessions")?;
+            let all: Vec<(String, [Option<String>; 4])> = rows
+                .query_map([], |row| Ok((row.get(0)?, [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, fields) in all {
+                let [app, process, title, idle] = fields.map(|f| f.map(|v| self.cipher.seal(&v)));
+                tx.execute(
+                    "UPDATE sessions SET app_name = ?1, process_name = ?2, window_title = ?3, idle_app_name = ?4 WHERE id = ?5",
+                    params![app, process, title, idle, id],
+                )?;
+            }
+
+            let mut queue = tx.prepare("SELECT id, payload FROM sync_queue")?;
+            let all: Vec<(i64, String)> = queue
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, payload) in all {
+                tx.execute("UPDATE sync_queue SET payload = ?1 WHERE id = ?2", params![self.cipher.seal(&payload), id])?;
+            }
+
+            for key in SEALED_STATE_KEYS {
+                let value: Option<String> = tx
+                    .query_row("SELECT value FROM app_state WHERE key = ?1", params![key], |row| row.get(0))
+                    .ok();
+                if let Some(value) = value {
+                    tx.execute("UPDATE app_state SET value = ?1 WHERE key = ?2", params![self.cipher.seal(&value), key])?;
+                }
+            }
+        }
+        tx.execute(
+            "INSERT INTO app_state (key, value) VALUES ('db_encrypted', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+        tx.commit()?;
+
+        // the pictures waiting to be sent
+        if self.table_exists("screenshots")? {
+            let paths: Vec<String> = {
+                let mut stmt = self.conn.prepare("SELECT path FROM screenshots")?;
+                let rows = stmt.query_map([], |row| row.get(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for path in paths {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if !Cipher::is_sealed_file(&bytes) {
+                        let _ = std::fs::write(&path, self.cipher.seal_bytes(&bytes));
+                    }
+                }
+            }
+        }
+
+        if let Some(path) = db_path {
+            let _ = std::fs::remove_file(path.with_file_name("tracker.db.bak"));
+        }
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        Ok(())
     }
 
     /// For unit tests: skips the file path / corruption machinery entirely.
     pub fn open_in_memory_for_test() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::configure(&conn)?;
-        let db = Self { conn };
+        let db = Self { conn, cipher: Cipher::for_test() };
         db.migrate(None)?;
         Ok(db)
     }
@@ -214,16 +323,23 @@ impl Db {
     }
 
     pub fn get_app_state(&self, key: &str) -> Option<String> {
-        self.conn
+        let stored: Option<String> = self
+            .conn
             .query_row(
                 "SELECT value FROM app_state WHERE key = ?1",
                 params![key],
                 |row| row.get(0),
             )
-            .ok()
+            .ok();
+        if SEALED_STATE_KEYS.contains(&key) {
+            self.open_opt(stored)
+        } else {
+            stored
+        }
     }
 
     pub fn set_app_state(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        let value = if SEALED_STATE_KEYS.contains(&key) { self.cipher.seal(value) } else { value.to_owned() };
         self.conn.execute(
             "INSERT INTO app_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -245,10 +361,10 @@ impl Db {
                 new.user_id,
                 new.device_id,
                 new.session_type.as_str(),
-                new.app_name,
-                new.process_name,
-                new.window_title,
-                new.idle_app_name,
+                self.seal_opt(new.app_name.as_deref()),
+                self.seal_opt(new.process_name.as_deref()),
+                self.seal_opt(new.window_title.as_deref()),
+                self.seal_opt(new.idle_app_name.as_deref()),
                 new.started_at,
                 new.last_seen_at,
                 created_at,
@@ -310,10 +426,10 @@ impl Db {
                 Ok(SyncPayload {
                     id: session_id.to_string(),
                     session_type: row.get(0)?,
-                    app_name: row.get(1)?,
-                    process_name: row.get(2)?,
-                    window_title: row.get(3)?,
-                    idle_app_name: row.get(4)?,
+                    app_name: self.open_opt(row.get(1)?),
+                    process_name: self.open_opt(row.get(2)?),
+                    window_title: self.open_opt(row.get(3)?),
+                    idle_app_name: self.open_opt(row.get(4)?),
                     started_at: row.get::<_, i64>(5)?,
                     ended_at: ended_at_ms,
                     duration_seconds,
@@ -327,7 +443,7 @@ impl Db {
         tx.execute(
             "INSERT INTO sync_queue (entity_type, entity_id, user_id, payload, next_attempt_at, created_at)
              VALUES ('SESSION', ?1, ?2, ?3, ?4, ?5)",
-            params![session_id, user_id, payload_json, now, now],
+            params![session_id, user_id, self.cipher.seal(&payload_json), now, now],
         )?;
 
         tx.commit()
@@ -340,7 +456,7 @@ impl Db {
     ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE sessions SET window_title = ?1 WHERE id = ?2",
-            params![window_title, session_id],
+            params![self.seal_opt(window_title), session_id],
         )?;
         Ok(())
     }
@@ -389,8 +505,8 @@ impl Db {
             Ok(SessionRow {
                 id: row.get(0)?,
                 session_type: SessionType::from_str(&row.get::<_, String>(1)?),
-                app_name: row.get(2)?,
-                idle_app_name: row.get(3)?,
+                app_name: self.open_opt(row.get(2)?),
+                idle_app_name: self.open_opt(row.get(3)?),
                 started_at: row.get(4)?,
                 ended_at: row.get(5)?,
                 duration_seconds: row.get(6)?,
@@ -466,7 +582,7 @@ impl Db {
         let rows = stmt.query_map(params![user_id, now_ms, limit as i64], |row| {
             Ok(QueueRow {
                 entity_id: row.get(0)?,
-                payload: row.get(1)?,
+                payload: self.cipher.open(&row.get::<_, String>(1)?).unwrap_or_default(),
             })
         })?;
         rows.collect()
@@ -836,5 +952,177 @@ mod tests {
         let device: String = conn.query_row("SELECT value FROM app_state WHERE key = 'device_id'", [], |r| r.get(0)).unwrap();
         assert_eq!(device, "d1");
         conn.execute("INSERT INTO screenshots (id, user_id, taken_at, path, width, height, created_at) VALUES ('a', '1', 1, 'a.jpg', 1, 1, 1)", []).unwrap();
+    }
+    // ---- encryption of what is stored (docs/SECURITY_REVIEW.md) --------------------------------------------------
+
+    /// A folder for one test, removed afterwards.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("tracker-db-test-{}", uuid::Uuid::now_v7()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn db_path(&self) -> std::path::PathBuf {
+            self.0.join("tracker.db")
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn titled_session(db: &Db, user_id: &str, title: &str) -> String {
+        let id = db
+            .open_session(&NewSession {
+                id: uuid::Uuid::now_v7().to_string(),
+                user_id: user_id.into(),
+                device_id: "dev".into(),
+                session_type: SessionType::Application,
+                app_name: Some("Excel".into()),
+                process_name: Some("EXCEL.EXE".into()),
+                window_title: Some(title.into()),
+                idle_app_name: None,
+                started_at: 1_000,
+                last_seen_at: 1_000,
+            })
+            .unwrap();
+        db.close_session(&id, 6_000, false).unwrap();
+        id
+    }
+
+    /// what a second connection sees in the file, without the key
+    fn raw(dir: &TempDir, sql: &str) -> Vec<String> {
+        let conn = rusqlite::Connection::open(dir.db_path()).unwrap();
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |row| row.get::<_, Option<String>>(0)).unwrap().map(|v| v.unwrap().unwrap_or_default()).collect()
+    }
+
+    #[test]
+    fn titles_names_and_the_queue_are_stored_encrypted_and_read_back_whole() {
+        let dir = TempDir::new();
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+        let id = titled_session(&db, "1", "Budget 2027 - Excel");
+
+        for column in ["app_name", "process_name", "window_title"] {
+            let stored = raw(&dir, &format!("SELECT {column} FROM sessions"));
+            assert!(stored[0].starts_with("enc1:"), "{column}: {}", stored[0]);
+        }
+        let payload = &raw(&dir, "SELECT payload FROM sync_queue")[0];
+        assert!(payload.starts_with("enc1:") && !payload.contains("Budget"), "{payload}");
+
+        // through the app's own methods everything is as before
+        let rows = db.sessions_for_range("1", 0, 10_000).unwrap();
+        assert_eq!(rows[0].app_name.as_deref(), Some("Excel"));
+        let queue = db.fetch_ready_queue("1", 10, i64::MAX).unwrap();
+        assert!(queue[0].payload.contains(r#""windowTitle":"Budget 2027 - Excel""#), "{}", queue[0].payload);
+        assert!(queue[0].payload.contains(&id));
+
+        // the whole file: no clear text anywhere in it or its write-ahead log
+        drop(db);
+        let mut bytes = std::fs::read(dir.db_path()).unwrap();
+        if let Ok(wal) = std::fs::read(dir.0.join("tracker.db-wal")) {
+            bytes.extend(wal);
+        }
+        assert!(!bytes.windows(6).any(|w| w == b"Budget"), "the title is readable in the file");
+        assert!(!bytes.windows(9).any(|w| w == b"EXCEL.EXE"), "the process name is readable in the file");
+    }
+
+    #[test]
+    fn an_old_clear_text_database_is_encrypted_in_place_and_keeps_working() {
+        let dir = TempDir::new();
+        {
+            // what the previous version wrote: the same file, no encryption
+            let old = Db::open(&dir.db_path(), Cipher::disabled(), false).unwrap();
+            titled_session(&old, "1", "Salary list.xlsx");
+            old.set_app_state("me_json", r#"{"name":"Ana Cruz"}"#).unwrap();
+            assert!(!Db::holds_sealed_values(&old.conn));
+        }
+        assert!(raw(&dir, "SELECT window_title FROM sessions")[0] == "Salary list.xlsx");
+        std::fs::write(dir.0.join("tracker.db.bak"), b"clear copy").unwrap();
+
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+
+        assert!(raw(&dir, "SELECT window_title FROM sessions")[0].starts_with("enc1:"));
+        assert!(raw(&dir, "SELECT payload FROM sync_queue")[0].starts_with("enc1:"));
+        assert!(raw(&dir, "SELECT value FROM app_state WHERE key = 'me_json'")[0].starts_with("enc1:"));
+        assert_eq!(db.get_app_state("me_json").as_deref(), Some(r#"{"name":"Ana Cruz"}"#));
+        assert_eq!(db.get_app_state("db_encrypted").as_deref(), Some("1"));
+        assert!(!dir.0.join("tracker.db.bak").exists(), "the copy made before the upgrade holds clear text");
+        assert!(db.fetch_ready_queue("1", 10, i64::MAX).unwrap()[0].payload.contains("Salary list.xlsx"));
+        drop(db);
+        let bytes = std::fs::read(dir.db_path()).unwrap();
+        assert!(!bytes.windows(6).any(|w| w == b"Salary"), "old pages with the title are still in the file");
+    }
+
+    #[test]
+    fn opening_it_again_changes_nothing() {
+        let dir = TempDir::new();
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+        titled_session(&db, "1", "Notes");
+        let before = raw(&dir, "SELECT window_title FROM sessions");
+        drop(db);
+
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+        assert_eq!(raw(&dir, "SELECT window_title FROM sessions"), before);
+        assert_eq!(db.fetch_ready_queue("1", 10, i64::MAX).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_new_key_over_encrypted_data_starts_a_fresh_file_and_tells_the_server() {
+        let dir = TempDir::new();
+        {
+            let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+            titled_session(&db, "1", "Notes");
+        }
+
+        // Credential Manager was wiped: a new key is made, the old values can never be read again
+        let db = Db::open(&dir.db_path(), Cipher::from_key([9u8; 32]), true).unwrap();
+
+        assert_eq!(db.sessions_for_range("1", 0, 10_000).unwrap().len(), 0);
+        assert_eq!(db.get_app_state("db_reset_pending").as_deref(), Some("1"));
+        let kept = std::fs::read_dir(&dir.0).unwrap().filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("tracker.db.corrupt-"));
+        assert!(kept, "the old file is kept, not deleted");
+    }
+
+    #[test]
+    fn a_new_key_over_an_empty_or_clear_text_file_is_no_loss() {
+        let dir = TempDir::new();
+        {
+            let old = Db::open(&dir.db_path(), Cipher::disabled(), false).unwrap();
+            titled_session(&old, "1", "Notes");
+        }
+
+        // first run of the encrypting version: the key is new, but nothing was encrypted with another one
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), true).unwrap();
+
+        assert_eq!(db.sessions_for_range("1", 0, 10_000).unwrap().len(), 1);
+        assert_ne!(db.get_app_state("db_reset_pending").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn waiting_pictures_on_disk_are_encrypted_by_the_upgrade() {
+        let dir = TempDir::new();
+        let picture = dir.0.join("a.jpg");
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 9, 9];
+        std::fs::write(&picture, jpeg).unwrap();
+        {
+            let old = Db::open(&dir.db_path(), Cipher::disabled(), false).unwrap();
+            old.add_screenshot(
+                &ScreenshotRow { id: "a".into(), user_id: "1".into(), taken_at: 1, path: picture.to_string_lossy().into_owned(), width: 1, height: 1, attempts: 0 },
+                0,
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+
+        let stored = std::fs::read(&picture).unwrap();
+        assert!(Cipher::is_sealed_file(&stored));
+        assert_eq!(db.cipher().open_bytes(&stored).as_deref(), Some(&jpeg[..]));
     }
 }

@@ -34,6 +34,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 # Phase 10 screenshots: the picture of the main screen, shrunk and encoded as a JPEG.
 base64 = "0.22"
+aes-gcm = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
