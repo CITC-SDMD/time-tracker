@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\SendInviteEmail;
 use App\Models\Role;
 use App\Models\User;
 use App\Notifications\WelcomeNotification;
@@ -30,9 +31,12 @@ class AccountService
     /**
      * An organization person: they hold $role, in the organization that role belongs to, and report to $manager.
      *
+     * With $invite false nothing is sent and the account comes back alone: the people import sends its invitations
+     * itself, after everything is saved (queueInvite).
+     *
      * @return array{0: User, 1: bool, 2: ?string} the account, whether the email went out, and the link to hand over when it did not
      */
-    public function createPerson(User $actor, string $name, string $email, Role $role, ?User $manager): array
+    public function createPerson(User $actor, string $name, string $email, Role $role, ?User $manager, bool $invite = true): array
     {
         $account = $this->newAccount($actor, $name, $email);
         $account->organization_id = $role->organization_id;
@@ -40,7 +44,7 @@ class AccountService
         $account->manager_id = $manager?->id;
         $account->save();
 
-        return [$account, ...$this->invite($account, $actor)];
+        return $invite ? [$account, ...$this->invite($account, $actor)] : [$account, true, null];
     }
 
     /**
@@ -70,12 +74,33 @@ class AccountService
         $token = Password::broker('invites')->createToken($account);
         try {
             $account->notify(new WelcomeNotification($token, $actor->name));
+            $this->markInvite($account, true);
 
             return [true, null];
         } catch (Throwable $e) {
             report($e);
+            $this->markInvite($account, false);
 
             return [false, $account->passwordSetUrl($token)];
+        }
+    }
+
+    /**
+     * Makes the link now and sends the email in the background. The job only runs once the surrounding transaction has
+     * committed, so nobody is emailed about an account that was rolled back.
+     */
+    public function queueInvite(User $account, User $actor): void
+    {
+        $token = Password::broker('invites')->createToken($account);
+        SendInviteEmail::dispatch($account->id, $token, $actor->name, $actor->id);
+    }
+
+    private function markInvite(User $account, bool $delivered): void
+    {
+        if ($delivered && $account->invite_failed_at !== null) {
+            $account->forceFill(['invite_failed_at' => null])->save();
+        } elseif (! $delivered) {
+            $account->forceFill(['invite_failed_at' => now()])->save();
         }
     }
 

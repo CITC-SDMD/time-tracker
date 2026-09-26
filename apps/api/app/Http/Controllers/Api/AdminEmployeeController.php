@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\AccessService;
 use App\Services\AccountService;
 use App\Services\HierarchyService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -83,7 +84,9 @@ class AdminEmployeeController extends Controller
     /**
      * POST /api/v1/admin/employees/import: many people at once (a CSV the dashboard has read). Every row is checked
      * first with the same rules as adding one person; if any row is wrong nothing is created and the answer lists each
-     * problem by row number, so the file can be fixed and sent again. A blank manager means the caller, as when adding one.
+     * problem by row number, so the file can be fixed and sent again. A blank manager means the caller, as when adding one;
+     * a manager may also be another person of the same file, wherever that row is (a circle is refused). The accounts
+     * are made in one transaction, and their invitation emails are queued and sent after it commits.
      */
     public function import(Request $request): JsonResponse
     {
@@ -96,9 +99,19 @@ class AdminEmployeeController extends Controller
         ]);
         $caller = $request->user();
 
+        // where each email sits in the file, so a manager can be someone further down the same file
+        $rowOfEmail = [];
+        foreach (array_values($data['rows']) as $i => $row) {
+            $key = mb_strtolower(trim((string) ($row['email'] ?? '')));
+            if ($key !== '') {
+                $rowOfEmail[$key] ??= $i + 1;
+            }
+        }
+
         $problems = [];
         $plan = [];
         $seen = [];
+        $fileManager = []; // row number => row number of its manager, when that manager is in the file
         foreach (array_values($data['rows']) as $i => $row) {
             $n = $i + 1;
             $name = trim((string) ($row['name'] ?? ''));
@@ -128,7 +141,16 @@ class AdminEmployeeController extends Controller
 
             $manager = $caller->isSuperadmin() ? null : $caller;
             $managerEmail = trim((string) ($row['managerEmail'] ?? ''));
-            if ($managerEmail !== '') {
+            if ($managerEmail !== '' && isset($rowOfEmail[mb_strtolower($managerEmail)])) {
+                // a person of this same file: made in this import, so there is nobody to look up yet
+                $manager = null;
+                $target = $rowOfEmail[mb_strtolower($managerEmail)];
+                if ($target === $n) {
+                    $fail('A person cannot report to themselves.');
+                } else {
+                    $fileManager[$n] = $target;
+                }
+            } elseif ($managerEmail !== '') {
                 $manager = User::whereRaw('LOWER(email) = ?', [mb_strtolower($managerEmail)])->first();
                 if ($manager === null || ! $this->access->isVisible($caller, $manager->id)) {
                     $fail("No one you can reach has the email {$managerEmail}.");
@@ -139,25 +161,52 @@ class AdminEmployeeController extends Controller
                 $fail('Choose who this person reports to.');
             }
 
-            $plan[] = [$name, $email, $role, $manager];
+            $plan[$n] = [$name, $email, $role, $manager];
         }
 
-        if ($problems !== []) {
-            return response()->json(['error' => ['code' => 'IMPORT_INVALID', 'message' => 'Some rows need fixing. Nobody was added.', 'rows' => $problems]], 422);
-        }
-
-        $created = 0;
-        $noEmail = [];
-        foreach ($plan as [$name, $email, $role, $manager]) {
-            [$employee, $emailSent, $link] = $this->accounts->createPerson($caller, $name, $email, $role, $manager);
-            AuditLog::record($caller, 'employee.created', $employee, ['role' => $role->name, 'import' => true]);
-            $created++;
-            if (! $emailSent) {
-                $noEmail[] = ['email' => $employee->email, 'setPasswordUrl' => $link];
+        // rows that report to each other in a circle (A under B, B under A) would have nobody at the top
+        foreach (array_keys($fileManager) as $start) {
+            $walk = [$start];
+            for ($at = $fileManager[$start] ?? null; $at !== null; $at = $fileManager[$at] ?? null) {
+                if ($at === $start) {
+                    $problems[] = ['row' => $start, 'message' => 'The people in rows '.implode(', ', $walk).' report to each other in a circle.'];
+                    break;
+                }
+                if (in_array($at, $walk, true)) {
+                    break;
+                }
+                $walk[] = $at;
             }
         }
 
-        return response()->json(['created' => $created, 'emailFailed' => $noEmail], 201);
+        if ($problems !== []) {
+            usort($problems, fn ($a, $b) => $a['row'] <=> $b['row']);
+
+            return response()->json(['error' => ['code' => 'IMPORT_INVALID', 'message' => 'Some rows need fixing. Nobody was added.', 'rows' => $problems]], 422);
+        }
+
+        // All or nothing: one transaction, so a failure part way (two imports racing on one email, say) leaves nobody
+        // behind. Invitations go to the queue and are sent once the transaction has committed.
+        try {
+            DB::transaction(function () use ($plan, $fileManager, $caller) {
+                $made = [];
+                foreach ($plan as $n => [$name, $email, $role, $manager]) {
+                    [$made[$n]] = $this->accounts->createPerson($caller, $name, $email, $role, $manager, invite: false);
+                    AuditLog::record($caller, 'employee.created', $made[$n], ['role' => $role->name, 'import' => true]);
+                }
+                foreach ($fileManager as $n => $managerRow) {
+                    $made[$n]->manager_id = $made[$managerRow]->id;
+                    $made[$n]->save();
+                }
+                foreach ($made as $account) {
+                    $this->accounts->queueInvite($account, $caller);
+                }
+            });
+        } catch (UniqueConstraintViolationException) {
+            return $this->refuse(422, 'IMPORT_INVALID', 'Someone added one of these emails while the file was being imported. Nobody was added: try again.');
+        }
+
+        return response()->json(['created' => count($plan), 'invitesQueued' => count($plan)], 201);
     }
 
     public function update(UpdateEmployeeRequest $request, int $id): JsonResponse

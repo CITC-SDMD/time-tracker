@@ -104,6 +104,13 @@
         >
           {{ ACCOUNT_STATUS_LABEL[row.accountStatus as UserStatus] }}
         </UiBadge>
+        <UiBadge
+          v-if="row.inviteFailed && row.accountStatus === 'active'"
+          class="ml-2"
+          variant="warning"
+        >
+          Email not delivered
+        </UiBadge>
       </template>
       <template #cell-actions="{ row }">
         <div
@@ -432,10 +439,7 @@ const NO_MANAGER = 'none'
 const importOpen = ref(false)
 
 async function onImported(result: ImportedPeople) {
-  const first = result.emailFailed[0]
-  notice.value = first
-    ? { variant: 'danger', text: `${result.created} added, but ${result.emailFailed.length} email(s) could not be sent (use Resend link for the others). Pass this link on to ${first.email} yourself:`, link: first.setPasswordUrl }
-    : { variant: 'success', text: `${result.created} ${result.created === 1 ? 'person was' : 'people were'} added. Each got an email with a link to choose a password.` }
+  notice.value = { variant: 'success', text: `${result.created} ${result.created === 1 ? 'person was' : 'people were'} added. Their emails with a link to choose a password are being sent. If one cannot be delivered, that person shows "Email not delivered" and you can use Resend link.` }
   await load()
 }
 
@@ -521,6 +525,7 @@ async function resend(person: EmployeeListItem) {
     notice.value = result.emailSent
       ? { variant: 'success', text: `We emailed a new set-password link to ${person.email}. It works for 3 days.` }
       : { variant: 'danger', text: `The email to ${person.email} could not be sent. Pass this link on yourself:`, link: result.setPasswordUrl }
+    await load()
   }
   catch (e) {
     notice.value = { variant: 'danger', text: messageOf(e, 'Could not send the link.') }

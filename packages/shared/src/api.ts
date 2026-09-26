@@ -26,6 +26,8 @@ export interface OrganizationSettings {
 export interface AdminOrganizationSettings extends OrganizationSettings {
   /** bytes used by the stored screenshots on the storage disk */
   screenshotStorageBytes: number
+  /** true in the answer to a save that changed the timezone: the stored days are being recalculated in the background */
+  daysRecalculating?: boolean
 }
 
 // GET /api/v1/employees/{id}/screenshots?day=YYYY-MM-DD, oldest first. The pictures themselves are
@@ -109,6 +111,8 @@ export interface EmployeeListItem {
   role: string
   roleId: string | null
   accountStatus: UserStatus
+  /** the set-password email could not be delivered: offer "Resend link" */
+  inviteFailed?: boolean
   managerId: string | null
   managerName: string | null
   createdAt: string
@@ -166,8 +170,8 @@ export interface CreatedEmployee {
 // POST /api/v1/admin/employees/import
 export interface ImportedPeople {
   created: number
-  /** people whose email could not be sent: pass each link on yourself */
-  emailFailed: Array<{ email: string, setPasswordUrl: string }>
+  /** the set-password emails are sent in the background; one that cannot be delivered is marked on the person */
+  invitesQueued: number
 }
 
 // GET /api/v1/admin/audit

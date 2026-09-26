@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateOrganizationSettingsRequest;
+use App\Jobs\RebuildDaysJob;
 use App\Models\AuditLog;
 use App\Models\OrganizationSetting;
 use App\Models\Screenshot;
@@ -41,6 +42,7 @@ class AdminSettingsController extends Controller
 
         // Explicit property assignment, not a mass-assignment update([...]) — same
         // reasoning as AdminEmployeeController@store: only touch fields actually sent.
+        $timezoneBefore = $settings->timezone;
         if ($request->has('timezone')) {
             $settings->timezone = $request->string('timezone');
         }
@@ -61,6 +63,11 @@ class AdminSettingsController extends Controller
         }
         $settings->save();
 
+        // the days already stored were cut at the old midnight: recalculate them in the background
+        if ($settings->timezone !== $timezoneBefore) {
+            RebuildDaysJob::dispatch((int) $settings->organization_id);
+        }
+
         AuditLog::record($request->user(), 'settings.updated', null, $request->only([
             'timezone', 'idleThresholdSeconds', 'windowTitleMode', 'consentVersion',
             'screenshotIntervalMinutes', 'screenshotRandom',
@@ -80,6 +87,7 @@ class AdminSettingsController extends Controller
             'screenshotIntervalMinutes' => $settings->screenshot_interval_minutes,
             'screenshotRandom' => $settings->screenshot_random,
             // the space this organization's screenshots take on the storage disk, for the settings page
+            'daysRecalculating' => $settings->wasChanged('timezone'),
             'screenshotStorageBytes' => $this->storageBytes((int) $this->context->id()),
         ];
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Platform;
 
 use App\Http\Controllers\Api\AdminSettingsController;
 use App\Http\Controllers\Controller;
+use App\Jobs\RebuildDaysJob;
 use App\Models\AuditLog;
 use App\Models\Organization;
 use App\Models\OrganizationSetting;
@@ -81,6 +82,7 @@ class OrganizationController extends Controller
                 $from = $settings->timezone;
                 $settings->timezone = $data['timezone'];
                 $settings->save();
+                RebuildDaysJob::dispatch($organization->id);
                 AuditLog::recordPlatform($caller, 'organization.timezone_changed', null, ['from' => $from, 'to' => $data['timezone']]);
             }
         }

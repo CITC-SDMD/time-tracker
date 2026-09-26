@@ -56,4 +56,31 @@ test.describe.serial('import people from a file', () => {
     await expect(page.getByRole('link', { name: 'Ina Import', exact: true })).toBeVisible()
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: 'Ito, Import', exact: true }) })).toContainText('Lena Lead')
   })
+
+  test('a manager can be someone further down the same file, and a circle is refused', async ({ page, allow }) => {
+    allow(/POST \/api\/v1\/admin\/employees\/import 422/)
+    await page.goto('/user/people')
+    const roles = await (await page.request.get('/api/v1/roles', { headers: DASH_HEADERS })).json() as { name: string, assignable: boolean }[]
+    const role = roles.find(r => r.assignable)!.name
+
+    await page.getByRole('button', { name: 'Import from a file' }).click()
+    const drawer = page.getByRole('dialog')
+    await drawer.getByLabel('CSV file').setInputFiles(csv(`name,email,role,manager_email
+Circ A,circ.a@test.com,${role},circ.b@test.com
+Circ B,circ.b@test.com,${role},circ.a@test.com
+`))
+    await drawer.getByRole('button', { name: 'Add and email links' }).click()
+    await expect(drawer.getByText(/report to each other in a circle/).first()).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('button', { name: 'Import from a file' }).click()
+    await drawer.getByLabel('CSV file').setInputFiles(csv(`name,email,role,manager_email
+Late Junior,late.junior@test.com,${role},late.senior@test.com
+Late Senior,late.senior@test.com,${role},
+`))
+    await drawer.getByRole('button', { name: 'Add and email links' }).click()
+
+    await expect(page.getByText('2 people were added.')).toBeVisible()
+    await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: 'Late Junior', exact: true }) })).toContainText('Late Senior')
+  })
 })

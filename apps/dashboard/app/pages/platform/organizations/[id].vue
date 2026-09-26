@@ -422,8 +422,11 @@ async function submitRename() {
   renaming.value = true
   renameError.value = null
   try {
+    const timezoneChanged = organization.value?.timezone !== renameForm.timezone
     organization.value = await api<OrganizationItem>(`/platform/organizations/${id.value}`, { method: 'PATCH', body: { name: renameForm.name.trim(), timezone: renameForm.timezone } })
     renameOpen.value = false
+    if (timezoneChanged)
+      notice.value = { variant: 'success', text: 'The timezone was changed. The days already recorded are being recalculated; the totals of past days may take a moment to settle.' }
   }
   catch (e) {
     renameError.value = messageOf(e, 'Could not rename the organization.')

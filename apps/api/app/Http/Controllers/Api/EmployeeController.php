@@ -72,6 +72,7 @@ class EmployeeController extends Controller
                 'role' => $employee->role?->name ?? '',
                 'roleId' => $employee->role_id === null ? null : (string) $employee->role_id,
                 'accountStatus' => $employee->status,
+                'inviteFailed' => $employee->invite_failed_at !== null,
                 'managerId' => $employee->manager_id === null ? null : (string) $employee->manager_id,
                 'managerName' => $employee->manager?->name,
                 'createdAt' => $employee->created_at?->toIso8601String(),

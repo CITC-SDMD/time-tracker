@@ -53,7 +53,7 @@ class PasswordResetController extends Controller
         $status = Password::broker($broker)->reset(
             ['email' => $data['email'], 'token' => $data['token'], 'password' => $data['password'], 'status' => 'active'],
             function (User $user, string $password) {
-                $user->forceFill(['password' => $password, 'remember_token' => Str::random(60)])->save();
+                $user->forceFill(['password' => $password, 'remember_token' => Str::random(60), 'invite_failed_at' => null])->save();
                 // Everything signed in with the old password is signed out: the dashboard and
                 // any desktop app. The desktop keeps its unsent data and asks to log in again.
                 $user->tokens()->delete();

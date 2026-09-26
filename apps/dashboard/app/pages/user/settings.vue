@@ -98,6 +98,9 @@
       </FormError>
       <UiAlert v-if="saved">
         Settings saved.
+        <template v-if="recalculating">
+          The days already recorded are being recalculated for the new timezone; the totals of past days may take a moment to settle.
+        </template>
       </UiAlert>
 
       <div class="flex justify-end gap-3">
@@ -148,6 +151,7 @@ const loaded = ref(false)
 const loadError = ref<string | null>(null)
 const saving = ref(false)
 const saved = ref(false)
+const recalculating = ref(false)
 const error = ref<string | null>(null)
 
 // the values as they are on the server, to know what changed
@@ -282,6 +286,7 @@ async function save() {
       office.organization.value = { ...office.organization.value, timezone: updated.timezone }
     if (me.value?.settings)
       me.value = { ...me.value, settings: updated, organization: me.value.organization && { ...me.value.organization, timezone: updated.timezone } }
+    recalculating.value = updated.daysRecalculating === true
     saved.value = true
   }
   catch (e) {

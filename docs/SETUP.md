@@ -321,7 +321,7 @@ AWS_BUCKET=screenshots
 AWS_ENDPOINT=https://<s3-domain>
 ```
 
-Then `php artisan config:cache`. The desktop app uploads one picture; the 320 px thumbnail is made by a **queued job**, so a queue worker has to run all the time in production (`QUEUE_CONNECTION=database`). Keep it alive with systemd:
+Then `php artisan config:cache`. The desktop app uploads one picture; the 320 px thumbnail is made by a **queued job**, so a queue worker has to run all the time in production (`QUEUE_CONNECTION=database`). The same worker sends the set-password emails of a people import and recalculates the stored days after an organization changes its timezone, so a stopped worker means those emails and recalculations wait. Keep it alive with systemd:
 
 ```ini
 # /etc/systemd/system/tracker-queue.service

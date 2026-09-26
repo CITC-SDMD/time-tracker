@@ -86,6 +86,7 @@ test.describe.serial('organization settings as the admin', () => {
     await page.getByLabel('Organization timezone').selectOption('Pacific/Auckland')
     await save(page).click()
     await expect(page.getByText('Settings saved.')).toBeVisible()
+    await expect(page.getByText(/are being recalculated for the new timezone/)).toBeVisible()
     await page.goto('/user/profile')
     await expect(page.getByText('Pacific/Auckland')).toBeVisible()
     await page.goto('/user')

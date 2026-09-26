@@ -93,6 +93,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'deactivated_at' => 'datetime',
+            'invite_failed_at' => 'datetime',
             'consent_accepted_at' => 'datetime',
             'is_superadmin' => 'boolean',
             'is_owner' => 'boolean',

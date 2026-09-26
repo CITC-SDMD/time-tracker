@@ -43,6 +43,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.moved': 'Moved a person to another manager',
   'employee.role_changed': 'Changed a role',
   'employee.invite_resent': 'Sent a new set-password link',
+  'employee.invite_failed': 'A set-password email could not be delivered',
   'role.created': 'Made a role',
   'role.updated': 'Edited a role',
   'role.deleted': 'Deleted a role',

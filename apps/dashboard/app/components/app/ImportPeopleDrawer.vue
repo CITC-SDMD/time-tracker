@@ -15,7 +15,7 @@
         <strong class="font-semibold text-gray-900 dark:text-white">email</strong>,
         <strong class="font-semibold text-gray-900 dark:text-white">role</strong> and, optionally,
         <strong class="font-semibold text-gray-900 dark:text-white">manager_email</strong>
-        (left blank, they report to you). Up to {{ MAX_ROWS }} people. If any row is wrong, nobody is added.
+        (left blank, they report to you; it can also be the email of another person in the same file). Up to {{ MAX_ROWS }} people. If any row is wrong, nobody is added.
       </p>
       <p class="text-sm/6 text-gray-500 dark:text-gray-400">
         Roles you can give: {{ roles.map(r => r.name).join(', ') || 'none' }}.
