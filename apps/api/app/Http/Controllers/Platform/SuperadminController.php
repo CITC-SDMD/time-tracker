@@ -57,6 +57,7 @@ class SuperadminController extends Controller
     {
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
+            'email' => ['sometimes', 'email', 'max:255'],
             'status' => ['sometimes', 'string', Rule::in(['active', 'inactive'])],
             'permissions' => ['sometimes', 'array'],
             'permissions.*' => ['string', 'distinct', Rule::in(Permissions::superadminKeys())],
@@ -79,8 +80,22 @@ class SuperadminController extends Controller
             return $refusal;
         }
 
-        if (isset($data['name'])) {
+        $changes = [];
+        if (isset($data['name']) && trim($data['name']) !== $target->name) {
             $target->name = trim($data['name']);
+            $changes['nameTo'] = $target->name;
+        }
+        if (isset($data['email']) && mb_strtolower(trim($data['email'])) !== mb_strtolower($target->email)) {
+            if ($this->accounts->emailTaken($data['email'])) {
+                return response()->json(['error' => ['code' => 'EMAIL_TAKEN', 'message' => 'A user with this email already exists.']], 409);
+            }
+            $target->email = trim($data['email']);
+            $changes['emailTo'] = $target->email;
+            // the old address must not keep working, so any open session or link ends here
+            $target->tokens()->delete();
+        }
+        if ($changes !== []) {
+            AuditLog::recordPlatform($caller, 'superadmin.updated', $target, $changes);
         }
         if (isset($data['permissions'])) {
             $before = $target->superadmin_permissions ?? [];

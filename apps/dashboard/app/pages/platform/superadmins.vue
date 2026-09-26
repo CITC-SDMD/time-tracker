@@ -68,7 +68,7 @@
             variant="link"
             @click="openEdit(row as SuperadminItem)"
           >
-            Permissions
+            Edit
           </FormButton>
           <FormButton
             variant="link"
@@ -82,7 +82,7 @@
 
     <UiDrawer
       v-model="formOpen"
-      :title="editing ? `Permissions of ${editing.name}` : 'Add a superadmin'"
+      :title="editing ? `Edit ${editing.name}` : 'Add a superadmin'"
       :persistent="saving"
     >
       <form
@@ -90,23 +90,22 @@
         novalidate
         @submit.prevent="submit"
       >
-        <template v-if="!editing">
-          <FormInput
-            v-model="form.name"
-            label="Full name"
-            autocomplete="off"
-            :errors="v$.name.$errors"
-            @blur="v$.name.$touch()"
-          />
-          <FormInput
-            v-model="form.email"
-            label="Email"
-            type="email"
-            autocomplete="off"
-            :errors="v$.email.$errors"
-            @blur="v$.email.$touch()"
-          />
-        </template>
+        <FormInput
+          v-model="form.name"
+          label="Full name"
+          autocomplete="off"
+          :errors="v$.name.$errors"
+          @blur="v$.name.$touch()"
+        />
+        <FormInput
+          v-model="form.email"
+          label="Email"
+          type="email"
+          autocomplete="off"
+          :hint="editing ? 'Changing the email signs them out. They log in with the new address.' : undefined"
+          :errors="v$.email.$errors"
+          @blur="v$.email.$touch()"
+        />
         <FormPermissionPicker
           v-model="form.permissions"
           label="What this superadmin may do"
@@ -132,7 +131,7 @@
             type="submit"
             :loading="saving"
           >
-            {{ saving ? 'Saving…' : editing ? 'Save permissions' : 'Add and email link' }}
+            {{ saving ? 'Saving…' : editing ? 'Save' : 'Add and email link' }}
           </FormButton>
         </div>
       </form>
@@ -210,22 +209,18 @@ const formError = ref<string | null>(null)
 const editing = ref<SuperadminItem | null>(null)
 const form = reactive({ name: '', email: '', permissions: [] as string[] })
 
-const v$ = useVuelidate(computed(() => ({
-  name: editing.value
-    ? {}
-    : {
-        required: helpers.withMessage('Enter their full name.', required),
-        maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
-      },
-  email: editing.value
-    ? {}
-    : {
-        required: helpers.withMessage('Enter their email address.', required),
-        email: helpers.withMessage('Enter a valid email address.', emailRule),
-        maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
-      },
+const v$ = useVuelidate({
+  name: {
+    required: helpers.withMessage('Enter their full name.', required),
+    maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
+  },
+  email: {
+    required: helpers.withMessage('Enter their email address.', required),
+    email: helpers.withMessage('Enter a valid email address.', emailRule),
+    maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
+  },
   permissions: {},
-})), form)
+}, form)
 
 function openAdd() {
   editing.value = null
@@ -239,6 +234,8 @@ function openAdd() {
 
 function openEdit(person: SuperadminItem) {
   editing.value = person
+  form.name = person.name
+  form.email = person.email
   form.permissions = [...person.permissions]
   formError.value = null
   v$.value.$reset()
@@ -252,8 +249,11 @@ async function submit() {
   formError.value = null
   try {
     if (editing.value) {
-      await api(`/platform/superadmins/${editing.value.id}`, { method: 'PATCH', body: { permissions: form.permissions } })
-      notice.value = { variant: 'success', text: `The permissions of ${editing.value.name} were saved.` }
+      await api(`/platform/superadmins/${editing.value.id}`, {
+        method: 'PATCH',
+        body: { name: form.name.trim(), email: form.email.trim(), permissions: form.permissions },
+      })
+      notice.value = { variant: 'success', text: `${form.name.trim()} was saved.` }
     }
     else {
       const created = await api<SuperadminItem>('/platform/superadmins', {

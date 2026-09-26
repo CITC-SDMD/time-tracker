@@ -384,6 +384,33 @@ class PlatformTest extends TestCase
         $this->as($staff)->patchJson("/api/v1/platform/superadmins/{$sam->id}", ['permissions' => ['platform.settings']])->assertForbidden();
     }
 
+    public function test_a_superadmins_name_and_email_can_be_changed_and_the_email_stays_unique(): void
+    {
+        $sam = $this->limited(['organizations.view']);
+        $sam->createToken('dash');
+        $url = "/api/v1/platform/superadmins/{$sam->id}";
+
+        $this->as($this->owner)->patchJson($url, ['email' => $this->owner->email])->assertStatus(409)->assertJsonPath('error.code', 'EMAIL_TAKEN');
+
+        $this->as($this->owner)->patchJson($url, ['name' => 'Sam New', 'email' => 'sam.new@example.com'])
+            ->assertOk()->assertJsonPath('name', 'Sam New')->assertJsonPath('email', 'sam.new@example.com');
+        $this->assertSame(0, $sam->tokens()->count());
+        $entry = AuditLog::withoutGlobalScopes()->where('action', 'superadmin.updated')->firstOrFail();
+        $this->assertSame('sam.new@example.com', $entry->details['emailTo']);
+    }
+
+    public function test_an_organizations_timezone_can_be_changed_and_is_audited(): void
+    {
+        $org = OrganizationFactory::made('Office A');
+        $url = "/api/v1/platform/organizations/{$org->id}";
+
+        $this->as($this->owner)->patchJson($url, ['timezone' => 'Nowhere/Land'])->assertUnprocessable();
+        $this->as($this->owner)->patchJson($url, ['timezone' => 'Asia/Tokyo'])->assertOk()->assertJsonPath('timezone', 'Asia/Tokyo');
+
+        $this->assertSame('Asia/Tokyo', OrganizationSetting::withoutGlobalScopes()->where('organization_id', $org->id)->value('timezone'));
+        $this->assertTrue(AuditLog::withoutGlobalScopes()->whereNull('organization_id')->where('action', 'organization.timezone_changed')->exists());
+    }
+
     public function test_deactivating_a_superadmin_signs_them_out(): void
     {
         $sam = $this->limited(['organizations.view']);

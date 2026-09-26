@@ -49,7 +49,9 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'settings.updated': 'Changed organization settings',
   'organization.created': 'Created an organization',
   'organization.renamed': 'Renamed an organization',
+  'organization.timezone_changed': 'Changed the timezone of an organization',
   'organization.suspended': 'Suspended an organization',
+  'superadmin.updated': 'Changed the name or email of a superadmin',
   'organization.reactivated': 'Reactivated an organization',
   'superadmin.created': 'Added a superadmin',
   'superadmin.permissions_changed': 'Changed the permissions of a superadmin',
@@ -107,7 +109,10 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
     case 'organization.reactivated':
       return typeof d.organization === 'string' ? d.organization : ''
     case 'organization.renamed':
+    case 'organization.timezone_changed':
       return `${d.from ?? '?'} → ${d.to ?? '?'}`
+    case 'superadmin.updated':
+      return [d.nameTo ? `name → ${d.nameTo}` : '', d.emailTo ? `email → ${d.emailTo}` : ''].filter(Boolean).join(', ')
     case 'superadmin.permissions_changed': {
       const added = Array.isArray(d.added) ? d.added.length : 0
       const removed = Array.isArray(d.removed) ? d.removed.length : 0

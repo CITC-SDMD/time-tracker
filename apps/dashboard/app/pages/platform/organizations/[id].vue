@@ -47,7 +47,7 @@
             variant="secondary"
             @click="openRename"
           >
-            Rename
+            Edit details
           </FormButton>
           <FormButton
             v-if="canPlatform('organizations.update')"
@@ -75,7 +75,7 @@
       </UiAlert>
 
       <section
-        class="grid grid-cols-1 gap-4 sm:grid-cols-3"
+        class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
         aria-label="Usage"
       >
         <UiStatCard
@@ -89,6 +89,11 @@
         <UiStatCard
           label="Screenshot storage"
           :value="formatBytes(organization.storageBytes)"
+        />
+        <UiStatCard
+          label="Active, last 7 days"
+          :value="String(organization.activePeopleLast7Days ?? 0)"
+          :hint="organization.lastActivityAt ? `Last upload ${formatDateTime(organization.lastActivityAt)}` : 'No time received yet'"
         />
       </section>
 
@@ -194,7 +199,7 @@
 
     <UiModal
       v-model="renameOpen"
-      title="Rename the organization"
+      title="Edit the organization"
       :persistent="renaming"
     >
       <form
@@ -208,6 +213,13 @@
           autocomplete="off"
           :errors="renameV$.name.$errors"
           @blur="renameV$.name.$touch()"
+        />
+        <FormSelect
+          v-model="renameForm.timezone"
+          label="Timezone"
+          :options="timezoneOptions"
+          :errors="renameV$.timezone.$errors"
+          @blur="renameV$.timezone.$touch()"
         />
         <FormError v-if="renameError">
           {{ renameError }}
@@ -380,16 +392,25 @@ async function resend(admin: OrganizationAdminItem) {
 const renameOpen = ref(false)
 const renaming = ref(false)
 const renameError = ref<string | null>(null)
-const renameForm = reactive({ name: '' })
+const renameForm = reactive({ name: '', timezone: '' })
 const renameV$ = useVuelidate({
   name: {
     required: helpers.withMessage('Enter the name of the organization.', required),
     maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
   },
+  timezone: { required: helpers.withMessage('Choose the timezone.', required) },
 }, renameForm)
+
+const timezoneOptions = computed(() => {
+  const zones = new Set<string>(['UTC', ...Intl.supportedValuesOf('timeZone')])
+  if (renameForm.timezone)
+    zones.add(renameForm.timezone)
+  return [...zones].sort().map(zone => ({ value: zone, label: zone.replaceAll('_', ' ') }))
+})
 
 function openRename() {
   renameForm.name = organization.value?.name ?? ''
+  renameForm.timezone = organization.value?.timezone ?? 'Asia/Manila'
   renameError.value = null
   renameV$.value.$reset()
   renameOpen.value = true
@@ -401,7 +422,7 @@ async function submitRename() {
   renaming.value = true
   renameError.value = null
   try {
-    organization.value = await api<OrganizationItem>(`/platform/organizations/${id.value}`, { method: 'PATCH', body: { name: renameForm.name.trim() } })
+    organization.value = await api<OrganizationItem>(`/platform/organizations/${id.value}`, { method: 'PATCH', body: { name: renameForm.name.trim(), timezone: renameForm.timezone } })
     renameOpen.value = false
   }
   catch (e) {

@@ -61,6 +61,8 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::post('/admin/employees', [AdminEmployeeController::class, 'store'])->middleware('permission:people.create');
+        Route::post('/admin/employees/import', [AdminEmployeeController::class, 'import'])
+            ->middleware(['permission:people.create', 'throttle:10,1']);
         Route::patch('/admin/employees/{id}', [AdminEmployeeController::class, 'update'])
             ->whereNumber('id')->middleware('permission:people.update,people.assign_role');
         Route::post('/admin/employees/{id}/resend-invite', [AdminEmployeeController::class, 'resendInvite'])

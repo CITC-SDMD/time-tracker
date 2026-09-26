@@ -206,7 +206,7 @@ test.describe.serial('a superadmin with limited permissions', () => {
 
     // open an office: look only
     await vic.getByRole('row').filter({ hasText: 'Demo Office' }).getByRole('link', { name: 'Demo Office' }).click()
-    await expect(vic.getByRole('button', { name: 'Rename' })).toHaveCount(0)
+    await expect(vic.getByRole('button', { name: 'Edit details' })).toHaveCount(0)
     await expect(vic.getByRole('button', { name: 'Add an admin' })).toHaveCount(0)
     await vic.getByRole('button', { name: 'Open office' }).click()
     await expect(vic.getByText('Viewing Demo Office as platform staff')).toBeVisible()

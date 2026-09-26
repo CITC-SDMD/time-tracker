@@ -80,6 +80,86 @@ class AdminEmployeeController extends Controller
         ], 201);
     }
 
+    /**
+     * POST /api/v1/admin/employees/import: many people at once (a CSV the dashboard has read). Every row is checked
+     * first with the same rules as adding one person; if any row is wrong nothing is created and the answer lists each
+     * problem by row number, so the file can be fixed and sent again. A blank manager means the caller, as when adding one.
+     */
+    public function import(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'rows' => ['required', 'array', 'min:1', 'max:200'],
+            'rows.*.name' => ['nullable', 'string', 'max:255'],
+            'rows.*.email' => ['nullable', 'string', 'max:255'],
+            'rows.*.roleId' => ['nullable', 'integer'],
+            'rows.*.managerEmail' => ['nullable', 'string', 'max:255'],
+        ]);
+        $caller = $request->user();
+
+        $problems = [];
+        $plan = [];
+        $seen = [];
+        foreach (array_values($data['rows']) as $i => $row) {
+            $n = $i + 1;
+            $name = trim((string) ($row['name'] ?? ''));
+            $email = trim((string) ($row['email'] ?? ''));
+            $fail = function (string $message) use (&$problems, $n) {
+                $problems[] = ['row' => $n, 'message' => $message];
+            };
+
+            if ($name === '') {
+                $fail('Enter a name.');
+            }
+            if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+                $fail('Enter a valid email address.');
+            } elseif (isset($seen[mb_strtolower($email)])) {
+                $fail("The email {$email} is already in row {$seen[mb_strtolower($email)]}.");
+            } elseif ($this->accounts->emailTaken($email)) {
+                $fail("A user with the email {$email} already exists.");
+            }
+            $seen[mb_strtolower($email)] ??= $n;
+
+            $role = isset($row['roleId']) ? Role::find((int) $row['roleId']) : null;
+            if ($role === null) {
+                $fail('Choose one of the roles of this organization.');
+            } elseif (! $this->access->canGrantRole($caller, $role)) {
+                $fail("You cannot give the role {$role->name}: it can do more than your own.");
+            }
+
+            $manager = $caller->isSuperadmin() ? null : $caller;
+            $managerEmail = trim((string) ($row['managerEmail'] ?? ''));
+            if ($managerEmail !== '') {
+                $manager = User::whereRaw('LOWER(email) = ?', [mb_strtolower($managerEmail)])->first();
+                if ($manager === null || ! $this->access->isVisible($caller, $manager->id)) {
+                    $fail("No one you can reach has the email {$managerEmail}.");
+                } elseif ($manager->status !== 'active') {
+                    $fail("{$manager->name} is deactivated and cannot manage anyone.");
+                }
+            } elseif ($manager === null && $this->access->scope($caller) !== 'organization') {
+                $fail('Choose who this person reports to.');
+            }
+
+            $plan[] = [$name, $email, $role, $manager];
+        }
+
+        if ($problems !== []) {
+            return response()->json(['error' => ['code' => 'IMPORT_INVALID', 'message' => 'Some rows need fixing. Nobody was added.', 'rows' => $problems]], 422);
+        }
+
+        $created = 0;
+        $noEmail = [];
+        foreach ($plan as [$name, $email, $role, $manager]) {
+            [$employee, $emailSent, $link] = $this->accounts->createPerson($caller, $name, $email, $role, $manager);
+            AuditLog::record($caller, 'employee.created', $employee, ['role' => $role->name, 'import' => true]);
+            $created++;
+            if (! $emailSent) {
+                $noEmail[] = ['email' => $employee->email, 'setPasswordUrl' => $link];
+            }
+        }
+
+        return response()->json(['created' => $created, 'emailFailed' => $noEmail], 201);
+    }
+
     public function update(UpdateEmployeeRequest $request, int $id): JsonResponse
     {
         $caller = $request->user();

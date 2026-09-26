@@ -137,7 +137,7 @@ time-tracker/
 │   │       │   └── logging.rs
 │   │       ├── Cargo.toml
 │   │       └── tauri.conf.json
-│   ├── dashboard/              # Manager dashboard (Nuxt) — OIC / Project Manager / Team Leader
+│   ├── dashboard/              # Dashboard (Nuxt) — every account, with the pages its permissions allow; superadmins under /platform
 │   │   ├── app/pages/          # login, index, employees/[id], employees/manage, settings, audit
 │   │   └── nuxt.config.ts
 │   └── api/                    # Laravel API (PHP, its own Composer project — not a pnpm package)
@@ -151,7 +151,7 @@ time-tracker/
 │       │   └── Console/Commands/      # (none yet; no retention pruning, the server keeps all data)
 │       ├── database/
 │       │   ├── migrations/
-│       │   └── seeders/               # OfficeSettingsSeeder, first-OIC console command
+│       │   └── seeders/               # UserSeeder, DemoHierarchySeeder; console commands tracker:make-superadmin, tracker:make-organization
 │       ├── routes/api.php
 │       ├── tests/                     # Pest/PHPUnit
 │       ├── .env.example
@@ -602,6 +602,7 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 | `GET /api/v1/employees/{id}/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | self, or `timeline.view` and in reach | Daily totals per day (max 31 days). Another organization's id is 404 | `EmployeeController@summary` |
 | `GET /api/v1/employees/{id}/timeline?day=YYYY-MM-DD&cursor=` | self, or `timeline.view` and in reach | Merged timeline segments for one day (max 500 per page) | `EmployeeController@timeline` |
 | `POST /api/v1/admin/employees` | `people.create` | Add a person `{ name, email, roleId, managerId? }`: the role must be one the caller may give (`ROLE_ESCALATION`, `ROLE_NOT_FOUND`); the manager defaults to the caller, must be in reach and active (`null` only for someone reaching the organization: else `MANAGER_REQUIRED`); an email used anywhere on the platform is `409 EMAIL_TAKEN` | `AdminEmployeeController@store` |
+| `POST /api/v1/admin/employees/import` | `people.create` | Add up to 200 people at once `{ rows: [{ name, email, roleId, managerEmail? }] }` (the dashboard reads a CSV with the columns `name,email,role,manager_email`). Every row gets the same checks as adding one person; if any row is wrong nothing is created and `422 IMPORT_INVALID` lists each problem by row number. A blank manager means the caller. Each person is audited (`employee.created`) and invited by email. Limited to 10 requests a minute. |
 | `PATCH /api/v1/admin/employees/{id}` | `people.update` for `name`/`status`/`managerId`, `people.assign_role` for `roleId`; the person in reach | Change `name`, `status` (deactivate / reactivate; the last active admin is `LAST_ADMIN`), `roleId` (nobody gives more than they have, nor changes the role of someone who holds more; audited as `employee.role_changed`, with the managers when both change) or `managerId` (**move**: in reach, active, no loop `WOULD_CREATE_LOOP`; `null` only for someone reaching the organization; audited as `employee.moved`). Nothing is applied when anything is refused | `AdminEmployeeController@update` |
 | `POST /api/v1/admin/employees/{id}/resend-invite` | `people.update`, person in reach | Email a fresh 3-day set-password link to an active account (returns the link instead when the mail cannot be sent). Audited as `employee.invite_resent`; throttled 10/min | `AdminEmployeeController@resendInvite` |
 | `GET /api/v1/reports/daily`, `/reports/apps`, `/reports/team` `?from=&to=&uid=&format=json|csv` | `reports.view` (`reports.export` for CSV) | Phase 11 reports from `daily_summaries`, limited to the caller's reach: one row per person per day / active time per app / totals per person. Max 92 days; `uid` outside the reach = 403, in another organization = 404; CSV has `HH:MM` and seconds, a UTF-8 BOM, and neutralises cells starting with `= + - @`; a CSV download is audited as `report.exported` (not for superadmins) | `ReportController` |
@@ -678,7 +679,7 @@ Other responses: `401` (token bad/expired – app shows "Please log in again"), 
 - more than 100 sessions in the request → the whole request gets `400` (the Form Request's top-level rule).
 
 **What `AgentController@sync` does, step by step**
-1. Middleware already checked the auth token, rate limit, and agent version (`426` if below `office_settings.min_agent_version`).
+1. Middleware already checked the auth token, rate limit, and agent version (`426` if below `platform_settings.min_agent_version`).
 2. `AgentSyncRequest` validates the body; invalid → `422`/`400` before the controller runs.
 3. If `office_settings.window_title_mode = APP_ONLY`, set every `windowTitle` to `null`.
 4. `DB::transaction()` (wraps everything below; MySQL's row locks stand in for Firestore's transaction):
@@ -1153,7 +1154,7 @@ PASS: within those numbers.
 1. `packages/shared`: TS types for the sync request/response (§10.1) — matched against the Laravel Form Request's validation rules by hand.
 2. Laravel `AgentSyncRequest` + `AgentController@sync`: `POST /api/v1/agent/sync`, exactly as in §10.1 (DB transaction, duplicates, one-PC rule, deactivated rule).
 3. `SummaryService`: add sessions into daily totals, splitting at midnight in the office timezone.
-4. Middleware: `throttle:agent-sync` rate limit, `CheckAgentVersion` (`X-Agent-Version` header vs `office_settings.min_agent_version`, `426` if too old).
+4. Middleware: `throttle:agent-sync` rate limit, `CheckAgentVersion` (`X-Agent-Version` header vs `platform_settings.min_agent_version`, `426` if too old).
 5. (Removed: no server-side retention pruning. The office server keeps all data permanently.)
 6. Rust `sync/client.rs` + `sync/worker.rs` (§11.1): batching, retry wait times, 401 handling, commands, settings.
 7. Rust `auth.rs`: hold the Sanctum token from Credential Manager; no refresh step needed (§9.2) — just re-send it until a `401` says it's no longer valid.
@@ -1256,7 +1257,7 @@ Expected: sessions from before deactivation are accepted; the app then signs out
 PASS: correct sessions saved; no newer ones accepted.
 
 Test 4.16 [F] Old app version
-1. Set office_settings.min_agent_version higher than the installed version.
+1. Set platform_settings.min_agent_version higher than the installed version.
 Expected: the app shows "Please update the app" and keeps tracking locally.
 PASS: no data lost; syncs after the update.
 
@@ -1588,7 +1589,7 @@ PASS: restore works and the steps are written down.
 5. Check for updates at startup and every 6 hours. Install only when **not tracking**, or when the user clicks "Update now" (which stops tracking cleanly first). Resume tracking after restarting if it was on.
 6. Database migrations run at startup with a backup first (§7.4 — this is the SQLite backup on the employee's PC; the server's own `php artisan migrate` for the MySQL schema is a separate, manual release step, see `docs/RELEASE.md`). If a local migration fails → restore the backup and show an error.
 7. GitHub Actions release workflow: on tag `v*` → build on `windows-latest` → sign → `rsync`/`scp` the installer and updated `latest.json` to the office server's `/updates/` directory over SSH (deploy key stored in GitHub Secrets) → delete versions older than the last 3.
-8. Laravel: `office_settings.min_agent_version` (§10.1) forces very old versions to update.
+8. Laravel: `platform_settings.min_agent_version` (§10.1) forces very old versions to update.
 9. `docs/RELEASE.md`: how to release (including running `php artisan migrate` on the office server for any API-side schema changes), and how to roll back (point `latest.json` at the previous version).
 
 **Deliverables**
@@ -1734,6 +1735,8 @@ PASS: within target.
 - Desktop app: reads the new `Me` (organization, settings) and an older stored one; copy says "organization".
 - Tests: PHP suite (`TenantIsolationTest`, `RoleManagementTest`, `RoleAssignmentTest`, `PlatformTest`, `OfficeToOrganizationMigrationTest`, `AccessServiceTest` and the reworked older ones), Rust DTO tests, and the browser suite with two organizations.
 
+**Added afterwards (2026-09-26):** import of people from a CSV file (above); a superadmin's name and email can be edited (`PATCH /platform/superadmins/{id}`, audited as `superadmin.updated`, an email change signs them out); an organization's timezone can be edited from its profile (`organization.timezone_changed`); the organization profile shows how many people sent time in the last 7 days and the last upload; the Roles form is a drawer like the superadmin form.
+
 **Not included (ask if wanted):** self-signup; per-organization subdomain, branding or mail server; seats, quotas or billing; deleting or exporting an organization (suspending keeps everything); permissions with their own reach (one scope per role); the same email in two organizations; a separate unit tree (division / section).
 
 ---
@@ -1838,7 +1841,7 @@ PASS: within target.
 - **What is tracked:** start/stop/pause times; which app is in front and for how long; the window title (unless the office turned titles off); when you're idle (no mouse/keyboard for X minutes) and which app was on screen then.
 - **What is NOT tracked:** keystrokes, typed text, mouse movements, webcam, microphone, file contents, websites. Screenshots are taken only if the OIC has turned them on (main screen only, at the chosen interval, with the consent text saying so).
 - **When:** only while tracking is on (the tray icon shows this). Nothing is tracked while paused, not tracking, locked or asleep.
-- **Who can see it:** your manager and whoever is above them in the hierarchy — for example a Developer's data is visible to their Team Leader, that Team Leader's Project Manager, and the OIC, but not to other teams (§9.1). You can always see your own data in the app.
+- **Who can see it:** people whose role has the permission and reaches you (a role reaches only the person, their team below them in the reporting line, or the whole organization, §9.1). Platform superadmins may open an office if they were given that permission; what they only look at is not logged, what they change is. Other organizations never see it. You can always see your own data in the app.
 - **How long it's kept:** permanently on the office server.
 
 **Safeguards**
@@ -1846,7 +1849,7 @@ PASS: within target.
 - Window titles can be turned off office-wide (`APP_ONLY`). The OIC should consider this if titles might contain private information (email subjects, document names).
 - Everyone can pause their own tracking.
 - No productivity scores.
-- Managers' views of other people's timelines are logged, and only the OIC can read that log.
+- Views of other people's timelines by the organization's own people are logged, and only roles with `audit.view` can read that log. A superadmin only looking is not logged (decision of 2026-09-26); their changes are.
 - Only the data needed is collected (no IP history, no hardware inventory beyond the computer name).
 
 **Legal note:** employee monitoring laws differ by country and region (for example consent, notice and data-protection rules). **Have the actual rules reviewed for every place where the office and its employees are located** before rolling this out. Don't assume one rule applies everywhere.
@@ -1909,7 +1912,8 @@ The MVP is complete when **all** of these are true on the release build:
 8. **Phase 7** — Pilot week + fixes.
 9. **Phase 8** — Installer + updates → **MVP done.**
 10. **Phase 11** — Reports (the most useful next step for an office).
-11. **Phase 10** — Screenshots (on the office server, OIC-controlled).
+11. **Phase 10** — Screenshots (on the office server, controlled by each organization's settings).
+12. **Phase 12** — Organizations and custom roles (multi-tenant), then people import from a CSV file and the superadmin profile pages. Later: the security pass and pilot with one real office (Phase 7), deployment and `docs/RELEASE.md`.
 
 *Phase 9 (website tracking) is dropped.*
 

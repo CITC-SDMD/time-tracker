@@ -70,9 +70,20 @@ class OrganizationController extends Controller
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'status' => ['sometimes', 'string', Rule::in(['active', 'suspended'])],
+            'timezone' => ['sometimes', 'string', 'max:64', 'timezone'],
         ]);
         $organization = $this->current();
         $caller = $request->user();
+
+        if (isset($data['timezone'])) {
+            $settings = OrganizationSetting::withoutGlobalScopes()->where('organization_id', $organization->id)->first();
+            if ($settings !== null && $settings->timezone !== $data['timezone']) {
+                $from = $settings->timezone;
+                $settings->timezone = $data['timezone'];
+                $settings->save();
+                AuditLog::recordPlatform($caller, 'organization.timezone_changed', null, ['from' => $from, 'to' => $data['timezone']]);
+            }
+        }
 
         if (isset($data['name']) && trim($data['name']) !== $organization->name) {
             if (Organization::whereRaw('LOWER(name) = ?', [mb_strtolower(trim($data['name']))])->whereKeyNot($organization->id)->exists()) {
@@ -102,7 +113,14 @@ class OrganizationController extends Controller
         $people = User::withoutGlobalScopes()->where('organization_id', $organization->id)->count();
         $storage = AdminSettingsController::storageBytes($organization->id);
 
-        return $this->payload($organization, $people, $storage);
+        $since = now()->subDays(7);
+        $recent = DB::table('sessions')->where('organization_id', $organization->id)->where('received_at', '>=', $since);
+
+        return [
+            ...$this->payload($organization, $people, $storage),
+            'activePeopleLast7Days' => (int) (clone $recent)->distinct()->count('user_id'),
+            'lastActivityAt' => DB::table('sessions')->where('organization_id', $organization->id)->max('received_at'),
+        ];
     }
 
     /** @return array<string, mixed> */

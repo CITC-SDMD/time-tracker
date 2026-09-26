@@ -163,6 +163,13 @@ export interface CreatedEmployee {
   setPasswordUrl?: string // only when the email could not be sent: pass this link on yourself
 }
 
+// POST /api/v1/admin/employees/import
+export interface ImportedPeople {
+  created: number
+  /** people whose email could not be sent: pass each link on yourself */
+  emailFailed: Array<{ email: string, setPasswordUrl: string }>
+}
+
 // GET /api/v1/admin/audit
 export interface AuditLogEntry {
   id: number
@@ -228,6 +235,9 @@ export interface OrganizationItem {
   /** bytes the organization's screenshots take on the storage disk */
   storageBytes: number
   createdAt: string | null
+  /** only on the profile: people whose desktop app sent time in the last 7 days, and the latest upload */
+  activePeopleLast7Days?: number
+  lastActivityAt?: string | null
 }
 
 // GET/POST /api/v1/platform/organizations/{id}/admins

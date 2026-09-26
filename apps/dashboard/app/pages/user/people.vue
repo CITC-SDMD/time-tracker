@@ -8,6 +8,12 @@
         v-if="canAdd"
         #actions
       >
+        <FormButton
+          variant="secondary"
+          @click="importOpen = true"
+        >
+          Import from a file
+        </FormButton>
         <FormButton @click="openAdd">
           Add a person
         </FormButton>
@@ -294,6 +300,12 @@
       </form>
     </UiModal>
 
+    <AppImportPeopleDrawer
+      v-model="importOpen"
+      :roles="roles.filter(r => r.assignable)"
+      @imported="onImported"
+    />
+
     <UiConfirmDialog
       v-model="confirmOpen"
       :title="confirm.title"
@@ -310,7 +322,7 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { email as emailRule, helpers, maxLength, required } from '@vuelidate/validators'
-import type { CreatedEmployee, EmployeeListItem, RoleItem, UserStatus } from 'shared'
+import type { CreatedEmployee, EmployeeListItem, ImportedPeople, RoleItem, UserStatus } from 'shared'
 
 definePageMeta({
   layout: 'user',
@@ -414,6 +426,18 @@ function below(id: string): Set<string> {
 }
 
 const NO_MANAGER = 'none'
+
+// ---- import from a file ----------------------------------------------------------------------
+
+const importOpen = ref(false)
+
+async function onImported(result: ImportedPeople) {
+  const first = result.emailFailed[0]
+  notice.value = first
+    ? { variant: 'danger', text: `${result.created} added, but ${result.emailFailed.length} email(s) could not be sent (use Resend link for the others). Pass this link on to ${first.email} yourself:`, link: first.setPasswordUrl }
+    : { variant: 'success', text: `${result.created} ${result.created === 1 ? 'person was' : 'people were'} added. Each got an email with a link to choose a password.` }
+  await load()
+}
 
 // ---- add a person ----------------------------------------------------------------------------
 

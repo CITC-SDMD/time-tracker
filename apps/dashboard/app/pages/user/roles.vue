@@ -73,11 +73,10 @@
       </template>
     </UiTable>
 
-    <UiModal
+    <UiDrawer
       v-model="formOpen"
       :title="editing ? `${editing.isSystem ? 'Rename' : 'Edit'} ${editing.name}` : 'Make a role'"
       :persistent="saving"
-      wide
     >
       <form
         class="space-y-5"
@@ -140,7 +139,7 @@
           </FormButton>
         </div>
       </form>
-    </UiModal>
+    </UiDrawer>
 
     <UiConfirmDialog
       v-model="confirmOpen"
