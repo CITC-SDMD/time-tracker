@@ -235,3 +235,23 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         let _ = window.set_focus();
     }
 }
+
+#[cfg(test)]
+mod csp_tests {
+    /// The window only ever shows pages bundled with the app, so its content security policy is strict. It was `null`
+    /// once; this keeps it from quietly going back (docs/SECURITY_REVIEW.md).
+    #[test]
+    fn the_window_has_a_strict_content_security_policy() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = config["app"]["security"]["csp"].as_str().expect("tauri.conf.json must set app.security.csp");
+
+        for directive in ["default-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"] {
+            assert!(csp.contains(directive), "missing {directive}: {csp}");
+        }
+        assert!(!csp.contains("unsafe-eval"), "scripts must not be built from strings: {csp}");
+        assert!(!csp.contains("script-src 'self' 'unsafe-inline'"), "{csp}");
+        // the one address that is allowed is the app's own channel to its Rust side
+        let outside = csp.replace("http://ipc.localhost", "");
+        assert!(!outside.contains(" *") && !outside.contains("http:") && !outside.contains("https:"), "no remote content: {csp}");
+    }
+}

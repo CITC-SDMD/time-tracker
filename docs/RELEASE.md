@@ -110,7 +110,7 @@ Raising the version without the new app installed would show people the old text
 
 - **Server code only (no migration ran, or the new migration is harmless):** `git checkout <previous-commit>`, redo section 3 steps 3 to 5 (skip `migrate`), restart the queue and PHP-FPM.
 - **A migration ran and it must be undone:** put the site in maintenance (`php artisan down`), restore the backup taken in section 3 step 1 (`gunzip < backup.sql.gz | mysql -u tracker -p tracker_prod`), check out the previous commit, redo steps 3 to 5, then `php artisan up`. Anything recorded between the release and the rollback is lost with the restore, so do this early. Test a restore on a copy of the database before you ever need it.
-- **Desktop app:** hand out the previous installer over the new one. Do not lower `min_agent_version` below what the older app needs, and do not raise it while rolling back.
+- **Desktop app:** hand out the previous installer over the new one. Do not lower `min_agent_version` below what the older app needs, and do not raise it while rolling back. **Careful with versions from before the local encryption** (the one that adds `db/crypt.rs`): once a newer app has started on a PC, its database holds encrypted values that an older app cannot read (it would show and send them as noise). Before putting an older app on such a PC, check the newer one says "All data sent", then quit it and delete `%APPDATA%\\com.office.timetracker\\tracker.db*` (the person signs in again; nothing unsent is left to lose).
 
 ## 8. Release notes and tag
 
@@ -122,6 +122,7 @@ git tag -a v0.2.0 -m "Release 0.2.0"    # then, when asked: git push origin v0.2
 
 ## 9. Known gaps (not done, on purpose or not yet)
 
+- The desktop app encrypts its local data with a key in Windows Credential Manager (`db-key`). A new Windows profile or a wiped credential store on a PC means a fresh local database (whatever was not yet sent is lost; the server is told).
 - No automatic updates, no CI, no code signing (Phase 8 is out of scope; a certificate should be ordered early).
 - The upgrade-in-place of the desktop app is not verified yet (section 4 step 3).
 - The Windows raw input test needs an interactive desktop, so it cannot run unattended.

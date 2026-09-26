@@ -244,6 +244,8 @@ Check the settings before anyone signs in, and again after every change to `.env
 php artisan tracker:security-check
 ```
 
+Signing in to the desktop app lasts 7 days from its last use (`AGENT_TOKEN_DAYS=7` is the default; leave it out unless an office wants another number). Anyone in the dashboard can turn on two-factor sign-in with an authenticator app from their profile page. If the owner is ever locked out of the dashboard (phone and recovery codes lost), turn it off on the server: `php artisan tracker:reset-two-factor owner@yourcompany.com`.
+
 Write down the temporary password it prints and use it for the first dashboard login. Once mail is set up, "Forgot password?" on the login page lets you choose your own.
 
 ### 5. Build and deploy the dashboard

@@ -36,6 +36,9 @@ The tests behind these are automatic in the suite (`SecurityTest`, `TenantIsolat
 - [ ] As a person without the "view timeline" permission, open a colleague's timeline by its address: refused.
 - [ ] Deactivate a pilot person: their desktop app signs out at the next sync and their dashboard page stops working at once.
 - [ ] A screenshot's address opened in a private window, signed out, is refused (`401`).
+- [ ] Turn on two-factor sign-in for one pilot admin (profile page), sign out and in again: the code is asked for. Then reset it from another admin's view of that person and sign in with the password alone.
+- [ ] On a pilot PC, open the profile page and check "Desktop app sign-ins" lists that PC; sign it out and check the desktop app asks to log in again.
+- [ ] **On the first PC that had the previous desktop version installed**, install the new one over it: it starts, shows the same history, and `tracker.db` in `%APPDATA%com.office.timetracker` holds no readable window titles (open it in a text editor or search it for a title you know). Every screen of the app renders (sign in, notice, main, settings, screenshots).
 
 ## 4. Backup and restore (test 7.6)
 
