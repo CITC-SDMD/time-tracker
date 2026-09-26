@@ -19,6 +19,7 @@
         </div>
 
         <form
+          v-if="!challenge"
           class="mt-10 space-y-6"
           novalidate
           @submit.prevent="onSubmit"
@@ -60,6 +61,45 @@
             {{ loading ? 'Signing in…' : 'Sign in' }}
           </FormButton>
         </form>
+
+        <form
+          v-else
+          class="mt-10 space-y-6"
+          novalidate
+          @submit.prevent="onVerify"
+        >
+          <p class="text-sm/6 text-gray-600 dark:text-gray-300">
+            Enter the 6-digit code from your authenticator app. If you lost your phone, use one of your recovery codes.
+          </p>
+          <FormInput
+            v-model="codeForm.code"
+            label="Code"
+            name="code"
+            autocomplete="one-time-code"
+            :errors="codeV$.code.$errors"
+            @blur="codeV$.code.$touch()"
+          />
+
+          <FormError v-if="error">
+            {{ error }}
+          </FormError>
+
+          <FormButton
+            type="submit"
+            block
+            :loading="loading"
+          >
+            {{ loading ? 'Checking…' : 'Verify' }}
+          </FormButton>
+          <div class="flex justify-center text-sm/6">
+            <FormButton
+              variant="link"
+              @click="backToPassword"
+            >
+              Use a different account
+            </FormButton>
+          </div>
+        </form>
       </div>
     </div>
     <div class="relative hidden w-0 flex-1 lg:block">
@@ -78,7 +118,7 @@ import { email as emailRule, helpers, required } from '@vuelidate/validators'
 
 definePageMeta({ layout: false })
 
-const { login } = useAuth()
+const { login, verifyTwoFactor } = useAuth()
 const form = reactive({ email: '', password: '' })
 const rules = {
   email: {
@@ -91,6 +131,11 @@ const v$ = useVuelidate(rules, form)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
+// the second step, for a person with two-factor sign-in: the server answers a correct password with a challenge
+const challenge = ref<string | null>(null)
+const codeForm = reactive({ code: '' })
+const codeV$ = useVuelidate({ code: { required: helpers.withMessage('Enter the code from your app.', required) } }, codeForm, { $scope: false })
+
 async function onSubmit() {
   if (!(await v$.value.$validate()))
     return
@@ -98,6 +143,10 @@ async function onSubmit() {
   error.value = null
   try {
     const signedIn = await login(form.email.trim(), form.password)
+    if ('twoFactorRequired' in signedIn) {
+      challenge.value = signedIn.challenge
+      return
+    }
     await navigateTo(homeFor(signedIn))
   }
   catch (e) {
@@ -106,5 +155,33 @@ async function onSubmit() {
   finally {
     loading.value = false
   }
+}
+
+async function onVerify() {
+  if (!challenge.value || !(await codeV$.value.$validate()))
+    return
+  loading.value = true
+  error.value = null
+  try {
+    const signedIn = await verifyTwoFactor(challenge.value, codeForm.code.trim())
+    await navigateTo(homeFor(signedIn))
+  }
+  catch (e) {
+    error.value = messageOf(e, 'Could not verify the code. Check your connection and try again.')
+    // the sign-in ran out (five minutes) or was used: back to the password
+    if (statusOf(e) === 422 && (e as { data?: { error?: { code?: string } } }).data?.error?.code === 'INVALID_CHALLENGE')
+      challenge.value = null
+  }
+  finally {
+    loading.value = false
+  }
+}
+
+function backToPassword() {
+  challenge.value = null
+  codeForm.code = ''
+  codeV$.value.$reset()
+  error.value = null
+  form.password = ''
 }
 </script>

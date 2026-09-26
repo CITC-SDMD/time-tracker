@@ -20,6 +20,7 @@ Route::get('/health', function () {
 // Dashboard sign-in (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA cookie authentication.
 // Under /auth so a static-hosted dashboard page can own /login. /sanctum/csrf-cookie is registered by Sanctum itself.
 Route::post('/auth/login', [DashboardAuthController::class, 'login'])->middleware('throttle:login');
+Route::post('/auth/two-factor', [DashboardAuthController::class, 'twoFactor'])->middleware('throttle:20,1');
 Route::post('/auth/logout', [DashboardAuthController::class, 'logout']);
 Route::post('/auth/forgot-password', [PasswordResetController::class, 'forgot'])->middleware('throttle:5,1');
 Route::post('/auth/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:10,1');

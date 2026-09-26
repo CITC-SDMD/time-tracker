@@ -1,4 +1,4 @@
-import type { Me } from 'shared'
+import type { Me, TwoFactorChallenge } from 'shared'
 
 // Sanctum SPA authentication: a session cookie + CSRF token, not a bearer token
 // (docs/DEVELOPMENT_PLAN.md §9.2). Everyone with an account may sign in; what they then see follows the permissions
@@ -9,9 +9,18 @@ export function useAuth() {
 
   const isSuperadmin = computed(() => !!me.value?.isSuperadmin)
 
-  async function login(email: string, password: string) {
+  /** Signs in; a person with two-factor sign-in gets a challenge back instead (answer it with `verifyTwoFactor`). */
+  async function login(email: string, password: string): Promise<Me | TwoFactorChallenge> {
     await web('/sanctum/csrf-cookie')
-    const signedIn = await web<Me>('/auth/login', { method: 'POST', body: { email, password } })
+    const answer = await web<Me | TwoFactorChallenge>('/auth/login', { method: 'POST', body: { email, password } })
+    if ('twoFactorRequired' in answer)
+      return answer
+    me.value = answer
+    return answer
+  }
+
+  async function verifyTwoFactor(challenge: string, code: string) {
+    const signedIn = await web<Me>('/auth/two-factor', { method: 'POST', body: { challenge, code } })
     me.value = signedIn
     return signedIn
   }
@@ -36,5 +45,5 @@ export function useAuth() {
     }
   }
 
-  return { me, isSuperadmin, login, logout, restore }
+  return { me, isSuperadmin, login, verifyTwoFactor, logout, restore }
 }

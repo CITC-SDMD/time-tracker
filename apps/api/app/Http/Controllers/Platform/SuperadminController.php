@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Services\AccessService;
 use App\Services\AccountService;
+use App\Services\TwoFactorService;
 use App\Support\Permissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,7 @@ class SuperadminController extends Controller
     public function __construct(
         private AccessService $access,
         private AccountService $accounts,
+        private TwoFactorService $twoFactor,
     ) {}
 
     public function index(): JsonResponse
@@ -114,6 +116,29 @@ class SuperadminController extends Controller
             AuditLog::recordPlatform($caller, $data['status'] === 'inactive' ? 'employee.deactivated' : 'employee.reactivated', $target);
         }
         $target->save();
+
+        return response()->json($this->payload($target));
+    }
+
+    /** DELETE /platform/superadmins/{id}/two-factor: for a colleague who lost their phone (the owner is reset on the server) */
+    public function resetTwoFactor(Request $request, int $id): JsonResponse
+    {
+        $caller = $request->user();
+        $target = User::withoutGlobalScopes()->where('is_superadmin', true)->find($id);
+
+        if ($target === null) {
+            return response()->json(['error' => ['code' => 'NOT_FOUND', 'message' => 'Not found.']], 404);
+        }
+        if ($target->is_owner) {
+            return response()->json(['error' => ['code' => 'CANNOT_CHANGE_OWNER', 'message' => 'The owner account cannot be changed here. On the server: php artisan tracker:reset-two-factor.']], 403);
+        }
+        if ($target->id === $caller->id) {
+            return response()->json(['error' => ['code' => 'CANNOT_MODIFY_SELF', 'message' => 'Turn off your own two-factor sign-in from your profile.']], 400);
+        }
+
+        $this->twoFactor->disable($target);
+        $target->tokens()->where('name', 'not like', 'agent-%')->delete();
+        AuditLog::recordPlatform($caller, 'two_factor.reset', $target);
 
         return response()->json($this->payload($target));
     }

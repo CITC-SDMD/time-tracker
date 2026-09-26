@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\PermissionCatalogController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\ScreenshotController;
+use App\Http\Controllers\Api\TwoFactorController;
 use App\Http\Controllers\Platform\OrganizationAdminController;
 use App\Http\Controllers\Platform\OrganizationController;
 use App\Http\Controllers\Platform\PersonDetectionController;
@@ -73,6 +74,8 @@ Route::prefix('v1')->group(function () {
             ->whereNumber('id')->middleware('permission:people.update');
         Route::delete('/admin/employees/{id}/devices/{deviceId}', [DeviceController::class, 'signOutPerson'])
             ->whereNumber('id')->middleware(['permission:people.update', 'throttle:20,1']);
+        Route::delete('/admin/employees/{id}/two-factor', [TwoFactorController::class, 'reset'])
+            ->whereNumber('id')->middleware(['permission:people.update', 'throttle:20,1']);
         Route::delete('/admin/employees/{id}', [AdminEmployeeController::class, 'destroy'])
             ->whereNumber('id')->middleware('permission:people.update');
 
@@ -94,6 +97,11 @@ Route::prefix('v1')->group(function () {
         Route::put('/me/email', [MeController::class, 'changeEmail'])->middleware('throttle:5,1');
         Route::put('/me/password', [MeController::class, 'changePassword'])->middleware('throttle:5,1');
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
+        Route::get('/me/two-factor', [TwoFactorController::class, 'show']);
+        Route::post('/me/two-factor', [TwoFactorController::class, 'start'])->middleware('throttle:5,1');
+        Route::post('/me/two-factor/confirm', [TwoFactorController::class, 'confirm'])->middleware('throttle:10,1');
+        Route::post('/me/two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->middleware('throttle:5,1');
+        Route::delete('/me/two-factor', [TwoFactorController::class, 'disable'])->middleware('throttle:5,1');
         Route::get('/me/devices', [DeviceController::class, 'mine']);
         Route::delete('/me/devices/{deviceId}', [DeviceController::class, 'signOutMine'])->middleware('throttle:20,1');
 
@@ -134,6 +142,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/superadmins', [SuperadminController::class, 'index'])->middleware('platform:platform.staff.manage');
         Route::post('/superadmins', [SuperadminController::class, 'store'])->middleware('platform:platform.staff.manage');
         Route::patch('/superadmins/{id}', [SuperadminController::class, 'update'])->whereNumber('id')->middleware('platform:platform.staff.manage');
+        Route::delete('/superadmins/{id}/two-factor', [SuperadminController::class, 'resetTwoFactor'])->whereNumber('id')->middleware(['platform:platform.staff.manage', 'throttle:20,1']);
 
         Route::get('/audit', [PlatformAuditController::class, 'index'])->middleware('platform:platform.audit.view');
     });

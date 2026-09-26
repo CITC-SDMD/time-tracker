@@ -55,6 +55,8 @@ export interface Me {
   scope: Scope
   isSuperadmin: boolean
   isOwner: boolean
+  /** the dashboard sign-in asks for a code from an authenticator app */
+  twoFactorEnabled: boolean
   /** a superadmin's platform permissions (empty for everybody else) */
   platformPermissions: PlatformPermission[]
   /** null for a superadmin, who belongs to no organization */
@@ -115,6 +117,12 @@ export interface IntegrityReason {
   message: string
   /** how many minutes it covers, when it is about a stretch of time */
   minutes: number | null
+}
+
+/** The answer to a correct password when the person has two-factor sign-in: nothing is signed in until the code is sent (POST /auth/two-factor) */
+export interface TwoFactorChallenge {
+  twoFactorRequired: true
+  challenge: string
 }
 
 /** A PC a person is signed in on (GET /me/devices, GET /admin/employees/{id}/devices) */

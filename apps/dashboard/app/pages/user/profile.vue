@@ -181,6 +181,8 @@
       </div>
     </UiCard>
 
+    <AppTwoFactorCard class="mt-8" />
+
     <AppSignedInPcs
       v-if="!me?.isSuperadmin"
       class="mt-8"

@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Notifications\EmailChangedNotification;
 use App\Services\AccessService;
 use App\Services\AccountService;
+use App\Services\TwoFactorService;
 use App\Support\Permissions;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -174,6 +175,7 @@ class MeController extends Controller
             'consentRequired' => $consentRequired,
             // false when a superadmin switched the virtual machine detection off for this person: the agent then does not check
             'detectionEnabled' => (bool) $user->detection_enabled,
+            'twoFactorEnabled' => app(TwoFactorService::class)->enabled($user),
             // what the person may do: their role's permissions and how far they reach (self, team, organization)
             'role' => $user->role === null ? null : ['id' => (string) $user->role->id, 'name' => $user->role->name],
             'permissions' => $user->isSuperadmin() ? [] : $access->permissions($user),

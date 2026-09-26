@@ -151,6 +151,22 @@
         </FormError>
       </UiCard>
 
+      <UiCard
+        v-if="canSignOutPcs"
+        class="mb-6 space-y-3"
+      >
+        <h2 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+          Two-factor sign-in
+        </h2>
+        <p class="text-sm/6 text-gray-500 dark:text-gray-400">
+          If this person turned on a code from an authenticator app and lost their phone and recovery codes, reset it so they can sign in with their password again.
+        </p>
+        <AppResetTwoFactor
+          :url="`/admin/employees/${id}/two-factor`"
+          :name="person?.name ?? 'this person'"
+        />
+      </UiCard>
+
       <AppSignedInPcs
         v-if="canSignOutPcs"
         class="mb-6"

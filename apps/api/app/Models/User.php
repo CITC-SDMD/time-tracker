@@ -20,7 +20,7 @@ use Laravel\Sanctum\HasApiTokens;
 // the permission checks (AdminEmployeeController), never straight from request input. See
 // docs/DEVELOPMENT_PLAN.md §9 "never trust the client".
 #[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token'])]
+#[Hidden(['password', 'remember_token', 'two_factor_secret', 'two_factor_recovery_codes'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
@@ -94,6 +94,9 @@ class User extends Authenticatable
             'password' => 'hashed',
             'deactivated_at' => 'datetime',
             'invite_failed_at' => 'datetime',
+            'two_factor_secret' => 'encrypted',
+            'two_factor_confirmed_at' => 'datetime',
+            'two_factor_recovery_codes' => 'encrypted:array',
             'detection_enabled' => 'boolean',
             'consent_accepted_at' => 'datetime',
             'is_superadmin' => 'boolean',

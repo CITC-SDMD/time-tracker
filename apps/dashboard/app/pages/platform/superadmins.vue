@@ -76,6 +76,11 @@
           >
             {{ row.status === 'active' ? 'Deactivate' : 'Reactivate' }}
           </FormButton>
+          <AppResetTwoFactor
+            :url="`/platform/superadmins/${row.id}/two-factor`"
+            :name="String(row.name)"
+            variant="link"
+          />
         </div>
       </template>
     </UiTable>
