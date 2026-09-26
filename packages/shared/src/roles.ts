@@ -54,3 +54,15 @@ export function rolesOneTierBelow(role: Role): readonly Role[] {
       return []
   }
 }
+
+/** The roles a manager may give to someone: every role except `oic` and `superadmin`. */
+export const ASSIGNABLE_ROLES: readonly Role[] = [
+  'project_manager',
+  'team_leader',
+  ...INDIVIDUAL_CONTRIBUTOR_ROLES,
+]
+
+/** The roles a person holding `role` may report to (for an OIC: none). */
+export function rolesThatManage(role: Role): readonly Role[] {
+  return MANAGER_ROLES.filter(manager => rolesOneTierBelow(manager).includes(role))
+}

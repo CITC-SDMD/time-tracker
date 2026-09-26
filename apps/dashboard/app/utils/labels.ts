@@ -41,12 +41,14 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.reactivated': 'Reactivated an account',
   'employee.deleted': 'Deleted an account',
   'employee.moved': 'Moved a person to another manager',
+  'employee.role_changed': 'Changed a role',
   'employee.invite_resent': 'Sent a new set-password link',
   'settings.updated': 'Changed office settings',
   'timeline.viewed': 'Viewed a timeline',
   'screenshots.viewed': 'Viewed screenshots',
   'password.reset': 'Reset a password with an emailed link',
   'password.changed': 'Changed their password',
+  'profile.email_changed': 'Changed their email',
   'report.exported': 'Downloaded a report',
 }
 
@@ -73,6 +75,13 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
       return typeof d.role === 'string' ? (ROLE_LABEL[d.role as Role] ?? d.role) : ''
     case 'employee.moved':
       return `${d.from ?? 'no one'} → ${d.to ?? '?'}`
+    case 'employee.role_changed': {
+      const role = (value: unknown) => ROLE_LABEL[value as Role] ?? String(value ?? '?')
+      const moved = d.managerFrom !== d.managerTo ? `, now reports to ${d.managerTo ?? 'no one'}` : ''
+      return `${role(d.from)} → ${role(d.to)}${moved}`
+    }
+    case 'profile.email_changed':
+      return `${d.from ?? '?'} → ${d.to ?? '?'}`
     case 'employee.invite_resent':
       return d.emailSent === false ? 'The email could not be sent' : ''
     case 'timeline.viewed':

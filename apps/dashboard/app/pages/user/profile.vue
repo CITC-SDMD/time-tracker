@@ -2,7 +2,7 @@
   <div class="max-w-2xl">
     <UiPageHeader
       title="Your profile"
-      description="Your details and your password."
+      description="Your details, email address and password."
     />
 
     <UiCard
@@ -56,7 +56,7 @@
         </div>
       </dl>
       <p class="text-sm/6 text-gray-500 dark:text-gray-400">
-        Your email and role are set by your manager.
+        Your role is set by the people above you.
       </p>
       <FormError v-if="nameError">
         {{ nameError }}
@@ -71,6 +71,52 @@
           :disabled="!nameChanged"
         >
           {{ savingName ? 'Saving…' : 'Save name' }}
+        </FormButton>
+      </div>
+    </UiCard>
+
+    <UiCard
+      as="form"
+      class="mt-8 space-y-4"
+      novalidate
+      @submit.prevent="saveEmail"
+    >
+      <h2 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+        Email address
+      </h2>
+      <p class="text-sm/6 text-gray-500 dark:text-gray-400">
+        This is the address you sign in with, in the dashboard and in the desktop app. We tell your old address when it changes.
+      </p>
+      <FormInput
+        v-model="emailForm.email"
+        label="New email address"
+        type="email"
+        autocomplete="email"
+        :errors="emailV$.email.$errors"
+        @blur="emailV$.email.$touch()"
+      />
+      <FormInput
+        v-model="emailForm.currentPassword"
+        label="Your password"
+        type="password"
+        autocomplete="current-password"
+        hint="We ask for it so nobody else can change your email address."
+        :errors="emailV$.currentPassword.$errors"
+        @blur="emailV$.currentPassword.$touch()"
+      />
+      <FormError v-if="emailError">
+        {{ emailError }}
+      </FormError>
+      <UiAlert v-if="emailSaved">
+        Your email address was changed. Sign in with the new address from now on; the desktop app will ask for it next time it needs a login.
+      </UiAlert>
+      <div class="flex justify-end">
+        <FormButton
+          type="submit"
+          :loading="savingEmail"
+          :disabled="!emailChanged"
+        >
+          {{ savingEmail ? 'Saving…' : 'Change email' }}
         </FormButton>
       </div>
     </UiCard>
@@ -129,7 +175,7 @@
 
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
-import { helpers, maxLength, minLength, required, sameAs } from '@vuelidate/validators'
+import { email, helpers, maxLength, minLength, required, sameAs } from '@vuelidate/validators'
 import { ROLE_LABEL, type Me } from 'shared'
 
 definePageMeta({
@@ -137,7 +183,7 @@ definePageMeta({
 })
 
 // A signed-in person's own details and password (docs/DEVELOPMENT_PLAN.md §10: PATCH /me,
-// PUT /me/password). Available to every manager role; name is the only detail they can change.
+// PUT /me/email, PUT /me/password). Available to every manager role: they change their own name, email and password.
 const { api } = useApi()
 const { me } = useAuth()
 const { timezone } = useFormat()
@@ -173,6 +219,44 @@ async function saveName() {
   }
   finally {
     savingName.value = false
+  }
+}
+
+// ---- email -----------------------------------------------------------------------------------
+
+const emailForm = reactive({ email: '', currentPassword: '' })
+const emailV$ = useVuelidate({
+  email: {
+    required: helpers.withMessage('Enter your new email address.', required),
+    email: helpers.withMessage('Enter a valid email address.', email),
+    maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
+  },
+  currentPassword: { required: helpers.withMessage('Enter your current password.', required) },
+}, emailForm)
+
+const savingEmail = ref(false)
+const emailSaved = ref(false)
+const emailError = ref<string | null>(null)
+const emailChanged = computed(() => emailForm.email.trim() !== '' && emailForm.email.trim().toLowerCase() !== me.value?.email.toLowerCase())
+
+async function saveEmail() {
+  emailSaved.value = false
+  if (!(await emailV$.value.$validate()))
+    return
+  savingEmail.value = true
+  emailError.value = null
+  try {
+    me.value = await api<Me>('/me/email', { method: 'PUT', body: { email: emailForm.email.trim(), currentPassword: emailForm.currentPassword } })
+    emailForm.email = ''
+    emailForm.currentPassword = ''
+    emailV$.value.$reset()
+    emailSaved.value = true
+  }
+  catch (e) {
+    emailError.value = messageOf(e, 'Could not change your email address.')
+  }
+  finally {
+    savingEmail.value = false
   }
 }
 

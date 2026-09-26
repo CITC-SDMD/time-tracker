@@ -224,6 +224,82 @@ test.describe.serial('people as the OIC', () => {
     await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Move' })).toHaveCount(0)
   })
 
+  // ---- UPDATE: change a role -----------------------------------------------------------------
+
+  test('UPDATE role: the form offers the roles that can work and asks for a manager only when the level changes', async ({ page }) => {
+    await page.goto('/user/people')
+    await row(page, 'Sam Ong').getByRole('button', { name: 'Change role' }).click()
+    await expect(dialog(page).getByRole('heading', { name: 'Change the role of Sam Ong' })).toBeVisible()
+    const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
+    expect(roles).toEqual(['Choose a role', 'Project Manager', 'Team Leader', 'Lead Developer', 'Developer', 'Client Support', 'QA'])
+
+    // same level: no manager to choose
+    await dialog(page).getByLabel('New role').selectOption({ label: 'QA' })
+    await expect(dialog(page).getByLabel('Reports to')).toHaveCount(0)
+
+    // another level: the people who could take them, and a choice is required
+    await dialog(page).getByLabel('New role').selectOption({ label: 'Team Leader' })
+    const managers = await dialog(page).getByLabel('Reports to').locator('option').allTextContents()
+    expect(managers.sort()).toEqual(['Choose who they will report to', 'Paula Reyes (Project Manager)', 'Pedro Santos (Project Manager)', `${NEW_PM.name} (Project Manager)`].sort())
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(dialog(page).getByText('Choose who they will report to.')).toBeVisible()
+    await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+    await expect(row(page, 'Sam Ong')).toContainText('System Analyst')
+  })
+
+  test('UPDATE role: a change within the same level keeps the manager, and is put back', async ({ page }) => {
+    await page.goto('/user/people')
+    await row(page, 'Sam Ong').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'QA' })
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(page.getByText('Sam Ong is now QA.')).toBeVisible()
+    await expect(row(page, 'Sam Ong')).toContainText('QA')
+    await expect(row(page, 'Sam Ong')).toContainText('Tess Lim')
+
+    await row(page, 'Sam Ong').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'System Analyst' })
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(row(page, 'Sam Ong')).toContainText('System Analyst')
+  })
+
+  test('UPDATE role: a developer is promoted to Team Leader under a Project Manager, then demoted back', async ({ page }) => {
+    await page.goto('/user/people')
+    await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'Team Leader' })
+    await dialog(page).getByLabel('Reports to').selectOption({ label: 'Pedro Santos (Project Manager)' })
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(page.getByText('Dana Uy is now Team Leader.')).toBeVisible()
+    await expect(row(page, 'Dana Uy')).toContainText('Team Leader')
+    await expect(row(page, 'Dana Uy')).toContainText('Pedro Santos')
+
+    // and back to Developer under Tina Cruz (Team Leaders only)
+    await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'Developer' })
+    const teamLeaders = await dialog(page).getByLabel('Reports to').locator('option').allTextContents()
+    expect(teamLeaders.every(o => o === 'Choose who they will report to' || o.endsWith('(Team Leader)'))).toBe(true)
+    await dialog(page).getByLabel('Reports to').selectOption({ label: 'Tina Cruz (Team Leader)' })
+    await dialog(page).getByRole('button', { name: 'Change role', exact: true }).click()
+    await expect(row(page, 'Dana Uy')).toContainText('Developer')
+    await expect(row(page, 'Dana Uy')).toContainText('Tina Cruz')
+  })
+
+  test('UPDATE role: a Team Leader with a team cannot become a Project Manager until the team has moved', async ({ page }) => {
+    await page.goto('/user/people')
+    await row(page, 'Tina Cruz').getByRole('button', { name: 'Change role' }).click()
+    await dialog(page).getByLabel('New role').selectOption({ label: 'Project Manager' })
+    await dialog(page).getByLabel('Reports to').selectOption({ label: 'OIC (OIC)' })
+    await expect(dialog(page).getByText('Tina Cruz has people reporting to them who could not report to a Project Manager. Move those people first.')).toBeVisible()
+    await expect(dialog(page).getByRole('button', { name: 'Change role', exact: true })).toBeDisabled()
+    await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+    await expect(row(page, 'Tina Cruz')).toContainText('Team Leader')
+  })
+
+  test('UPDATE role: nobody gets a Change role button on themselves or on an OIC', async ({ page }) => {
+    await page.goto('/user/people')
+    await expect(row(page, 'OIC').getByRole('button', { name: 'Change role' })).toHaveCount(0)
+    await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Change role' })).toHaveCount(1)
+  })
+
   // ---- UPDATE: deactivate / reactivate -------------------------------------------------------
 
   test('UPDATE: Cancel on the deactivate dialog changes nothing', async ({ page }) => {
@@ -317,8 +393,11 @@ test.describe.serial('people as the OIC', () => {
 
   test('the audit log recorded every change made here', async ({ page }) => {
     await page.goto('/user/audit')
-    for (const label of ['Added an account', 'Sent a new set-password link', 'Moved a person to another manager', 'Deactivated an account', 'Reactivated an account', 'Deleted an account'])
+    for (const label of ['Added an account', 'Sent a new set-password link', 'Moved a person to another manager', 'Changed a role', 'Deactivated an account', 'Reactivated an account', 'Deleted an account'])
       await expect(page.locator('td', { hasText: label }).first()).toBeVisible()
+    // the role change says what became what, and who the person now reports to
+    await expect(page.getByRole('row').filter({ hasText: 'Changed a role' }).filter({ hasText: 'Developer → Team Leader, now reports to Pedro Santos' })).toBeVisible()
+    await expect(page.getByRole('row').filter({ hasText: 'Changed a role' }).filter({ hasText: 'System Analyst → QA' })).toBeVisible()
   })
 })
 
@@ -358,6 +437,16 @@ test.describe('people as a project manager and a team leader', () => {
       await dialog(page).getByRole('button', { name: 'Cancel' }).click()
       await expect(row(page, 'Pedro Santos')).toHaveCount(0)
     })
+
+    test('can change a team member to a Team Leader (under themselves) but cannot create a second Project Manager', async ({ page }) => {
+      await page.goto('/user/people')
+      await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
+      const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
+      // no Project Manager: the only person who could manage one, the OIC, is out of their sight
+      expect(roles).toEqual(['Choose a role', 'Team Leader', 'Lead Developer', 'Client Support', 'QA', 'System Analyst'])
+      await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+      await expect(row(page, 'Paula Reyes').getByRole('button', { name: 'Change role' })).toHaveCount(0)
+    })
   })
 
   test.describe('team leader', () => {
@@ -370,6 +459,16 @@ test.describe('people as a project manager and a team leader', () => {
       expect(roles).toEqual(expect.arrayContaining(['Lead Developer', 'Developer', 'Client Support', 'QA', 'System Analyst']))
       expect(roles).not.toContain('Team Leader')
       await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+    })
+
+    test('can change a team member between the contributor roles only, and not their own role', async ({ page }) => {
+      await page.goto('/user/people')
+      await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
+      const roles = await dialog(page).getByLabel('New role').locator('option').allTextContents()
+      // no Team Leader or Project Manager: there is nobody they could see to report to
+      expect(roles).toEqual(['Choose a role', 'Lead Developer', 'Client Support', 'QA', 'System Analyst'])
+      await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+      await expect(row(page, 'Tina Cruz').getByRole('button', { name: 'Change role' })).toHaveCount(0)
     })
 
     test('the API refuses to add a Project Manager or to touch someone outside the team', async ({ page }) => {

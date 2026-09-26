@@ -41,10 +41,17 @@ test.describe.serial('audit log as the OIC', () => {
   test('READ: Load older entries appends the next page and then disappears', async ({ page }) => {
     await page.goto('/user/audit')
     await expect(page.locator('tbody tr')).toHaveCount(50)
-    await page.getByRole('button', { name: 'Load older entries' }).click()
+    const more = page.getByRole('button', { name: 'Load older entries' })
+    await more.click()
     await expect(page.locator('tbody tr').nth(50)).toBeVisible()
+    // the suite writes many entries, so keep loading until the button goes away
+    for (let i = 0; i < 10 && (await more.count()) > 0; i++) {
+      const before = await page.locator('tbody tr').count()
+      await more.click()
+      await expect.poll(() => page.locator('tbody tr').count()).toBeGreaterThan(before)
+    }
     expect(await page.locator('tbody tr').count()).toBeGreaterThan(50)
-    await expect(page.getByRole('button', { name: 'Load older entries' })).toHaveCount(0)
+    await expect(more).toHaveCount(0)
   })
 
   test('every action the office has written has a plain-words label', async ({ page }) => {

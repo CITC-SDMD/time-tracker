@@ -1,9 +1,11 @@
 import { ACCOUNTS, PASSWORD, apiGet, expect, loginAs, test } from '../fixtures'
 import { artisan } from '../helpers/artisan'
+import { waitForMail } from '../helpers/mail'
 
 // Tess Lim (a team leader nobody else's test signs in as) is the account whose profile is edited.
 const WHO = ACCOUNTS.tl3
 const NEW_PASSWORD = 'tess-new-password-7'
+const NEW_EMAIL = 'tess.new@test.com'
 
 test.beforeEach(() => artisan('cache:clear'))
 
@@ -17,7 +19,7 @@ test.describe.serial('profile', () => {
     await expect(page.getByText('Team Leader', { exact: true })).toBeVisible()
     await expect(page.getByText('Pedro Santos', { exact: true })).toBeVisible()
     await expect(page.getByText('Asia/Manila')).toBeVisible()
-    await expect(page.getByText('Your email and role are set by your manager.')).toBeVisible()
+    await expect(page.getByText('Your role is set by the people above you.')).toBeVisible()
   })
 
   test('the sidebar and the menu both lead to the profile', async ({ page }) => {
@@ -73,6 +75,92 @@ test.describe.serial('profile', () => {
     await page.getByLabel('Full name').fill('Tess Lim')
     await page.getByRole('button', { name: 'Save name' }).click()
     await expect(page.getByText('Your name was saved.')).toBeVisible()
+  })
+
+  test('UPDATE email: Change email is off until something is typed, and the address and password are checked', async ({ page }) => {
+    await loginAs(page, WHO)
+    await page.goto('/user/profile')
+    await expect(page.getByRole('heading', { name: 'Email address' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Change email' })).toBeDisabled()
+    await page.getByLabel('New email address').fill('not-an-email')
+    await page.getByLabel('New email address').blur()
+    await expect(page.getByText('Enter a valid email address.')).toBeVisible()
+    await page.getByLabel('New email address').fill(NEW_EMAIL)
+    await page.getByRole('button', { name: 'Change email' }).click()
+    await expect(page.getByText('Enter your current password.')).toBeVisible()
+    // typing the address they already have does not enable it (case does not matter)
+    await page.getByLabel('New email address').fill(WHO.toUpperCase())
+    await expect(page.getByRole('button', { name: 'Change email' })).toBeDisabled()
+  })
+
+  test('UPDATE email: a wrong password is refused and nothing changes', async ({ page, allow }) => {
+    allow(/PUT \/api\/v1\/me\/email 422/)
+    await loginAs(page, WHO)
+    await page.goto('/user/profile')
+    await page.getByLabel('New email address').fill(NEW_EMAIL)
+    await page.getByLabel('Your password').fill('not the password')
+    await page.getByRole('button', { name: 'Change email' }).click()
+    await expect(page.getByText('Your current password is not right.')).toBeVisible()
+    await expect(page.getByText('Your email address was changed.')).toHaveCount(0)
+    expect((await (await apiGet(page, '/me')).json()).email).toBe(WHO)
+  })
+
+  test('UPDATE email: an address someone else already uses is refused', async ({ page, allow }) => {
+    allow(/PUT \/api\/v1\/me\/email 409/)
+    await loginAs(page, WHO)
+    await page.goto('/user/profile')
+    await page.getByLabel('New email address').fill(ACCOUNTS.oic)
+    await page.getByLabel('Your password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Change email' }).click()
+    await expect(page.getByText('A user with this email already exists.')).toBeVisible()
+    expect((await (await apiGet(page, '/me')).json()).email).toBe(WHO)
+  })
+
+  test('UPDATE email: a valid change is shown, the old address is told, and only the new address signs in', async ({ page, browser, allow }) => {
+    allow(/POST \/auth\/login 401/)
+    await loginAs(page, WHO)
+    await page.goto('/user/profile')
+    await page.getByLabel('New email address').fill(NEW_EMAIL)
+    await page.getByLabel('Your password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Change email' }).click()
+    await expect(page.getByText('Your email address was changed.')).toBeVisible()
+    await expect(page.getByText(NEW_EMAIL, { exact: true })).toBeVisible()
+    await expect(page.getByLabel('New email address')).toHaveValue('')
+    await expect(page.getByLabel('Your password')).toHaveValue('')
+    await expect(page.getByRole('button', { name: 'Change email' })).toBeDisabled()
+
+    // the notice went to the OLD address and names the new one
+    const log = await waitForMail([NEW_EMAIL])
+    expect(log).toMatch(new RegExp(`To:[^\\n]*${WHO.replace('.', '\\.')}`))
+
+    const other = await browser.newContext({ baseURL: 'http://localhost:3101', storageState: { cookies: [], origins: [] } })
+    const fresh = await other.newPage()
+    await fresh.goto('/')
+    await fresh.getByLabel('Email address').fill(WHO)
+    await fresh.getByLabel('Password').fill(PASSWORD)
+    await fresh.getByRole('button', { name: 'Sign in' }).click()
+    await expect(fresh.getByText(/incorrect email or password/i)).toBeVisible()
+    await fresh.getByLabel('Email address').fill(NEW_EMAIL)
+    await fresh.getByRole('button', { name: 'Sign in' }).click()
+    await expect(fresh).toHaveURL(/\/user$/)
+    await other.close()
+  })
+
+  test('UPDATE email: it is put back, and the OIC\'s audit log shows both changes', async ({ page, browser }) => {
+    await loginAs(page, NEW_EMAIL)
+    await page.goto('/user/profile')
+    await page.getByLabel('New email address').fill(WHO)
+    await page.getByLabel('Your password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Change email' }).click()
+    await expect(page.getByText('Your email address was changed.')).toBeVisible()
+    expect((await (await apiGet(page, '/me')).json()).email).toBe(WHO)
+
+    const oic = await browser.newContext({ baseURL: 'http://localhost:3101', storageState: '.auth/oic.json' })
+    const audit = await oic.newPage()
+    await audit.goto('/user/audit')
+    await expect(audit.getByRole('row').filter({ hasText: 'Changed their email' }).filter({ hasText: `${WHO} → ${NEW_EMAIL}` })).toBeVisible()
+    await expect(audit.getByRole('row').filter({ hasText: 'Changed their email' }).filter({ hasText: `${NEW_EMAIL} → ${WHO}` })).toBeVisible()
+    await oic.close()
   })
 
   test('UPDATE password: every field is required and the rules are explained', async ({ page }) => {

@@ -96,6 +96,13 @@
             Move
           </FormButton>
           <FormButton
+            v-if="canChangeRole(row as EmployeeListItem)"
+            variant="link"
+            @click="openRole(row as EmployeeListItem)"
+          >
+            Change role
+          </FormButton>
+          <FormButton
             v-if="row.accountStatus === 'active'"
             variant="link"
             :loading="busyId === row.id"
@@ -218,6 +225,67 @@
       </form>
     </UiModal>
 
+    <UiModal
+      v-model="roleOpen"
+      :title="`Change the role of ${changing?.name ?? ''}`"
+      :persistent="roleBusy"
+    >
+      <form
+        class="space-y-4"
+        novalidate
+        @submit.prevent="submitRole"
+      >
+        <p class="text-sm/6 text-gray-500 dark:text-gray-400">
+          {{ changing?.name }} is {{ changing ? ROLE_LABEL[changing.role] : '' }}. Their history stays with them.
+        </p>
+        <FormSelect
+          v-model="roleForm.role"
+          label="New role"
+          :options="roleOptionsFor"
+          placeholder="Choose a role"
+          :errors="roleV$.role.$errors"
+          @blur="roleV$.role.$touch()"
+        />
+        <FormSelect
+          v-if="roleNeedsManager"
+          v-model="roleForm.managerId"
+          label="Reports to"
+          :options="roleManagerOptions"
+          placeholder="Choose who they will report to"
+          :errors="roleV$.managerId.$errors"
+          @blur="roleV$.managerId.$touch()"
+        />
+        <p
+          v-if="roleNeedsManager"
+          class="text-sm/6 text-gray-500 dark:text-gray-400"
+        >
+          A change of level also changes who they report to.
+        </p>
+        <FormError v-if="roleBlocked">
+          {{ roleBlocked }}
+        </FormError>
+        <FormError v-if="roleError">
+          {{ roleError }}
+        </FormError>
+        <div class="flex justify-end gap-3 pt-2">
+          <FormButton
+            variant="secondary"
+            :disabled="roleBusy"
+            @click="roleOpen = false"
+          >
+            Cancel
+          </FormButton>
+          <FormButton
+            type="submit"
+            :loading="roleBusy"
+            :disabled="!!roleBlocked"
+          >
+            Change role
+          </FormButton>
+        </div>
+      </form>
+    </UiModal>
+
     <UiConfirmDialog
       v-model="confirmOpen"
       :title="confirm.title"
@@ -233,14 +301,14 @@
 
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
-import { email as emailRule, helpers, maxLength, required } from '@vuelidate/validators'
-import { ROLE_LABEL, rolesOneTierBelow, type CreatedEmployee, type EmployeeListItem, type Role, type UserStatus } from 'shared'
+import { email as emailRule, helpers, maxLength, required, requiredIf } from '@vuelidate/validators'
+import { ASSIGNABLE_ROLES, ROLE_LABEL, rolesOneTierBelow, type CreatedEmployee, type EmployeeListItem, type Role, type UserStatus } from 'shared'
 
 definePageMeta({
   layout: 'user',
 })
 
-// Add, move, deactivate and delete the accounts the signed-in person manages (docs/DEVELOPMENT_PLAN.md
+// Add, move, change the role of, deactivate and delete the accounts the signed-in person manages (docs/DEVELOPMENT_PLAN.md
 // §9.1): an OIC sees the whole office, everyone else only their own branch. The API enforces every
 // rule again; this page only offers what the person is allowed to do.
 const { api } = useApi()
@@ -429,6 +497,101 @@ async function submitMove() {
   }
   finally {
     moveBusy.value = false
+  }
+}
+
+// ---- change role ------------------------------------------------------------------------------
+
+// Only people above someone can do this (the list only holds the caller's own branch). Moving to a role
+// in the same tier keeps the manager; another tier needs a new manager in the same step.
+const roleOpen = ref(false)
+const roleBusy = ref(false)
+const roleError = ref<string | null>(null)
+const changing = ref<EmployeeListItem | null>(null)
+const roleForm = reactive({ role: '', managerId: '' })
+
+// can the person's current manager hold someone in `role`?
+function currentManagerFits(person: EmployeeListItem, role: Role): boolean {
+  const manager = people.value.find(p => p.id === person.managerId)
+  return !!manager && rolesOneTierBelow(manager.role).includes(role)
+}
+
+// active people who could manage someone in `role`
+function managersForRole(person: EmployeeListItem, role: Role): EmployeeListItem[] {
+  return people.value.filter(p =>
+    p.id !== person.id
+    && p.accountStatus === 'active'
+    && rolesOneTierBelow(p.role).includes(role),
+  )
+}
+
+// the roles that can work: same level, or another level with someone available to report to
+function roleChoices(person: EmployeeListItem): Role[] {
+  return ASSIGNABLE_ROLES.filter(role =>
+    role !== person.role && (currentManagerFits(person, role) || managersForRole(person, role).length > 0),
+  )
+}
+
+function canChangeRole(person: EmployeeListItem): boolean {
+  return person.id !== me.value?.id && person.role !== 'oic' && roleChoices(person).length > 0
+}
+
+const roleOptionsFor = computed(() => changing.value
+  ? roleChoices(changing.value).map(role => ({ value: role, label: ROLE_LABEL[role] }))
+  : [])
+
+const roleNeedsManager = computed(() =>
+  !!changing.value && roleForm.role !== '' && !currentManagerFits(changing.value, roleForm.role as Role))
+
+const roleManagerOptions = computed(() => changing.value && roleForm.role
+  ? managersForRole(changing.value, roleForm.role as Role).map(m => ({ value: m.id, label: `${m.name} (${ROLE_LABEL[m.role]})` }))
+  : [])
+
+// the people reporting to them must still fit the new role (the API checks this too)
+const roleBlocked = computed(() => {
+  const person = changing.value
+  if (!person || !roleForm.role)
+    return null
+  const fits = rolesOneTierBelow(roleForm.role as Role)
+  const team = people.value.filter(p => p.managerId === person.id)
+  return team.some(p => !fits.includes(p.role))
+    ? `${person.name} has people reporting to them who could not report to a ${ROLE_LABEL[roleForm.role as Role]}. Move those people first.`
+    : null
+})
+
+const roleV$ = useVuelidate({
+  role: { required: helpers.withMessage('Choose the new role.', required) },
+  managerId: { required: helpers.withMessage('Choose who they will report to.', requiredIf(roleNeedsManager)) },
+}, roleForm)
+
+function openRole(person: EmployeeListItem) {
+  changing.value = person
+  roleForm.role = ''
+  roleForm.managerId = ''
+  roleError.value = null
+  roleV$.value.$reset()
+  roleOpen.value = true
+}
+
+async function submitRole() {
+  if (!changing.value || roleBlocked.value || !(await roleV$.value.$validate()))
+    return
+  roleBusy.value = true
+  roleError.value = null
+  try {
+    await api(`/admin/employees/${changing.value.id}`, {
+      method: 'PATCH',
+      body: { role: roleForm.role, ...(roleNeedsManager.value ? { managerId: Number(roleForm.managerId) } : {}) },
+    })
+    notice.value = { variant: 'success', text: `${changing.value.name} is now ${ROLE_LABEL[roleForm.role as Role]}.` }
+    roleOpen.value = false
+    await load()
+  }
+  catch (e) {
+    roleError.value = messageOf(e, 'Could not change this role.')
+  }
+  finally {
+    roleBusy.value = false
   }
 }
 
