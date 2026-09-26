@@ -44,6 +44,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.invite_resent': 'Sent a new set-password link',
   'settings.updated': 'Changed office settings',
   'timeline.viewed': 'Viewed a timeline',
+  'screenshots.viewed': 'Viewed screenshots',
   'password.reset': 'Reset a password with an emailed link',
   'password.changed': 'Changed their password',
   'report.exported': 'Downloaded a report',
@@ -59,6 +60,8 @@ const SETTING_LABEL: Record<string, string> = {
   windowTitleMode: 'window titles',
   minAgentVersion: 'minimum app version',
   consentVersion: 'consent version',
+  screenshotIntervalMinutes: 'screenshot interval (minutes)',
+  screenshotRandom: 'screenshots at a random moment',
 }
 
 /** The part of an audit entry after the action, in words ("Pat A → Pam B", "idle limit → 600"). */
@@ -73,6 +76,7 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
     case 'employee.invite_resent':
       return d.emailSent === false ? 'The email could not be sent' : ''
     case 'timeline.viewed':
+    case 'screenshots.viewed':
       return typeof d.day === 'string' ? d.day : ''
     case 'settings.updated':
       return Object.entries(d).map(([key, value]) => `${SETTING_LABEL[key] ?? key} → ${value}`).join(', ')

@@ -16,6 +16,25 @@ export interface OfficeSettings {
   windowTitleMode: 'full' | 'app_only'
   minAgentVersion: string
   consentVersion: number
+  /** minutes between screenshots taken by the desktop apps: 0 = off, otherwise 5, 10, 15 or 30 */
+  screenshotIntervalMinutes: number
+  /** true = one shot at a random moment inside each block instead of on a fixed rhythm */
+  screenshotRandom: boolean
+}
+
+// GET / PUT /api/v1/admin/settings (OIC only): the office settings and the space screenshots take.
+export interface AdminOfficeSettings extends OfficeSettings {
+  /** bytes used by the stored screenshots on the storage disk */
+  screenshotStorageBytes: number
+}
+
+// GET /api/v1/employees/{id}/screenshots?day=YYYY-MM-DD, oldest first. The pictures themselves are
+// /api/v1/screenshots/{id}/thumb and /image (same-origin, authorised by the session cookie).
+export interface ScreenshotItem {
+  id: string
+  takenAt: string
+  width: number
+  height: number
 }
 
 // GET /api/v1/me
@@ -68,7 +87,7 @@ export interface AgentSyncResponse {
     stopReason: 'STARTED_ON_OTHER_PC' | null
     signOut: boolean
   }
-  settings: Pick<OfficeSettings, 'idleThresholdSeconds' | 'windowTitleMode'>
+  settings: Pick<OfficeSettings, 'idleThresholdSeconds' | 'windowTitleMode' | 'screenshotIntervalMinutes' | 'screenshotRandom'>
 }
 
 // GET /api/v1/employees

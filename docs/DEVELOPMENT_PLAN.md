@@ -435,7 +435,23 @@ CREATE TABLE office_settings (                          -- single row, id = 1
   idle_threshold_seconds   INT NOT NULL DEFAULT 300,
   window_title_mode        ENUM('FULL','APP_ONLY') NOT NULL DEFAULT 'FULL',
   min_agent_version        VARCHAR(32) NOT NULL,
-  consent_version          INT NOT NULL DEFAULT 1
+  consent_version          INT NOT NULL DEFAULT 1,
+  screenshot_interval_minutes TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- Phase 10: 0 = off, else 5, 10, 15 or 30
+  screenshot_random        BOOLEAN NOT NULL DEFAULT FALSE          -- one shot at a random moment inside each block
+);
+
+-- Phase 10: one row per screenshot. The picture and its 320 px thumbnail are files on the private
+-- `screenshots` disk (S3 in production, a local folder in development), listed in Spatie Media Library's
+-- `media` table (model_type/model_id = App\Models\Screenshot / screenshots.id).
+CREATE TABLE screenshots (
+  id          CHAR(36) PRIMARY KEY,                       -- uuid v7 made by the desktop app (idempotency)
+  user_id     BIGINT UNSIGNED NOT NULL REFERENCES users(id) ON DELETE RESTRICT,  -- an account with screenshots is never deleted
+  device_id   CHAR(36) NULL,
+  taken_at    TIMESTAMP NOT NULL,                         -- UTC
+  width       SMALLINT UNSIGNED NOT NULL,
+  height      SMALLINT UNSIGNED NOT NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX (user_id, taken_at)
 );
 
 CREATE TABLE audit_logs (
@@ -527,7 +543,10 @@ Base URL: `https://<your-domain>/api/v1`. All responses are JSON. Errors look li
 | `PATCH /api/v1/admin/employees/{id}` | a manager whose hierarchy includes `{id}` | Change `name`, `status` (deactivate / reactivate) or `managerId` (**move** to another manager). The new manager must be someone the caller can see, be active, and hold the role exactly one tier above the person's role (so the tree keeps its shape and cannot loop); an OIC is never moved; nothing is applied when the move is refused. Audited as `employee.moved` | `AdminEmployeeController@update` |
 | `POST /api/v1/admin/employees/{id}/resend-invite` | a manager whose hierarchy includes `{id}` | Email a fresh 3-day set-password link to an active account (returns the link instead when the mail cannot be sent). Audited as `employee.invite_resent`; throttled 10/min | `AdminEmployeeController@resendInvite` |
 | `GET /api/v1/reports/daily`, `/reports/apps`, `/reports/team` `?from=&to=&uid=&format=json|csv` | manager (own hierarchy) | Phase 11 reports from `daily_summaries`: one row per person per day / active time per app / totals per person. Max 92 days; `uid` outside the hierarchy = 403; CSV has `HH:MM` and seconds, a UTF-8 BOM, and neutralises cells starting with `= + - @`; a CSV download is audited as `report.exported` | `ReportController` |
-| `GET /api/v1/admin/settings` / `PUT` | OIC only | Read / change office settings | `AdminSettingsController` |
+| `POST /api/v1/agent/screenshots` | logged in (agent) | Phase 10. Multipart `id` (uuid), `takenAt`, `deviceId`, `width`, `height`, `image` (one JPEG, at most 1.5 MB and 3840 px, checked by content). `201 stored`; `200 duplicate` for a repeated id; `409 SCREENSHOTS_DISABLED` when the office has them off (the app then drops its copy); `409 CONFLICT` for another person's id; `422` for a bad file or time; `503 STORAGE_UNAVAILABLE` when the storage server cannot be reached (nothing is kept; the app retries). `throttle:60,1` | `ScreenshotController@store` |
+| `GET /api/v1/employees/{id}/screenshots?day=YYYY-MM-DD` | self, or a manager whose hierarchy includes `{id}` | The office-timezone day's screenshots, oldest first: `[{ id, takenAt, width, height }]`. Looking at someone else's day is audited (`screenshots.viewed`, once per viewer, person and day within 30 minutes) | `ScreenshotController@index` |
+| `GET /api/v1/screenshots/{id}/thumb` and `/image` | self, or a manager who can see the owner | The JPEG, streamed from the storage disk after the hierarchy check (`Cache-Control: private, max-age=3600`). `401` signed out, `403` outside the hierarchy, `404` unknown. If the thumbnail is not made yet, the full picture is sent. No path, bucket or link ever appears in an answer | `ScreenshotController@show` |
+| `GET /api/v1/admin/settings` / `PUT` | OIC only | Read / change office settings, including `screenshotIntervalMinutes` (0, 5, 10, 15, 30), `screenshotRandom` and, read-only, `screenshotStorageBytes`. Turning screenshots on (from 0) without raising `consentVersion` in the same request is `422 SCREENSHOTS_NEED_CONSENT` | `AdminSettingsController` |
 | `GET /api/v1/admin/audit?cursor=&action=&q=&from=&to=` | OIC only | Audit log, newest first, 50 per page; optional filters: exact `action`, `q` (name of who did it or who it was done to), `from`/`to` (office-timezone days) | `AdminAuditController@index` |
 
 **Why one `/agent/sync` endpoint instead of separate "sessions" and "batch" endpoints:** the app sends one request every 2 minutes carrying both its live status and any new sessions. One request instead of two halves the traffic and the number of DB round-trips. A single session is just a batch of one.
@@ -1571,6 +1590,12 @@ The owner decided website tracking is **not needed** (2026-09-25). Nothing is bu
 2. Dashboard: settings section, screenshot gallery and viewer on the person page.
 3. Agent: capture loop, local queue, upload after sync, consent and "what we track" text, "My screenshots" page.
 4. Playwright tests, live tests with a real PC, results written here.
+
+**As built**
+- **Server:** Spatie Media Library on the private `screenshots` disk (`SCREENSHOT_DISK=local` while developing, `s3` in production, see `docs/VPS_S3_STORAGE_PLAN.pdf` and `docs/SETUP.md`); `screenshots` table and two `office_settings` columns; upload, list and picture endpoints (§10); the thumbnail is a media conversion (a queued job in production).
+- **Dashboard:** Screenshots section in the office settings (interval, random moment, space used; turning them on raises the consent version for the OIC) and a gallery with a viewer on the person page.
+- **Desktop app:** `src/screenshot/` (schedule, capture with `xcap`, local queue in SQLite migration 003, upload after each look every 15 seconds), the updated "What this app tracks" text, a "My screenshots" page and "Last screenshot" on the Today screen.
+- **Spike (task 0), on the development PC:** main screen captured at 1280x800 in a median of 306 ms (maximum 379 ms), about 81 KB a picture. One shot at most every 5 minutes, so about 0.1% CPU.
 
 **Tests (outline)**
 - A shot appears within one interval; none while paused, stopped or locked; an idle shot is taken.

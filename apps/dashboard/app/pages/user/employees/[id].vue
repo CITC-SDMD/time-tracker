@@ -109,6 +109,35 @@
           />
         </section>
 
+        <template v-if="screenshotsOn || screenshots.length || screenshotsError">
+          <h2 class="mb-3 mt-10 text-base/7 font-semibold text-gray-900 dark:text-white">
+            Screenshots
+          </h2>
+          <UiAlert
+            v-if="screenshotsError"
+            variant="danger"
+          >
+            {{ screenshotsError }}
+          </UiAlert>
+          <UiEmptyState
+            v-else-if="screenshots.length === 0"
+            title="No screenshots on this day"
+            description="None were taken, or the desktop app has not sent them yet."
+          />
+          <template v-else>
+            <UiScreenshotGrid
+              :items="screenshots"
+              :name="person.name"
+              @open="viewing = $event"
+            />
+            <UiImageViewer
+              v-model="viewing"
+              :items="screenshots"
+              :name="person.name"
+            />
+          </template>
+        </template>
+
         <UiEmptyState
           v-if="!summary && segments.length === 0"
           title="No tracked time on this day"
@@ -205,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ROLE_LABEL, type DailySummary, type EmployeeListItem, type TimelineResponse, type TimelineSegment } from 'shared'
+import { ROLE_LABEL, type DailySummary, type EmployeeListItem, type ScreenshotItem, type TimelineResponse, type TimelineSegment } from 'shared'
 
 definePageMeta({
   layout: 'user',
@@ -216,6 +245,7 @@ definePageMeta({
 // API says 403 otherwise, and this page then shows nothing but that.
 const route = useRoute()
 const { api } = useApi()
+const { me } = useAuth()
 const { formatDuration, formatTime, formatDay, today, shiftDay } = useFormat()
 
 const COLUMNS = [
@@ -236,6 +266,12 @@ const summary = ref<DailySummary | null>(null)
 const segments = ref<TimelineSegment[]>([])
 const firstAt = ref<string | null>(null)
 const lastAt = ref<string | null>(null)
+
+// the day's screenshots: the section shows when the office has them switched on, or when this day has some
+const screenshots = ref<ScreenshotItem[]>([])
+const screenshotsError = ref<string | null>(null)
+const viewing = ref<number | null>(null)
+const screenshotsOn = computed(() => (me.value?.officeSettings.screenshotIntervalMinutes ?? 0) > 0)
 
 const PAGE = 50
 const shown = ref(PAGE)
@@ -279,6 +315,7 @@ async function load() {
     }
     if (token !== loadToken)
       return
+    void loadScreenshots(token) // in parallel with the rest of the day
     summary.value = summaries[0] ?? null
     segments.value = all
     firstAt.value = firstPage.firstActivityAt
@@ -299,6 +336,24 @@ async function load() {
   finally {
     if (token === loadToken)
       loading.value = false
+  }
+}
+
+// a problem with the pictures never hides the rest of the day
+async function loadScreenshots(token: number) {
+  try {
+    const items = await api<ScreenshotItem[]>(`/employees/${id.value}/screenshots`, { query: { day: day.value } })
+    if (token === loadToken) {
+      screenshots.value = items
+      screenshotsError.value = null
+      viewing.value = null
+    }
+  }
+  catch (e) {
+    if (token === loadToken) {
+      screenshots.value = []
+      screenshotsError.value = messageOf(e, 'Could not load the screenshots.')
+    }
   }
 }
 

@@ -55,6 +55,30 @@
         @blur="v$.minAgentVersion.$touch()"
       />
 
+      <div class="space-y-4 border-t border-gray-200 pt-6 dark:border-white/10">
+        <h2 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+          Screenshots
+        </h2>
+        <FormSelect
+          v-model="form.screenshotInterval"
+          label="Take a screenshot of each person's main screen"
+          :options="SCREENSHOT_OPTIONS"
+          :errors="v$.screenshotInterval.$errors"
+          @blur="v$.screenshotInterval.$touch()"
+        />
+        <FormCheckbox
+          v-model="form.screenshotRandom"
+          label="At a random moment in each block"
+          hint="One picture at an unpredictable time inside each block, instead of exactly on the interval."
+          :disabled="form.screenshotInterval === '0'"
+        />
+        <p class="text-sm/6 text-gray-500 dark:text-gray-400">
+          Only while tracking is on (idle time included), never while paused, stopped or locked. Managers see their own people's
+          pictures and each person sees their own. Everything is kept on the office storage server.
+          Space used so far: <b>{{ formatBytes(current?.screenshotStorageBytes ?? 0) }}</b>.
+        </p>
+      </div>
+
       <div>
         <FormInput
           v-model="form.consentVersion"
@@ -108,7 +132,7 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { between, helpers, integer, minValue, required } from '@vuelidate/validators'
-import type { OfficeSettings } from 'shared'
+import type { AdminOfficeSettings } from 'shared'
 
 definePageMeta({
   layout: 'user',
@@ -118,6 +142,7 @@ definePageMeta({
 // everyone else, and the sidebar does not show this page to them.
 const { api } = useApi()
 const { me } = useAuth()
+const { formatBytes } = useFormat()
 
 const WINDOW_TITLE_OPTIONS = [
   { value: 'full', label: 'Full window titles', description: 'App name and the title of the window, e.g. "Budget.xlsx - Excel".' },
@@ -131,7 +156,7 @@ const saved = ref(false)
 const error = ref<string | null>(null)
 
 // the values as they are on the server, to know what changed
-const current = ref<OfficeSettings | null>(null)
+const current = ref<AdminOfficeSettings | null>(null)
 
 const form = reactive({
   idleMinutes: '',
@@ -139,7 +164,17 @@ const form = reactive({
   timezone: '',
   minAgentVersion: '',
   consentVersion: '',
+  screenshotInterval: '0',
+  screenshotRandom: false,
 })
+
+const SCREENSHOT_OPTIONS = [
+  { value: '0', label: 'Off' },
+  { value: '5', label: 'Every 5 minutes' },
+  { value: '10', label: 'Every 10 minutes' },
+  { value: '15', label: 'Every 15 minutes' },
+  { value: '30', label: 'Every 30 minutes' },
+]
 
 const rules = computed(() => ({
   idleMinutes: {
@@ -148,6 +183,7 @@ const rules = computed(() => ({
     between: helpers.withMessage('Choose between 1 and 30 minutes.', between(1, 30)),
   },
   windowTitleMode: { required: helpers.withMessage('Choose one.', required) },
+  screenshotInterval: { allowed: helpers.withMessage('Choose one of the options.', (value: string) => SCREENSHOT_OPTIONS.some(o => o.value === value)) },
   timezone: { required: helpers.withMessage('Choose the office timezone.', required) },
   minAgentVersion: {
     required: helpers.withMessage('Enter a version.', required),
@@ -170,14 +206,35 @@ const timezoneOptions = computed(() => {
 
 const consentRaised = computed(() => Number(form.consentVersion) > (current.value?.consentVersion ?? 0))
 
-function fill(settings: OfficeSettings) {
+function fill(settings: AdminOfficeSettings) {
   current.value = settings
   form.idleMinutes = String(Math.round(settings.idleThresholdSeconds / 60))
   form.windowTitleMode = settings.windowTitleMode
   form.timezone = settings.timezone
   form.minAgentVersion = settings.minAgentVersion
   form.consentVersion = String(settings.consentVersion)
+  form.screenshotInterval = String(settings.screenshotIntervalMinutes)
+  form.screenshotRandom = settings.screenshotRandom
+  autoRaised.value = false
 }
+
+// Turning screenshots on needs a higher consent version, so everyone accepts the new notice first:
+// it is raised for the person here (and put back if they change their mind before saving).
+const autoRaised = ref(false)
+
+watch(() => form.screenshotInterval, (value) => {
+  const c = current.value
+  if (!c)
+    return
+  if (c.screenshotIntervalMinutes === 0 && Number(value) > 0 && Number(form.consentVersion) <= c.consentVersion) {
+    form.consentVersion = String(c.consentVersion + 1)
+    autoRaised.value = true
+  }
+  else if (autoRaised.value && (Number(value) === 0 || c.screenshotIntervalMinutes > 0)) {
+    form.consentVersion = String(c.consentVersion)
+    autoRaised.value = false
+  }
+})
 
 const dirty = computed(() => {
   const c = current.value
@@ -187,6 +244,8 @@ const dirty = computed(() => {
     || form.timezone !== c.timezone
     || form.minAgentVersion.trim() !== c.minAgentVersion
     || Number(form.consentVersion) !== c.consentVersion
+    || Number(form.screenshotInterval) !== c.screenshotIntervalMinutes
+    || form.screenshotRandom !== c.screenshotRandom
   )
 })
 
@@ -200,7 +259,7 @@ function reset() {
 
 onMounted(async () => {
   try {
-    fill(await api<OfficeSettings>('/admin/settings'))
+    fill(await api<AdminOfficeSettings>('/admin/settings'))
   }
   catch (e) {
     loadError.value = messageOf(e, 'Could not load the settings.')
@@ -217,7 +276,7 @@ async function save() {
   saving.value = true
   error.value = null
   try {
-    const updated = await api<OfficeSettings>('/admin/settings', {
+    const updated = await api<AdminOfficeSettings>('/admin/settings', {
       method: 'PUT',
       body: {
         idleThresholdSeconds: Number(form.idleMinutes) * 60,
@@ -225,6 +284,8 @@ async function save() {
         timezone: form.timezone,
         minAgentVersion: form.minAgentVersion.trim(),
         consentVersion: Number(form.consentVersion),
+        screenshotIntervalMinutes: Number(form.screenshotInterval),
+        screenshotRandom: form.screenshotRandom,
       },
     })
     fill(updated)

@@ -23,7 +23,7 @@ The winget PHP build ships without an active `php.ini`. In the PHP install direc
 Copy-Item php.ini-development php.ini
 ```
 
-Then uncomment (remove the leading `;`) these lines in `php.ini`: `extension=curl`, `extension=fileinfo`, `extension=gd`, `extension=mbstring`, `extension=openssl`, `extension=pdo_mysql`, `extension=zip`. Verify with `php -m`.
+Then uncomment (remove the leading `;`) these lines in `php.ini`: `extension=curl`, `extension=exif` (after `mbstring`; the media library for screenshots needs it), `extension=fileinfo`, `extension=gd`, `extension=mbstring`, `extension=openssl`, `extension=pdo_mysql`, `extension=zip`. Verify with `php -m`.
 
 ### 3. Initialize and start MySQL
 
@@ -304,6 +304,50 @@ sudo crontab -e -u www-data
 ```
 
 This drives anything added to `routes/console.php`.
+
+### 7b. Screenshot storage and the queue worker (Phase 10)
+
+Screenshots are stored with Spatie Media Library on a private disk called `screenshots`. Which storage it uses is a setting in the server `.env` (never committed):
+
+- **Development:** `SCREENSHOT_DISK=local` (the default). Files go to `apps/api/storage/app/private/screenshots/`.
+- **Production:** `SCREENSHOT_DISK=s3`, pointing at the office storage server that runs MinIO (an S3-compatible service; the setup is described step by step in `docs/VPS_S3_STORAGE_PLAN.pdf`):
+
+```dotenv
+SCREENSHOT_DISK=s3
+AWS_ACCESS_KEY_ID=<the key made for this app only>
+AWS_SECRET_ACCESS_KEY=<its secret>
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=screenshots
+AWS_ENDPOINT=https://<s3-domain>
+```
+
+Then `php artisan config:cache`. The desktop app uploads one picture; the 320 px thumbnail is made by a **queued job**, so a queue worker has to run all the time in production (`QUEUE_CONNECTION=database`). Keep it alive with systemd:
+
+```ini
+# /etc/systemd/system/tracker-queue.service
+[Unit]
+Description=Time Tracker queue worker
+After=network.target mysql.service
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/time-tracker/apps/api
+ExecStart=/usr/bin/php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now tracker-queue
+sudo systemctl restart tracker-queue      # after every deploy, so it runs the new code
+```
+
+If the worker is stopped, uploads still work and the dashboard shows the full picture in place of the thumbnail until the job runs. `php artisan media-library:regenerate` rebuilds thumbnails.
+
+**Space and backups:** about 150 KB per picture (roughly 2 GB per person per year at a 10-minute interval). The OIC's Settings page shows the space used. The pictures live on the storage server, so back that up (see the PDF), and keep the MySQL dump too: it holds who and when for each picture.
 
 ### 8. Firewall
 

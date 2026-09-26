@@ -31,7 +31,10 @@
             leave-from="opacity-100 translate-y-0 sm:scale-100"
             leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
           >
-            <DialogPanel class="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900 dark:outline dark:-outline-offset-1 dark:outline-white/10">
+            <DialogPanel
+              class="w-full rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900 dark:outline dark:-outline-offset-1 dark:outline-white/10"
+              :class="wide ? 'max-w-5xl' : 'max-w-lg'"
+            >
               <DialogTitle class="text-base/7 font-semibold text-gray-900 dark:text-white">
                 {{ title }}
               </DialogTitle>
@@ -61,6 +64,8 @@ import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } fro
 const props = defineProps<{
   title: string
   persistent?: boolean
+  /** a wide window, for a picture */
+  wide?: boolean
 }>()
 
 const open = defineModel<boolean>({ default: false })

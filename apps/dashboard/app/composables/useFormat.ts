@@ -24,6 +24,20 @@ export function shiftDay(day: string, days: number): string {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
 }
 
+/** 1536 -> "1.5 KB", 7340032 -> "7.0 MB", 2147483648 -> "2.0 GB". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024)
+    return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(1)} ${units[unit]}`
+}
+
 export function useFormat() {
   const { me } = useAuth()
   const timezone = computed(() => me.value?.officeSettings.timezone ?? 'UTC')
@@ -49,5 +63,5 @@ export function useFormat() {
 
   const today = () => dayIn(timezone.value)
 
-  return { timezone, formatDuration, formatTime, formatDateTime, formatDay, today, shiftDay }
+  return { timezone, formatBytes, formatDuration, formatTime, formatDateTime, formatDay, today, shiftDay }
 }
