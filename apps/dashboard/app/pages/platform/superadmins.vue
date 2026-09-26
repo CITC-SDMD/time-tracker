@@ -80,11 +80,10 @@
       </template>
     </UiTable>
 
-    <UiModal
+    <UiDrawer
       v-model="formOpen"
       :title="editing ? `Permissions of ${editing.name}` : 'Add a superadmin'"
       :persistent="saving"
-      wide
     >
       <form
         class="space-y-5"
@@ -137,7 +136,7 @@
           </FormButton>
         </div>
       </form>
-    </UiModal>
+    </UiDrawer>
 
     <UiConfirmDialog
       v-model="confirmOpen"
