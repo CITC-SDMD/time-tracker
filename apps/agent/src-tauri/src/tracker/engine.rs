@@ -553,6 +553,7 @@ mod tests {
         let settings = OfficeSettings {
             idle_limit_seconds,
             title_mode: TitleMode::Full,
+            ..OfficeSettings::default()
         };
         let engine = Engine::new(
             clock.clone(),
@@ -823,6 +824,7 @@ mod tests {
         let settings = OfficeSettings {
             idle_limit_seconds: 300,
             title_mode: TitleMode::Full,
+            ..OfficeSettings::default()
         };
         let mut engine = Engine::new(
             clock,

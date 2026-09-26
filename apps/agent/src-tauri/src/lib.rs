@@ -5,7 +5,6 @@ mod db;
 mod logging;
 mod notify;
 mod platform;
-#[allow(dead_code)] // wired into the app step by step (Phase 10)
 mod screenshot;
 mod sync;
 #[cfg(test)]
@@ -57,6 +56,9 @@ pub fn run() {
             commands::reset_today_counters,
             commands::get_today_timeline,
             commands::get_today_sessions_debug,
+            commands::get_screenshot_status,
+            commands::list_my_screenshots,
+            commands::get_my_screenshot,
         ])
         .setup(|app| {
             let log_guard = logging::init(app.handle())?;
@@ -101,6 +103,8 @@ pub fn run() {
             // Sync worker (docs §11.1): every 2 minutes while logged in, on demand, and
             // /health polling while offline. A first pass right after startup.
             sync::worker::spawn(app.handle().clone(), sync.clone());
+            // Screenshots (Phase 10): take one on the office's rhythm while tracking, and send what waits.
+            screenshot::spawn(app.handle().clone());
             if logged_in {
                 sync.trigger();
             }

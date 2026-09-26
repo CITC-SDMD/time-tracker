@@ -9,12 +9,21 @@
           {{ me?.name }}
         </p>
       </div>
-      <NuxtLink
-        to="/settings"
-        class="text-sm text-slate-500 underline"
-      >
-        Settings
-      </NuxtLink>
+      <nav class="flex gap-3 text-sm">
+        <NuxtLink
+          v-if="shots?.enabled || shots?.lastTakenAt"
+          to="/screenshots"
+          class="text-slate-500 underline"
+        >
+          My screenshots
+        </NuxtLink>
+        <NuxtLink
+          to="/settings"
+          class="text-slate-500 underline"
+        >
+          Settings
+        </NuxtLink>
+      </nav>
     </header>
 
     <p
@@ -181,6 +190,12 @@
 
     <footer>
       <p
+        v-if="shotLabel"
+        class="mb-1 text-center text-xs text-slate-500"
+      >
+        {{ shotLabel }}
+      </p>
+      <p
         v-if="syncLabel"
         class="text-center text-xs text-slate-500"
       >
@@ -214,6 +229,7 @@
 const { state, summary, timeline, status, clock, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
 const { me, refresh } = useAuth()
 const { status: sync, notice, progress, dismissNotice } = useSync()
+const { status: shots } = useScreenshots()
 
 // The counter Reset is a testing aid: only dev builds show it.
 const isDev = import.meta.dev
@@ -237,6 +253,16 @@ const syncLabel = computed(() => {
   if (!s.online)
     return s.pendingCount > 0 ? `Offline · ${s.pendingCount.toLocaleString()} waiting to send` : 'Offline'
   return s.pendingCount > 0 ? `${s.pendingCount.toLocaleString()} ${s.pendingCount === 1 ? 'session' : 'sessions'} waiting to send` : 'All data sent'
+})
+
+// "Last screenshot 14:05" while screenshots are on (or have been taken)
+const shotLabel = computed(() => {
+  const s = shots.value
+  if (!s || (!s.enabled && !s.lastTakenAt))
+    return null
+  const tz = me.value?.officeSettings.timezone ?? 'UTC'
+  const last = s.lastTakenAt ? `Last screenshot ${clockTime(s.lastTakenAt, tz)}` : 'No screenshot yet today'
+  return s.waiting > 0 ? `${last} · ${s.waiting} waiting to send` : last
 })
 
 // Best effort: picks up a raised consent version. The route guard then sends the person

@@ -26,13 +26,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 # native-tls = Windows Schannel: no extra C toolchain needed, unlike the rustls backends.
-reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "multipart"] }
 # Windows Credential Manager; on other OSes the crate falls back to an in-memory mock store.
 keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 # Phase 10 screenshots: the picture of the main screen, shrunk and encoded as a JPEG.
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [target.'cfg(windows)'.dependencies]

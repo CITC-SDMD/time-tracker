@@ -485,3 +485,32 @@ pub fn get_today_sessions_debug(state: State<'_, AppState>) -> Result<Vec<Sessio
     let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
     today_sessions(&engine)
 }
+
+// ---- screenshots (docs phase 10) -------------------------------------------------------------------
+
+/// What the app shows about screenshots: whether they are on, how often, what is waiting, the last one.
+#[tauri::command]
+pub fn get_screenshot_status(state: State<'_, AppState>) -> Result<crate::screenshot::ScreenshotStatus, String> {
+    let user_id = state.logged_in_user_id().ok_or("NOT_LOGGED_IN")?;
+    Ok(crate::screenshot::status(&state.engine, &user_id))
+}
+
+/// The signed-in person's own screenshots for one office day (`YYYY-MM-DD`), read from the server.
+#[tauri::command]
+pub async fn list_my_screenshots(state: State<'_, AppState>, day: String) -> Result<Vec<crate::screenshot::upload::ScreenshotItem>, String> {
+    let user_id = state.logged_in_user_id().ok_or("NOT_LOGGED_IN")?;
+    let token = auth::load_token().ok_or("NOT_LOGGED_IN")?;
+    crate::screenshot::upload::list_own(&state.api, &token, &user_id, &day).await.map_err(api_error_string)
+}
+
+/// One of the person's own pictures ("thumb" or "image") as a data URL the page can show.
+#[tauri::command]
+pub async fn get_my_screenshot(state: State<'_, AppState>, id: String, kind: String) -> Result<String, String> {
+    use base64::Engine as _;
+    if kind != "thumb" && kind != "image" {
+        return Err("BAD_KIND".into());
+    }
+    let token = auth::load_token().ok_or("NOT_LOGGED_IN")?;
+    let bytes = crate::screenshot::upload::fetch_own(&state.api, &token, &id, &kind).await.map_err(api_error_string)?;
+    Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}

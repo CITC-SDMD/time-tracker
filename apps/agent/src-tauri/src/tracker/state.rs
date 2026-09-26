@@ -60,6 +60,10 @@ pub enum TitleMode {
 pub struct OfficeSettings {
     pub idle_limit_seconds: u64,
     pub title_mode: TitleMode,
+    /// Minutes between screenshots: 0 = off (the default), otherwise 5, 10, 15 or 30 (docs phase 10).
+    pub screenshot_interval_minutes: u32,
+    /// One shot at a random moment inside each block instead of on a fixed rhythm.
+    pub screenshot_random: bool,
 }
 
 impl Default for OfficeSettings {
@@ -69,6 +73,8 @@ impl Default for OfficeSettings {
         Self {
             idle_limit_seconds: 300,
             title_mode: TitleMode::Full,
+            screenshot_interval_minutes: 0,
+            screenshot_random: false,
         }
     }
 }

@@ -12,6 +12,7 @@ use serde::Serialize;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("migrations/001_init.sql")),
     (2, include_str!("migrations/002_lowercase_enums.sql")),
+    (3, include_str!("migrations/003_screenshots.sql")),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +79,18 @@ struct SyncPayload {
     ended_at: i64,
     duration_seconds: i64,
     clock_changed: bool,
+}
+
+/// A screenshot waiting to be sent (see `screenshot`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenshotRow {
+    pub id: String,
+    pub user_id: String,
+    pub taken_at: i64,
+    pub path: String,
+    pub width: i64,
+    pub height: i64,
+    pub attempts: i64,
 }
 
 pub struct Db {
@@ -491,6 +504,79 @@ impl Db {
         )?;
         Ok(())
     }
+
+    // ---- screenshots waiting to be sent (docs phase 10) --------------------------------------------
+
+    pub fn add_screenshot(&self, row: &ScreenshotRow, now_ms: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO screenshots (id, user_id, taken_at, path, width, height, attempts, next_attempt_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7)",
+            params![row.id, row.user_id, row.taken_at, row.path, row.width, row.height, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// The oldest screenshot of this user that is due to be sent. Other users' rows are never returned:
+    /// they wait for that person to log in again.
+    pub fn next_screenshot_to_send(&self, user_id: &str, now_ms: i64) -> rusqlite::Result<Option<ScreenshotRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, user_id, taken_at, path, width, height, attempts FROM screenshots
+             WHERE user_id = ?1 AND next_attempt_at <= ?2 ORDER BY taken_at LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![user_id, now_ms], |row| {
+            Ok(ScreenshotRow {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                taken_at: row.get(2)?,
+                path: row.get(3)?,
+                width: row.get(4)?,
+                height: row.get(5)?,
+                attempts: row.get(6)?,
+            })
+        })?;
+        rows.next().transpose()
+    }
+
+    pub fn pending_screenshot_count(&self, user_id: &str) -> rusqlite::Result<i64> {
+        self.conn.query_row("SELECT COUNT(*) FROM screenshots WHERE user_id = ?1", params![user_id], |row| row.get(0))
+    }
+
+    /// Removes the row once the server has the picture (or will never take it).
+    pub fn delete_screenshot(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM screenshots WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// One more failed try: wait longer before the next (same waiting times as sessions).
+    pub fn schedule_screenshot_retry(&self, id: &str, now_ms: i64) -> rusqlite::Result<()> {
+        let attempts: i64 = self.conn.query_row("SELECT attempts FROM screenshots WHERE id = ?1", params![id], |row| row.get(0))?;
+        self.conn.execute(
+            "UPDATE screenshots SET attempts = attempts + 1, next_attempt_at = ?2 WHERE id = ?1",
+            params![id, now_ms + retry_delay_ms(attempts)],
+        )?;
+        Ok(())
+    }
+
+    /// "The internet is back": every waiting screenshot of this user is due now.
+    pub fn make_screenshots_due(&self, user_id: &str, now_ms: i64) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE screenshots SET next_attempt_at = ?2 WHERE user_id = ?1", params![user_id, now_ms])?;
+        Ok(())
+    }
+
+    /// Keeps at most `keep` waiting screenshots for this user, dropping the oldest. Returns the files that
+    /// belonged to the dropped rows, for the caller to delete (a long offline spell must not fill the disk).
+    pub fn trim_screenshots(&self, user_id: &str, keep: usize) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, path FROM screenshots WHERE user_id = ?1 ORDER BY taken_at DESC LIMIT -1 OFFSET ?2",
+        )?;
+        let dropped: Vec<(String, String)> = stmt
+            .query_map(params![user_id, keep as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (id, _) in &dropped {
+            self.delete_screenshot(id)?;
+        }
+        Ok(dropped.into_iter().map(|(_, path)| path).collect())
+    }
 }
 
 /// One row of `sync_queue` waiting to be sent.
@@ -653,5 +739,81 @@ mod tests {
 
         assert_eq!(db.adopt_placeholder_user("42").unwrap(), 0);
         assert_eq!(db.pending_count("7").unwrap(), 1);
+    }
+
+    fn shot(id: &str, user: &str, taken_at: i64) -> ScreenshotRow {
+        ScreenshotRow {
+            id: id.into(),
+            user_id: user.into(),
+            taken_at,
+            path: format!("{id}.jpg"),
+            width: 1280,
+            height: 720,
+            attempts: 0,
+        }
+    }
+
+    #[test]
+    fn screenshots_are_sent_oldest_first_and_only_for_their_own_user() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        db.add_screenshot(&shot("b", "1", 200), 0).unwrap();
+        db.add_screenshot(&shot("a", "1", 100), 0).unwrap();
+        db.add_screenshot(&shot("x", "2", 50), 0).unwrap();
+
+        assert_eq!(db.next_screenshot_to_send("1", 0).unwrap().unwrap().id, "a");
+        db.delete_screenshot("a").unwrap();
+        assert_eq!(db.next_screenshot_to_send("1", 0).unwrap().unwrap().id, "b");
+        db.delete_screenshot("b").unwrap();
+        assert!(db.next_screenshot_to_send("1", 0).unwrap().is_none(), "the other user's row is not returned");
+        assert_eq!(db.pending_screenshot_count("2").unwrap(), 1, "and it is kept for when they log in again");
+    }
+
+    #[test]
+    fn a_failed_screenshot_waits_longer_each_time_and_is_due_again_when_the_internet_is_back() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        db.add_screenshot(&shot("a", "1", 100), 0).unwrap();
+        let now = 1_000_000;
+
+        db.schedule_screenshot_retry("a", now).unwrap();
+        assert!(db.next_screenshot_to_send("1", now + 59_000).unwrap().is_none());
+        let due = db.next_screenshot_to_send("1", now + 60_000).unwrap().unwrap();
+        assert_eq!(due.attempts, 1);
+
+        db.schedule_screenshot_retry("a", now).unwrap(); // second failure: two minutes
+        assert!(db.next_screenshot_to_send("1", now + 119_000).unwrap().is_none());
+
+        db.make_screenshots_due("1", now).unwrap();
+        assert!(db.next_screenshot_to_send("1", now).unwrap().is_some());
+    }
+
+    #[test]
+    fn too_many_waiting_screenshots_drop_the_oldest_and_report_their_files() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        for i in 0..5 {
+            db.add_screenshot(&shot(&format!("s{i}"), "1", i * 10), 0).unwrap();
+        }
+        db.add_screenshot(&shot("other", "2", 1), 0).unwrap();
+
+        let dropped = db.trim_screenshots("1", 3).unwrap();
+
+        assert_eq!(dropped, vec!["s1.jpg".to_owned(), "s0.jpg".to_owned()]);
+        assert_eq!(db.pending_screenshot_count("1").unwrap(), 3);
+        assert_eq!(db.next_screenshot_to_send("1", 0).unwrap().unwrap().id, "s2", "the oldest that is left");
+        assert_eq!(db.pending_screenshot_count("2").unwrap(), 1, "another user's rows are never trimmed");
+        assert!(db.trim_screenshots("1", 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_three_creates_the_screenshot_queue_and_keeps_existing_data() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("migrations/002_lowercase_enums.sql")).unwrap();
+        conn.execute("INSERT INTO app_state (key, value) VALUES ('device_id', 'd1')", []).unwrap();
+
+        conn.execute_batch(include_str!("migrations/003_screenshots.sql")).unwrap();
+
+        let device: String = conn.query_row("SELECT value FROM app_state WHERE key = 'device_id'", [], |r| r.get(0)).unwrap();
+        assert_eq!(device, "d1");
+        conn.execute("INSERT INTO screenshots (id, user_id, taken_at, path, width, height, created_at) VALUES ('a', '1', 1, 'a.jpg', 1, 1, 1)", []).unwrap();
     }
 }

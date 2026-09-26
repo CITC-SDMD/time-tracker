@@ -226,6 +226,8 @@ fn store_settings<C: Clock>(engine: &mut Engine<C>, settings: &SyncSettings) {
         .unwrap_or_else(|| serde_json::json!({}));
     stored["idleThresholdSeconds"] = settings.idle_threshold_seconds.into();
     stored["windowTitleMode"] = settings.window_title_mode.clone().into();
+    stored["screenshotIntervalMinutes"] = settings.screenshot_interval_minutes.into();
+    stored["screenshotRandom"] = settings.screenshot_random.into();
     let _ = engine.db().set_app_state("office_settings_json", &stored.to_string());
     let loaded = load_office_settings(engine.db());
     engine.apply_settings(loaded);
@@ -417,7 +419,7 @@ mod tests {
         let clock = Arc::new(FakeClock::new(Utc::now()));
         let provider = Arc::new(FakeActivityProvider::new((foreground, 0)));
         let db = Db::open_in_memory_for_test().unwrap();
-        let settings = OfficeSettings { idle_limit_seconds, title_mode: TitleMode::Full };
+        let settings = OfficeSettings { idle_limit_seconds, title_mode: TitleMode::Full, ..OfficeSettings::default() };
         let engine = Engine::new(clock.clone(), provider.clone(), db, settings, USER.into(), "dev".into());
         (Arc::new(Mutex::new(engine)), clock, provider)
     }

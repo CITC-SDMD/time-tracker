@@ -19,6 +19,8 @@ pub fn load_office_settings(db: &crate::db::Db) -> state::OfficeSettings {
             } else {
                 state::TitleMode::Full
             },
+            screenshot_interval_minutes: s.screenshot_interval_minutes,
+            screenshot_random: s.screenshot_random,
         })
         .unwrap_or_default()
 }
@@ -28,4 +30,8 @@ pub fn load_office_settings(db: &crate::db::Db) -> state::OfficeSettings {
 struct StoredOfficeSettings {
     idle_threshold_seconds: u64,
     window_title_mode: String,
+    #[serde(default)]
+    screenshot_interval_minutes: u32,
+    #[serde(default)]
+    screenshot_random: bool,
 }

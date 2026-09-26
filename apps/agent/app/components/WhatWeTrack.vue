@@ -13,14 +13,20 @@
         Window titles are turned off by your office: only app names are kept.
       </li>
       <li>When you are idle (no mouse or keyboard use), and which app was on screen then.</li>
+      <li v-if="screenshotMinutes > 0">
+        A screenshot of your main screen about every {{ screenshotMinutes }} minutes<span v-if="screenshotRandom">, at a random moment in each block</span>,
+        including while you are idle. It is kept permanently on the office server. Your manager and the people above them can see it, and so can you
+        (see "My screenshots").
+      </li>
     </ul>
 
     <h2 class="mb-1 mt-4 font-medium">
       What is not tracked
     </h2>
     <p>
-      Keystrokes, typed text, mouse movements, webcam, microphone, file contents and
-      screenshots. Websites are not tracked either, unless that is turned on later with new consent.
+      Keystrokes, typed text, mouse movements, webcam, microphone, file contents and websites.
+      <span v-if="screenshotMinutes === 0">Screenshots are not taken; if your office turns them on, you are asked to accept a new notice first.</span>
+      <span v-else>Only your main screen is captured, and only in the way described above.</span>
     </p>
 
     <h2 class="mb-1 mt-4 font-medium">
@@ -46,4 +52,6 @@
 const { me } = useAuth()
 
 const titlesTracked = computed(() => me.value?.officeSettings.windowTitleMode !== 'app_only')
+const screenshotMinutes = computed(() => me.value?.officeSettings.screenshotIntervalMinutes ?? 0)
+const screenshotRandom = computed(() => me.value?.officeSettings.screenshotRandom ?? false)
 </script>

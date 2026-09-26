@@ -49,6 +49,11 @@ pub struct SyncCommands {
 pub struct SyncSettings {
     pub idle_threshold_seconds: u64,
     pub window_title_mode: String,
+    /// Older servers do not send these two: screenshots then stay off.
+    #[serde(default)]
+    pub screenshot_interval_minutes: u32,
+    #[serde(default)]
+    pub screenshot_random: bool,
 }
 
 #[derive(Debug, Deserialize)]

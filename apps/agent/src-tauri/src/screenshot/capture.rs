@@ -22,6 +22,7 @@ pub struct Shot {
 #[derive(Debug)]
 pub enum CaptureError {
     /// This platform cannot take screenshots.
+    #[cfg_attr(windows, allow(dead_code))]
     Unsupported,
     /// No screen, a locked desktop, or the OS refused.
     Failed(String),

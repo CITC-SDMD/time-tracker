@@ -16,6 +16,9 @@ export interface Me {
     windowTitleMode: 'full' | 'app_only'
     minAgentVersion: string
     consentVersion: number
+    /** minutes between screenshots: 0 = off, otherwise 5, 10, 15 or 30 */
+    screenshotIntervalMinutes?: number
+    screenshotRandom?: boolean
   }
 }
 

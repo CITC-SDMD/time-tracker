@@ -54,6 +54,10 @@ pub struct OfficeSettingsDto {
     pub window_title_mode: String,
     pub min_agent_version: String,
     pub consent_version: i64,
+    #[serde(default)]
+    pub screenshot_interval_minutes: u32,
+    #[serde(default)]
+    pub screenshot_random: bool,
 }
 
 /// `GET /me` (packages/shared `Me`).
