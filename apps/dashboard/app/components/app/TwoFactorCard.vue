@@ -48,7 +48,7 @@
       </UiAlert>
       <FormInput
         v-model="manage.currentPassword"
-        label="Your password"
+        label="Password to confirm"
         type="password"
         autocomplete="current-password"
         :errors="manageV$.currentPassword.$errors"
@@ -138,7 +138,7 @@
     >
       <FormInput
         v-model="startForm.currentPassword"
-        label="Your password"
+        label="Password to confirm"
         type="password"
         autocomplete="current-password"
         hint="We ask for it so nobody else can set this up on your account."

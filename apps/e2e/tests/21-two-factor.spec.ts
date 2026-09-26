@@ -7,6 +7,8 @@ import { totp } from '../helpers/totp'
 const EMAIL = 'tl3@test.com'
 
 test.beforeEach(() => artisan('cache:clear'))
+// a run that stopped half way must not leave it on for the next one
+test.beforeAll(() => artisan('tracker:reset-two-factor', EMAIL))
 test.afterAll(() => artisan('tracker:reset-two-factor', EMAIL))
 
 test.describe.serial('two-factor sign-in', () => {
@@ -20,11 +22,11 @@ test.describe.serial('two-factor sign-in', () => {
     const card = page.getByRole('heading', { name: 'Two-factor sign-in' }).locator('xpath=..')
 
     // a wrong password is refused and nothing starts
-    await card.getByLabel('Your password').fill('not-my-password')
+    await card.getByLabel('Password to confirm').fill('not-my-password')
     await card.getByRole('button', { name: 'Set up two-factor sign-in' }).click()
     await expect(card.getByText('Your password is not right.')).toBeVisible()
 
-    await card.getByLabel('Your password').fill(PASSWORD)
+    await card.getByLabel('Password to confirm').fill(PASSWORD)
     await card.getByRole('button', { name: 'Set up two-factor sign-in' }).click()
     await expect(card.getByAltText('QR code for your authenticator app')).toBeVisible()
     secret = (await card.locator('p.font-mono').innerText()).trim()
