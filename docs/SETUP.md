@@ -369,6 +369,6 @@ mysqldump -u tracker -p tracker_prod | gzip > tracker-$(date +%F).sql.gz
 
 Put this in a daily cron job that copies the dump **off the server** — a backup that only lives on the machine it's backing up doesn't survive that machine failing. Test a restore before relying on it (Test 7.6 in the dev plan).
 
-### 10. Release deploys (installer + updates)
+### 10. Releases
 
-The GitHub Actions release workflow (Phase 8) uploads the signed installer and `latest.json` to `/var/www/time-tracker-updates/` over SSH using a deploy key — create a restricted SSH user (or restrict the key to that one path) on the server, and store the private half in GitHub Secrets. Application code deploys (new Laravel/dashboard versions) are a manual `git pull && composer install && php artisan migrate && pnpm --filter dashboard generate` for now; see `docs/RELEASE.md` once Phase 8 is under way.
+Deploying a new version of the server and dashboard, building and handing out the desktop installer, rolling back and the checks to make afterwards are in `docs/RELEASE.md`. There is no CI and no automatic update: a release is done by hand from that page.
