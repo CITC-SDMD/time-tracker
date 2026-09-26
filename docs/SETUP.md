@@ -205,6 +205,15 @@ DB_PASSWORD=<the password from step 3>
 
 SANCTUM_STATEFUL_DOMAINS=tracker.yourcompany.com
 
+# The sign-in cookie only travels over https and is hidden from scripts on the page.
+SESSION_SECURE_COOKIE=true
+
+# Production logging: warnings and errors only (debug fills the disk and can record more than you want kept).
+LOG_LEVEL=warning
+
+# Emails and thumbnails are sent by the queue worker (section 7b), not while a person waits.
+QUEUE_CONNECTION=database
+
 # Where welcome and password-reset emails link to. Leave it out when the dashboard and API
 # share one address (the normal setup); locally the dashboard is on its own port.
 # DASHBOARD_URL=http://localhost:3100
@@ -227,6 +236,12 @@ MAIL_FROM_NAME="Time Tracker"
 ```bash
 php artisan migrate --seed
 php artisan tracker:make-superadmin "Your Name" you@yourcompany.com
+```
+
+Check the settings before anyone signs in, and again after every change to `.env`. It reads only configuration, changes nothing, and lists what must be fixed:
+
+```bash
+php artisan tracker:security-check
 ```
 
 Write down the temporary password it prints and use it for the first dashboard login. Once mail is set up, "Forgot password?" on the login page lets you choose your own.
@@ -256,6 +271,16 @@ server {
     listen 443 ssl http2;
     server_name tracker.yourcompany.com;
     # certbot fills in ssl_certificate / ssl_certificate_key below
+
+    # Sent with every answer. HSTS makes browsers use https only for this address from now on: switch it on once
+    # https works everywhere (it cannot be taken back quickly).
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+
+    # Screenshots are up to 1.5 MB; the nginx default of 1 MB would refuse them (413).
+    client_max_body_size 4m;
 
     # Laravel API
     location /api/ {
@@ -359,7 +384,9 @@ sudo ufw allow 'Nginx Full'
 sudo ufw enable
 ```
 
-Only 22 (SSH — key-only, ideally IP-restricted), 80 and 443 should be reachable from the internet. MySQL (3306) and PHP-FPM should not be.
+Only 22 (SSH — key-only, ideally IP-restricted), 80 and 443 should be reachable from the internet. MySQL (3306) and PHP-FPM should not be. Check from another machine, not from the server itself: `nmap -Pn tracker.yourcompany.com` should list only those three, and `curl -I http://tracker.yourcompany.com` should answer with a redirect to https.
+
+Keep the operating system updated (`sudo apt install unattended-upgrades` applies security updates by itself), and do not run the app as root: the web files belong to the web user and `.env` is readable by that user only (`chmod 640 apps/api/.env`).
 
 ### 9. Backups
 
@@ -367,7 +394,7 @@ Only 22 (SSH — key-only, ideally IP-restricted), 80 and 443 should be reachabl
 mysqldump -u tracker -p tracker_prod | gzip > tracker-$(date +%F).sql.gz
 ```
 
-Put this in a daily cron job that copies the dump **off the server** — a backup that only lives on the machine it's backing up doesn't survive that machine failing. Test a restore before relying on it (Test 7.6 in the dev plan).
+Put this in a daily cron job that copies the dump **off the server** — a backup that only lives on the machine it's backing up doesn't survive that machine failing. Test a restore before relying on it (Test 7.6 in the dev plan): `scripts/backup-restore-drill.sh` takes a backup, restores it into a separate disposable database and compares the rows of every table (its header says how to run it). Run it once before the first real use and again after big changes.
 
 ### 10. Releases
 

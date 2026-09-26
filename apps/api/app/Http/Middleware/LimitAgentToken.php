@@ -1,0 +1,45 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
+use Symfony\Component\HttpFoundation\Response;
+
+// The token the desktop app holds is made for the app only. Without this, whoever got hold of it (a copied
+// credential store, a stolen laptop) could call every dashboard route with the rights of that person, and an
+// administrator who signs in to the desktop app would hand over their whole administration. So a token that carries
+// only the `agent` ability may reach just what the app itself calls; the dashboard signs in with a cookie, which is
+// not affected.
+class LimitAgentToken
+{
+    /** what the desktop app calls, as route URIs (docs/DEVELOPMENT_PLAN.md §10) */
+    private const ALLOWED = [
+        'GET' => ['api/v1/me', 'api/v1/employees/{id}/screenshots', 'api/v1/screenshots/{screenshot}/{kind}'],
+        'POST' => ['api/v1/me/consent', 'api/v1/agent/sync', 'api/v1/agent/screenshots'],
+    ];
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $token = $request->user()?->currentAccessToken();
+
+        if ($token instanceof PersonalAccessToken && $this->isAgentOnly($token)) {
+            $uri = $request->route()?->uri();
+            if (! in_array($uri, self::ALLOWED[$request->method()] ?? [], true)) {
+                return response()->json([
+                    'error' => ['code' => 'FORBIDDEN', 'message' => 'This sign-in is for the desktop app only.'],
+                ], 403);
+            }
+        }
+
+        return $next($request);
+    }
+
+    private function isAgentOnly(PersonalAccessToken $token): bool
+    {
+        $abilities = $token->abilities ?? [];
+
+        return in_array('agent', $abilities, true) && ! in_array('*', $abilities, true);
+    }
+}

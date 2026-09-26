@@ -14,8 +14,11 @@ Everything below must be green on the commit you are releasing. Run it from a cl
 | Dashboard and agent front end | `pnpm lint` and `pnpm typecheck` | repository root |
 | Desktop app engine | `cargo test --lib` and `cargo clippy --all-targets` | `apps/agent/src-tauri` |
 | Whole browser suite | `pnpm e2e` | repository root (about 20 minutes; run it once, whole, not just the specs you touched) |
+| Dependencies | `composer audit`, `pnpm audit --prod`, `cargo audit` (install once with `cargo install cargo-audit --locked`) | `apps/api`, repository root, `apps/agent/src-tauri` |
 | Windows input test (only if the agent changed) | `cargo test --lib live_input -- --ignored --nocapture` | `apps/agent/src-tauri`, on an interactive desktop |
 | Live checks for what changed | the relevant part of `docs/LIVE_TEST_ACTIVITY_CHECK.md` and the phase tests in `docs/DEVELOPMENT_PLAN.md` | real PC with the real server |
+
+On the server, after every change to `.env` and after each deploy: `php artisan tracker:security-check` (settings that are unsafe in production; `docs/SECURITY_REVIEW.md`).
 
 Then read the list of commits since the last release (`git log <last-tag>..HEAD --oneline`) and write the release notes (section 8). If anything changes what the desktop app collects or shows in "What we track", read section 6 before releasing.
 

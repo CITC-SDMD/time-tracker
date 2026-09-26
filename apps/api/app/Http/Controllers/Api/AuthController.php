@@ -18,7 +18,10 @@ class AuthController extends Controller
     {
         $user = User::where('email', $request->string('email'))->first();
 
-        if (! $user || ! Hash::check($request->string('password'), $user->password)) {
+        // an address with no account is checked against a fixed hash, so the answer takes as long either way
+        $passwordOk = Hash::check($request->string('password'), $user?->password ?? '$2y$12$vESU3Td1QPkVvY48Q2MMr.9dQS9wWAAVZv0zIyipi.LLPlWH4R8nK');
+
+        if (! $user || ! $passwordOk) {
             // Deliberately the same response whether the email doesn't exist or the
             // password is wrong — don't help an attacker enumerate accounts.
             return response()->json([
@@ -44,8 +47,11 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $deviceId = $request->header('X-Device-Id', 'unknown');
-        $token = $user->createToken("agent-{$deviceId}", ['agent'])->plainTextToken;
+        // the header is the app's own id, but it is written by whoever calls: cap it so it fits the column
+        $name = 'agent-'.mb_substr((string) $request->header('X-Device-Id', 'unknown'), 0, 64);
+        // signing in again on a PC replaces that PC's earlier token instead of leaving one behind for every login
+        $user->tokens()->where('name', $name)->delete();
+        $token = $user->createToken($name, ['agent'])->plainTextToken;
 
         return response()->json([
             'token' => $token,

@@ -21,7 +21,10 @@ class DashboardAuthController extends Controller
     {
         $user = User::where('email', $request->string('email'))->first();
 
-        if (! $user || ! Hash::check($request->string('password'), $user->password)) {
+        // an address with no account is checked against a fixed hash, so the answer takes as long either way
+        $passwordOk = Hash::check($request->string('password'), $user?->password ?? '$2y$12$vESU3Td1QPkVvY48Q2MMr.9dQS9wWAAVZv0zIyipi.LLPlWH4R8nK');
+
+        if (! $user || ! $passwordOk) {
             return response()->json([
                 'error' => ['code' => 'WRONG_PASSWORD', 'message' => 'Incorrect email or password.'],
             ], 401);

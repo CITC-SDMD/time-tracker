@@ -5,6 +5,7 @@ use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureAgentOrganization;
 use App\Http\Middleware\EnsureSelfOrVisible;
 use App\Http\Middleware\EnsureSuperadmin;
+use App\Http\Middleware\LimitAgentToken;
 use App\Http\Middleware\RequirePermission;
 use App\Http\Middleware\RequirePlatformPermission;
 use App\Http\Middleware\ResetOrganizationContext;
@@ -40,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'active' => EnsureActiveUser::class,
+            'agent-token' => LimitAgentToken::class,
             'agent-organization' => EnsureAgentOrganization::class,
             'check-agent-version' => CheckAgentVersion::class,
             'org' => SetOrganizationContext::class,

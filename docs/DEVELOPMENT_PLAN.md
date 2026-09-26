@@ -1541,6 +1541,8 @@ Most of these were tested in earlier phases. This phase repeats them **together,
 5. Go through the security checklist (§15). Write down anything not done and why.
 6. Test a restore: back up MySQL (`mysqldump`) to a separate location, and write down how to restore it (`mysql < backup.sql` into a scratch database, verify row counts).
 
+**Status (2026-09-26):** the code side is done and written in `docs/SECURITY_REVIEW.md` (the §15 pass, dependency audits, five fixes, automatic tests for the security and query-count checks, the restore drill script). What needs a real server and real people is in `docs/PILOT_CHECKLIST.md` with the report template; the pilot itself has not run.
+
 **Deliverables**
 - A pilot report: bugs found and fixed, resource numbers, office server load (CPU/memory/disk on the server itself, not just the client PCs).
 - The security checklist completed.

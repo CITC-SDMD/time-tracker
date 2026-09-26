@@ -23,17 +23,17 @@ use App\Http\Controllers\Platform\SuperadminController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
-    Route::post('/auth/login', [AuthController::class, 'login']);
+    Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
     // No `active` here on purpose: a deactivated user's PC may still hold unsent data, and
     // §10.1 step 4.3 has the controller accept what happened before deactivation and tell
     // the app to sign out. Every other route below still refuses deactivated users.
     Route::post('/agent/sync', [AgentController::class, 'sync'])
-        ->middleware(['auth:sanctum', 'org', 'agent-organization', 'check-agent-version', 'throttle:agent-sync']);
+        ->middleware(['auth:sanctum', 'agent-token', 'org', 'agent-organization', 'check-agent-version', 'throttle:agent-sync']);
 
     // The desktop app's screenshots (phase 10): one JPEG per request, at most 60 a minute.
     Route::post('/agent/screenshots', [ScreenshotController::class, 'store'])
-        ->middleware(['auth:sanctum', 'active', 'org', 'check-agent-version', 'throttle:60,1']);
+        ->middleware(['auth:sanctum', 'agent-token', 'active', 'org', 'check-agent-version', 'throttle:60,1']);
 
     // What happens INSIDE an organization. Its own people use these at /api/v1/...; a superadmin with the right
     // platform permission opens an office at /api/v1/platform/organizations/{organization}/office/... and uses the very
@@ -83,7 +83,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/admin/audit', [AdminAuditController::class, 'index'])->middleware('permission:audit.view');
     };
 
-    Route::middleware(['auth:sanctum', 'active', 'org'])->group(function () use ($insideAnOrganization) {
+    Route::middleware(['auth:sanctum', 'agent-token', 'active', 'org'])->group(function () use ($insideAnOrganization) {
         Route::get('/me', [MeController::class, 'show']);
         Route::patch('/me', [MeController::class, 'update']);
         Route::put('/me/email', [MeController::class, 'changeEmail'])->middleware('throttle:5,1');
@@ -94,7 +94,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // The platform: superadmins only, and each route needs its own platform permission.
-    Route::prefix('platform')->middleware(['auth:sanctum', 'active', 'superadmin'])->group(function () use ($insideAnOrganization) {
+    Route::prefix('platform')->middleware(['auth:sanctum', 'agent-token', 'active', 'superadmin'])->group(function () use ($insideAnOrganization) {
         Route::get('/permissions', [PermissionCatalogController::class, 'platform']);
 
         Route::get('/organizations', [OrganizationController::class, 'index'])->middleware('platform:organizations.view');
