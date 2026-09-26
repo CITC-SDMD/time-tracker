@@ -6,144 +6,131 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreEmployeeRequest;
 use App\Http\Requests\UpdateEmployeeRequest;
 use App\Models\AuditLog;
+use App\Models\Role;
 use App\Models\User;
-use App\Notifications\WelcomeNotification;
+use App\Services\AccessService;
+use App\Services\AccountService;
 use App\Services\HierarchyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Password;
-use Illuminate\Support\Str;
-use Throwable;
 
-// POST /api/v1/admin/employees, PATCH /api/v1/admin/employees/{id}
-// (docs/DEVELOPMENT_PLAN.md §9.1, §10). Both routes carry the `manager` middleware;
-// this controller adds the hierarchy-specific checks on top.
+// POST /api/v1/admin/employees, PATCH/DELETE /api/v1/admin/employees/{id}, POST .../resend-invite
+// (docs/DEVELOPMENT_PLAN.md §9.1, §10). The routes carry `permission:` middleware; this controller adds
+// the checks on WHOM: inside the organization (an id from another one does not exist: 404), inside the caller's
+// reach (403), never yourself, and never handing out more than the caller has (ROLE_ESCALATION).
 class AdminEmployeeController extends Controller
 {
-    public function __construct(private HierarchyService $hierarchy) {}
+    public function __construct(
+        private AccessService $access,
+        private HierarchyService $hierarchy,
+        private AccountService $accounts,
+    ) {}
 
     public function store(StoreEmployeeRequest $request): JsonResponse
     {
         $caller = $request->user();
 
-        // §10.1-style validation is already done by StoreEmployeeRequest (role must be
-        // exactly one tier below the caller's own — see User::rolesOneTierBelow).
-        // Email uniqueness is checked here, not as a validation rule, so a collision
-        // reports 409 (matches §12 Phase 2 task 8) rather than a generic 422.
-        if (User::where('email', $request->string('email'))->exists()) {
-            return response()->json([
-                'error' => ['code' => 'EMAIL_TAKEN', 'message' => 'A user with this email already exists.'],
-            ], 409);
+        // Email uniqueness is checked here, not as a validation rule, so a collision reports 409
+        // (matches §12 Phase 2 task 8) rather than a generic 422. Emails are unique across every organization.
+        if ($this->accounts->emailTaken($request->string('email')->toString())) {
+            return $this->refuse(409, 'EMAIL_TAKEN', 'A user with this email already exists.');
         }
 
-        // Nobody knows this password: the new person picks their own through the emailed
-        // set-password link (§9.2).
-        $unusablePassword = Str::password(32);
-
-        // Explicit property assignment, not User::create([...]) — role/manager_id/
-        // status/created_by are deliberately excluded from Fillable (see User.php), so
-        // a mass-assignment create() would silently drop them (and did, until this was
-        // caught by EmployeeManagementTest failing with a NOT NULL constraint error).
-        $employee = new User;
-        $employee->name = $request->string('name');
-        $employee->email = $request->string('email');
-        $employee->password = Hash::make($unusablePassword);
-        $employee->role = $request->string('role');
-        $employee->manager_id = $caller->id;
-        $employee->status = 'active';
-        $employee->created_by = $caller->id;
-        $employee->save();
-
-        AuditLog::record($caller, 'employee.created', $employee, ['role' => $employee->role]);
-
-        // A failing mail server must not undo the account: it is logged, and the manager is
-        // handed the link to pass on themselves.
-        $token = Password::broker('invites')->createToken($employee);
-        $emailSent = true;
-        try {
-            $employee->notify(new WelcomeNotification($token, $caller->name));
-        } catch (Throwable $e) {
-            report($e);
-            $emailSent = false;
+        $role = Role::find($request->integer('roleId'));
+        if ($role === null) {
+            return $this->refuse(422, 'ROLE_NOT_FOUND', 'Choose one of the roles of this organization.');
         }
+        if (! $this->access->canGrantRole($caller, $role)) {
+            return $this->refuse(403, 'ROLE_ESCALATION', 'You cannot give a role that can do more than your own.');
+        }
+
+        // Unless said otherwise the new person reports to the caller (a superadmin has no place in the tree).
+        $manager = $caller->isSuperadmin() ? null : $caller;
+        if ($request->has('managerId')) {
+            if ($request->input('managerId') === null) {
+                // leaving a new person without a manager is for someone who reaches the whole organization
+                if ($this->access->scope($caller) !== 'organization') {
+                    return $this->refuse(422, 'MANAGER_REQUIRED', 'Choose who this person reports to.');
+                }
+                $manager = null;
+            } else {
+                $manager = $this->pickManager($caller, $request->input('managerId'));
+                if ($manager instanceof JsonResponse) {
+                    return $manager;
+                }
+            }
+        }
+
+        [$employee, $emailSent, $link] = $this->accounts->createPerson(
+            $caller, $request->string('name')->toString(), $request->string('email')->toString(), $role, $manager,
+        );
+
+        AuditLog::record($caller, 'employee.created', $employee, ['role' => $role->name]);
 
         return response()->json([
             'id' => (string) $employee->id,
             'name' => $employee->name,
             'email' => $employee->email,
-            'role' => $employee->role,
+            'role' => $role->name,
+            'roleId' => (string) $role->id,
             'emailSent' => $emailSent,
-            ...($emailSent ? [] : ['setPasswordUrl' => $employee->passwordSetUrl($token)]),
+            ...($emailSent ? [] : ['setPasswordUrl' => $link]),
         ], 201);
     }
 
     public function update(UpdateEmployeeRequest $request, int $id): JsonResponse
     {
         $caller = $request->user();
-        $employee = User::findOrFail($id);
+        $employee = User::find($id);
+        if ($employee === null) {
+            return $this->refuse(404, 'NOT_FOUND', 'Not found.');
+        }
         $newStatus = $request->string('status')->toString();
 
-        // Checked first, and before the self-check below, so it produces this more
-        // specific error even for the realistic way it actually triggers: a lone OIC
-        // deactivating themselves. (Two OICs deactivating each other can never drive
-        // the active count to zero — the caller stays active — so that path is
-        // defense-in-depth for future code, not something this test suite can hit.)
-        if ($newStatus === 'inactive' && $employee->role === 'oic') {
-            $otherActiveOics = User::where('role', 'oic')
-                ->where('status', 'active')
-                ->whereKeyNot($employee->id)
-                ->exists();
-
-            if (! $otherActiveOics) {
-                return response()->json([
-                    'error' => ['code' => 'LAST_OIC', 'message' => 'There must always be at least one active OIC.'],
-                ], 400);
-            }
+        // Checked first, and before the self-check below, so a lone admin deactivating themselves is told
+        // there must always be an admin rather than just "not yourself".
+        if ($newStatus === 'inactive' && $employee->status === 'active' && $this->isLastAdmin($employee)) {
+            return $this->refuse(400, 'LAST_ADMIN', 'The organization must always keep at least one active admin.');
         }
 
-        if ($id === $caller->id) {
-            return response()->json([
-                'error' => ['code' => 'CANNOT_MODIFY_SELF', 'message' => 'You cannot change your own account here.'],
-            ], 400);
+        if ($refusal = $this->checkTarget($caller, $employee)) {
+            return $refusal;
         }
 
-        // OIC has no manager_id, so no OIC is ever anyone's "descendant" — the normal
-        // hierarchy check would make it impossible for any OIC to ever be deactivated
-        // by anyone, including another OIC. Peer OICs are the one deliberate exception:
-        // any active OIC may act on any other OIC. Everyone else still requires $id to
-        // be a real descendant.
-        $isPeerOic = $caller->role === 'oic' && $employee->role === 'oic';
-        if (! $isPeerOic && ! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
-            return response()->json([
-                'error' => ['code' => 'FORBIDDEN', 'message' => 'This person is not in your hierarchy.'],
-            ], 403);
+        $touchesPerson = $request->hasAny(['name', 'status', 'managerId']);
+        if ($touchesPerson && ! $this->access->can($caller, 'people.update')) {
+            return $this->refuse(403, 'PERMISSION_DENIED', 'Your role does not allow this.');
+        }
+        if ($request->has('roleId') && ! $this->access->can($caller, 'people.assign_role')) {
+            return $this->refuse(403, 'PERMISSION_DENIED', 'Your role does not allow this.');
         }
 
-        // A role change is only for someone higher (the checks above already refused yourself and anyone
-        // outside the caller's hierarchy). Checked, with any move, before anything is changed, so a
-        // refused change leaves the account untouched.
-        $newRole = $request->has('role') && $request->string('role')->toString() !== $employee->role
-            ? $request->string('role')->toString()
-            : null;
-        $wantsManager = $request->has('managerId') && $request->integer('managerId') !== $employee->manager_id;
-
-        if ($newRole !== null) {
-            $refusal = $this->checkRoleChange($employee, $newRole, $wantsManager);
-            if ($refusal instanceof JsonResponse) {
-                return $refusal;
+        // The role and the move are checked before anything is changed, so a refused request leaves the account untouched.
+        $newRole = null;
+        if ($request->has('roleId') && $request->integer('roleId') !== $employee->role_id) {
+            $newRole = $this->checkRoleChange($caller, $employee, $request->integer('roleId'));
+            if ($newRole instanceof JsonResponse) {
+                return $newRole;
             }
         }
 
         $newManager = null;
-        if ($wantsManager) {
-            $refusal = $this->checkMove($caller, $employee, $request->integer('managerId'), $newRole ?? $employee->role);
-            if ($refusal instanceof JsonResponse) {
-                return $refusal;
+        $removeManager = false;
+        if ($request->has('managerId') && $request->input('managerId') !== $employee->manager_id) {
+            if ($request->input('managerId') === null) {
+                if ($this->access->scope($caller) !== 'organization') {
+                    return $this->refuse(422, 'MANAGER_REQUIRED', 'Only someone who reaches the whole organization can leave a person without a manager.');
+                }
+                $removeManager = $employee->manager_id !== null;
+            } else {
+                $newManager = $this->pickManager($caller, $request->input('managerId'), $employee);
+                if ($newManager instanceof JsonResponse) {
+                    return $newManager;
+                }
+                $newManager = $newManager->id === $employee->manager_id ? null : $newManager;
             }
-            $newManager = $refusal;
         }
 
         if ($request->has('name')) {
@@ -151,21 +138,25 @@ class AdminEmployeeController extends Controller
         }
 
         $previousManager = $employee->manager;
+        $previousRole = $employee->role;
         if ($newManager) {
             $employee->manager_id = $newManager->id;
+        } elseif ($removeManager) {
+            $employee->manager_id = null;
         }
+        $movedTo = $newManager ?? ($removeManager ? false : null);
+
         if ($newRole !== null) {
             AuditLog::record($caller, 'employee.role_changed', $employee, [
-                'from' => $employee->role,
-                'to' => $newRole,
-                'managerFrom' => $previousManager?->name,
-                'managerTo' => ($newManager ?? $previousManager)?->name,
+                'from' => $previousRole?->name,
+                'to' => $newRole->name,
+                ...($movedTo === null ? [] : ['managerFrom' => $previousManager?->name, 'managerTo' => $movedTo ? $movedTo->name : null]),
             ]);
-            $employee->role = $newRole;
-        } elseif ($newManager) {
+            $employee->role_id = $newRole->id;
+        } elseif ($movedTo !== null) {
             AuditLog::record($caller, 'employee.moved', $employee, [
                 'from' => $previousManager?->name,
-                'to' => $newManager->name,
+                'to' => $movedTo ? $movedTo->name : null,
             ]);
         }
 
@@ -184,135 +175,75 @@ class AdminEmployeeController extends Controller
         }
 
         $employee->save();
+        $employee->load('role', 'manager');
 
         return response()->json([
             'id' => (string) $employee->id,
             'name' => $employee->name,
             'email' => $employee->email,
-            'role' => $employee->role,
+            'role' => $employee->role?->name,
+            'roleId' => (string) $employee->role_id,
             'status' => $employee->status,
             'managerId' => $employee->manager_id === null ? null : (string) $employee->manager_id,
-            'managerName' => $employee->manager()->value('name'),
+            'managerName' => $employee->manager?->name,
         ]);
     }
 
     /**
-     * Emails a fresh set-password link to someone the caller manages (the welcome link lasts 3 days).
+     * Emails a fresh set-password link to someone in the caller's reach (the welcome link lasts 3 days).
      * When the mail cannot be sent the link comes back instead, as when the account was created.
      */
     public function resendInvite(Request $request, int $id): JsonResponse
     {
         $caller = $request->user();
-        $employee = User::findOrFail($id);
-
-        if ($id === $caller->id) {
-            return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
+        $employee = User::find($id);
+        if ($employee === null) {
+            return $this->refuse(404, 'NOT_FOUND', 'Not found.');
         }
-        if (! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
-            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your hierarchy.');
+        if ($refusal = $this->checkTarget($caller, $employee)) {
+            return $refusal;
         }
         if ($employee->status !== 'active') {
             return $this->refuse(409, 'ACCOUNT_INACTIVE', "{$employee->name} is deactivated. Reactivate the account first.");
         }
 
-        $token = Password::broker('invites')->createToken($employee);
-        $emailSent = true;
-        try {
-            $employee->notify(new WelcomeNotification($token, $caller->name));
-        } catch (Throwable $e) {
-            report($e);
-            $emailSent = false;
-        }
+        [$emailSent, $link] = $this->accounts->invite($employee, $caller);
 
         AuditLog::record($caller, 'employee.invite_resent', $employee, ['emailSent' => $emailSent]);
 
         return response()->json([
             'emailSent' => $emailSent,
-            ...($emailSent ? [] : ['setPasswordUrl' => $employee->passwordSetUrl($token)]),
+            ...($emailSent ? [] : ['setPasswordUrl' => $link]),
         ]);
     }
 
     /**
-     * Whether $employee may take $newRole (someone higher has already been established). Returns the
-     * refusal to send back, or null when it is fine. The people reporting to them must still fit the new
-     * role (a manager with a team cannot become a developer), and when their current manager could not
-     * manage the new role a new manager has to be chosen in the same request ($wantsManager).
-     */
-    private function checkRoleChange(User $employee, string $newRole, bool $wantsManager): ?JsonResponse
-    {
-        if ($employee->role === 'oic') {
-            return $this->refuse(400, 'CANNOT_CHANGE_OIC', 'The role of an OIC cannot be changed.');
-        }
-
-        $fits = User::rolesOneTierBelow($newRole);
-        if ($employee->directReports()->get()->contains(fn (User $report) => ! in_array($report->role, $fits, true))) {
-            return $this->refuse(409, 'HAS_REPORTS', "{$employee->name} has people reporting to them who could not report to that role. Move those people first.");
-        }
-
-        $currentManagerFits = $employee->manager !== null
-            && in_array($newRole, User::rolesOneTierBelow($employee->manager->role), true);
-        if (! $currentManagerFits && ! $wantsManager) {
-            return $this->refuse(422, 'MANAGER_REQUIRED', 'Choose who they will report to in their new role.');
-        }
-
-        return null;
-    }
-
-    /**
-     * Whether $caller may move $employee under the manager with id $managerId. Returns the new
-     * manager when yes, or the refusal to send back. The new manager must be someone the caller can
-     * see, active, and hold the role exactly one tier above $role (the person's role after any role
-     * change in the same request), so the tree keeps its shape (and can never loop) without any extra
-     * validation.
-     */
-    private function checkMove(User $caller, User $employee, int $managerId, string $role): User|JsonResponse
-    {
-        if ($employee->role === 'oic') {
-            return $this->refuse(400, 'CANNOT_MOVE_OIC', 'An OIC has no manager.');
-        }
-
-        $newManager = User::find($managerId);
-        if (! $newManager || ! $this->hierarchy->isVisible($caller, $managerId)) {
-            return $this->refuse(403, 'FORBIDDEN', 'That manager is not in your hierarchy.');
-        }
-        if ($newManager->status !== 'active') {
-            return $this->refuse(422, 'MANAGER_INACTIVE', "{$newManager->name} is deactivated and cannot manage anyone.");
-        }
-        if (! in_array($role, User::rolesOneTierBelow($newManager->role), true)) {
-            return $this->refuse(422, 'WRONG_TIER', "{$newManager->name} cannot manage this role. A person reports to the role one tier above their own.");
-        }
-
-        return $newManager;
-    }
-
-    /**
      * Removes an account that was added by mistake or never used. Anyone who has tracked time or has
-     * people reporting to them is refused: the office keeps all tracked data, so they are deactivated
+     * people reporting to them is refused: the organization keeps all tracked data, so they are deactivated
      * instead, which keeps their history.
      */
     public function destroy(Request $request, int $id): Response|JsonResponse
     {
         $caller = $request->user();
-        $employee = User::findOrFail($id);
-
-        if ($id === $caller->id) {
-            return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
+        $employee = User::find($id);
+        if ($employee === null) {
+            return $this->refuse(404, 'NOT_FOUND', 'Not found.');
         }
-        if ($employee->role === 'oic') {
-            return $this->refuse(400, 'CANNOT_DELETE_OIC', 'An OIC account cannot be deleted. Deactivate it instead.');
+        if ($refusal = $this->checkTarget($caller, $employee)) {
+            return $refusal;
         }
-        if (! in_array($id, $this->hierarchy->allDescendantIds($caller->id), true)) {
-            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your hierarchy.');
+        if ($this->isLastAdmin($employee)) {
+            return $this->refuse(400, 'LAST_ADMIN', 'The organization must always keep at least one active admin.');
         }
         if (User::where('manager_id', $id)->exists()) {
             return $this->refuse(409, 'HAS_REPORTS', "{$employee->name} has people reporting to them. Delete or move those accounts first.");
         }
         if (DB::table('sessions')->where('user_id', $id)->exists() || DB::table('daily_summaries')->where('user_id', $id)->exists()) {
-            return $this->refuse(409, 'HAS_DATA', "{$employee->name} has tracked time, which the office keeps. Deactivate the account instead.");
+            return $this->refuse(409, 'HAS_DATA', "{$employee->name} has tracked time, which the organization keeps. Deactivate the account instead.");
         }
 
         // Written first: the entry keeps the person's name after the row is gone.
-        AuditLog::record($caller, 'employee.deleted', $employee, ['email' => $employee->email, 'role' => $employee->role]);
+        AuditLog::record($caller, 'employee.deleted', $employee, ['email' => $employee->email, 'role' => $employee->role?->name]);
 
         $employee->tokens()->delete();
         DB::table('password_reset_tokens')->where('email', $employee->email)->delete();
@@ -320,6 +251,75 @@ class AdminEmployeeController extends Controller
         $employee->delete();
 
         return response()->noContent();
+    }
+
+    /** Not yourself, and inside the caller's reach. Returns the refusal, or null when the caller may act on $employee. */
+    private function checkTarget(User $caller, User $employee): ?JsonResponse
+    {
+        if ($employee->id === $caller->id) {
+            return $this->refuse(400, 'CANNOT_MODIFY_SELF', 'You cannot change your own account here.');
+        }
+        if (! $this->access->isVisible($caller, $employee->id)) {
+            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your reach.');
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether $employee may take the role $roleId from $caller. Returns the new role, or the refusal to send back.
+     * Nobody gives more than they have, and nobody changes the role of someone who holds more than they do.
+     */
+    private function checkRoleChange(User $caller, User $employee, int $roleId): Role|JsonResponse
+    {
+        $newRole = Role::find($roleId);
+        if ($newRole === null) {
+            return $this->refuse(422, 'ROLE_NOT_FOUND', 'Choose one of the roles of this organization.');
+        }
+        if ($employee->role !== null && ! $this->access->canGrantRole($caller, $employee->role)) {
+            return $this->refuse(403, 'ROLE_ESCALATION', "{$employee->name} holds a role that can do more than yours, so you cannot change it.");
+        }
+        if (! $this->access->canGrantRole($caller, $newRole)) {
+            return $this->refuse(403, 'ROLE_ESCALATION', 'You cannot give a role that can do more than your own.');
+        }
+        if ($employee->status === 'active' && $this->isLastAdmin($employee) && ! $newRole->is_system) {
+            return $this->refuse(400, 'LAST_ADMIN', 'The organization must always keep at least one active admin.');
+        }
+
+        return $newRole;
+    }
+
+    /**
+     * The manager the caller picked for $employee (or for a new person when $employee is null): somebody in the
+     * caller's reach, active, and not somebody who would end up above themselves. Returns the manager or the refusal.
+     */
+    private function pickManager(User $caller, mixed $managerId, ?User $employee = null): User|JsonResponse
+    {
+        $manager = User::find((int) $managerId);
+        if ($manager === null || ! $this->access->isVisible($caller, $manager->id)) {
+            return $this->refuse(403, 'FORBIDDEN', 'That manager is not in your reach.');
+        }
+        if ($manager->status !== 'active') {
+            return $this->refuse(422, 'MANAGER_INACTIVE', "{$manager->name} is deactivated and cannot manage anyone.");
+        }
+        if ($employee !== null && $this->hierarchy->wouldCreateLoop($employee->id, $manager->id)) {
+            return $this->refuse(422, 'WOULD_CREATE_LOOP', "{$manager->name} reports to {$employee->name} (directly or further down), so they cannot be their manager.");
+        }
+
+        return $manager;
+    }
+
+    /** Whether $employee is the organization's only active holder of the built-in admin role. */
+    private function isLastAdmin(User $employee): bool
+    {
+        if (! $employee->role?->is_system) {
+            return false;
+        }
+
+        return ! User::where('role_id', $employee->role_id)
+            ->where('status', 'active')
+            ->whereKeyNot($employee->id)
+            ->exists();
     }
 
     private function refuse(int $status, string $code, string $message): JsonResponse

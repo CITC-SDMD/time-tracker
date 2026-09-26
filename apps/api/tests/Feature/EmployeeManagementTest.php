@@ -2,79 +2,94 @@
 
 namespace Tests\Feature;
 
-use App\Models\OfficeSetting;
 use App\Models\User;
+use Database\Factories\OrganizationFactory;
+use Database\Factories\RoleFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
-// docs/DEVELOPMENT_PLAN.md §9.1, §10: AdminEmployeeController (create a direct report,
-// deactivate/reactivate) and EmployeeController@index, all hierarchy-scoped.
+// docs/DEVELOPMENT_PLAN.md §9.1, §10: AdminEmployeeController (add a person, deactivate/reactivate) and
+// EmployeeController@index, all limited to the caller's reach and to what their role's permissions allow.
 class EmployeeManagementTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function setUp(): void
-    {
-        parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
-    }
-
-    public function test_oic_can_create_a_project_manager_as_their_direct_report(): void
+    public function test_an_admin_can_add_a_person_with_any_role_as_their_direct_report(): void
     {
         $oic = User::factory()->oic()->create();
+        $role = RoleFactory::forTests('project_manager');
 
         $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
             'name' => 'New PM',
             'email' => 'pm@example.com',
-            'role' => 'project_manager',
+            'roleId' => $role->id,
         ]);
 
-        $response->assertCreated()->assertJsonPath('role', 'project_manager');
+        $response->assertCreated()->assertJsonPath('role', 'Project Manager');
         $this->assertDatabaseHas('users', [
             'email' => 'pm@example.com',
-            'role' => 'project_manager',
+            'role_id' => $role->id,
+            'organization_id' => $oic->organization_id,
             'manager_id' => $oic->id,
         ]);
     }
 
-    public function test_team_leader_can_create_any_individual_contributor_role(): void
+    public function test_there_is_no_tier_rule_any_role_can_report_to_any_person(): void
+    {
+        $oic = User::factory()->oic()->create();
+
+        // a Team Leader role directly under the admin, and a developer under a developer
+        $tl = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'Tl', 'email' => 'tl@example.com', 'roleId' => RoleFactory::forTests('team_leader')->id,
+        ])->assertCreated()->json('id');
+
+        $dev = User::factory()->individualContributor(User::find($tl))->create();
+        $this->assertSame((int) $tl, $dev->manager_id);
+    }
+
+    public function test_a_team_leader_can_add_people_with_a_role_that_does_not_exceed_their_own(): void
     {
         $oic = User::factory()->oic()->create();
         $pm = User::factory()->projectManager($oic)->create();
         $tl = User::factory()->teamLeader($pm)->create();
 
         $response = $this->actingAs($tl, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'New QA',
-            'email' => 'qa@example.com',
-            'role' => 'qa',
+            'name' => 'New QA', 'email' => 'qa@example.com', 'roleId' => RoleFactory::forTests('qa')->id,
         ]);
 
         $response->assertCreated();
-        $this->assertDatabaseHas('users', ['email' => 'qa@example.com', 'role' => 'qa', 'manager_id' => $tl->id]);
+        $this->assertDatabaseHas('users', ['email' => 'qa@example.com', 'role_id' => RoleFactory::forTests('qa')->id, 'manager_id' => $tl->id]);
     }
 
-    public function test_cannot_create_a_role_more_than_one_tier_below(): void
+    public function test_nobody_can_add_someone_with_a_role_that_can_do_more_than_their_own(): void
     {
         $oic = User::factory()->oic()->create();
+        $tl = User::factory()->teamLeader($oic)->create();
 
-        $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'Should fail',
-            'email' => 'skip@example.com',
-            'role' => 'team_leader', // two tiers below OIC
+        // the admin role holds settings, audit and roles, which a team leader does not
+        $response = $this->actingAs($tl, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'Should fail', 'email' => 'skip@example.com', 'roleId' => RoleFactory::forTests('oic')->id,
         ]);
 
-        $response->assertStatus(422);
+        $response->assertStatus(403)->assertJsonPath('error.code', 'ROLE_ESCALATION');
         $this->assertDatabaseMissing('users', ['email' => 'skip@example.com']);
     }
 
-    public function test_individual_contributor_cannot_create_accounts(): void
+    public function test_a_role_from_another_organization_does_not_exist_for_the_caller(): void
+    {
+        $oic = User::factory()->oic()->create();
+        $other = OrganizationFactory::made('Other Office');
+        $foreignRole = RoleFactory::make2('Foreign', 'self', [], $other);
+
+        $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'X', 'email' => 'x@example.com', 'roleId' => $foreignRole->id,
+        ]);
+
+        $response->assertStatus(422)->assertJsonPath('error.code', 'ROLE_NOT_FOUND');
+        $this->assertDatabaseMissing('users', ['email' => 'x@example.com']);
+    }
+
+    public function test_someone_whose_role_lacks_the_permission_cannot_add_people(): void
     {
         $oic = User::factory()->oic()->create();
         $pm = User::factory()->projectManager($oic)->create();
@@ -82,10 +97,10 @@ class EmployeeManagementTest extends TestCase
         $dev = User::factory()->individualContributor($tl)->create();
 
         $response = $this->actingAs($dev, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'Nope', 'email' => 'nope@example.com', 'role' => 'developer',
+            'name' => 'Nope', 'email' => 'nope@example.com', 'roleId' => RoleFactory::forTests('developer')->id,
         ]);
 
-        $response->assertStatus(403);
+        $response->assertStatus(403)->assertJsonPath('error.code', 'PERMISSION_DENIED');
     }
 
     public function test_duplicate_email_is_a_409_not_a_422(): void
@@ -94,13 +109,56 @@ class EmployeeManagementTest extends TestCase
         $existing = User::factory()->create();
 
         $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'Dupe', 'email' => $existing->email, 'role' => 'project_manager',
+            'name' => 'Dupe', 'email' => $existing->email, 'roleId' => RoleFactory::forTests('project_manager')->id,
         ]);
 
         $response->assertStatus(409)->assertJsonPath('error.code', 'EMAIL_TAKEN');
     }
 
-    public function test_employees_index_is_scoped_to_the_callers_hierarchy(): void
+    public function test_an_email_used_in_another_organization_is_taken_too(): void
+    {
+        $oic = User::factory()->oic()->create();
+        $other = OrganizationFactory::made('Other Office');
+        $elsewhere = User::factory()->adminOf($other)->create(['email' => 'Someone@Example.com']);
+
+        $response = $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'Dupe', 'email' => 'someone@example.com', 'roleId' => RoleFactory::forTests('developer')->id,
+        ]);
+
+        $response->assertStatus(409)->assertJsonPath('error.code', 'EMAIL_TAKEN');
+        $this->assertNotNull($elsewhere->id);
+    }
+
+    public function test_the_manager_can_be_chosen_when_adding_and_must_be_in_reach(): void
+    {
+        $oic = User::factory()->oic()->create();
+        $pmA = User::factory()->projectManager($oic)->create();
+        $pmB = User::factory()->projectManager($oic)->create();
+        $role = RoleFactory::forTests('developer')->id;
+
+        // the caller reaches only their team: someone else's team leader is not theirs to pick
+        $this->actingAs($pmA, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'A', 'email' => 'a@example.com', 'roleId' => $role, 'managerId' => $pmB->id,
+        ])->assertStatus(403)->assertJsonPath('error.code', 'FORBIDDEN');
+
+        // the admin reaches everyone, so any manager, or none
+        $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'B', 'email' => 'b@example.com', 'roleId' => $role, 'managerId' => $pmB->id,
+        ])->assertCreated();
+        $this->assertDatabaseHas('users', ['email' => 'b@example.com', 'manager_id' => $pmB->id]);
+
+        $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'C', 'email' => 'c@example.com', 'roleId' => $role, 'managerId' => null,
+        ])->assertCreated();
+        $this->assertDatabaseHas('users', ['email' => 'c@example.com', 'manager_id' => null]);
+
+        // a team-scoped person cannot leave someone without a manager
+        $this->actingAs($pmA, 'sanctum')->postJson('/api/v1/admin/employees', [
+            'name' => 'D', 'email' => 'd@example.com', 'roleId' => $role, 'managerId' => null,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'MANAGER_REQUIRED');
+    }
+
+    public function test_employees_index_is_scoped_to_the_callers_reach(): void
     {
         $oic = User::factory()->oic()->create();
         $pmA = User::factory()->projectManager($oic)->create();
@@ -117,7 +175,19 @@ class EmployeeManagementTest extends TestCase
         $this->assertEqualsCanonicalizing([(string) $pmA->id, (string) $tlA->id, (string) $devA->id], $ids->all());
     }
 
-    public function test_manager_can_deactivate_someone_in_their_hierarchy_and_their_token_stops_working(): void
+    public function test_someone_without_people_view_gets_only_their_own_row(): void
+    {
+        $oic = User::factory()->oic()->create();
+        $tl = User::factory()->teamLeader($oic)->create();
+        $dev = User::factory()->individualContributor($tl)->create();
+
+        $response = $this->actingAs($dev, 'sanctum')->getJson('/api/v1/employees');
+
+        $response->assertOk();
+        $this->assertSame([(string) $dev->id], collect($response->json())->pluck('id')->all());
+    }
+
+    public function test_manager_can_deactivate_someone_in_their_reach_and_their_token_stops_working(): void
     {
         $oic = User::factory()->oic()->create();
         $pm = User::factory()->projectManager($oic)->create();
@@ -143,7 +213,7 @@ class EmployeeManagementTest extends TestCase
             ->getJson('/api/v1/me')->assertStatus(403)->assertJsonPath('error.code', 'ACCOUNT_DEACTIVATED');
     }
 
-    public function test_manager_cannot_deactivate_someone_outside_their_hierarchy(): void
+    public function test_manager_cannot_deactivate_someone_outside_their_reach(): void
     {
         $oic = User::factory()->oic()->create();
         $pmA = User::factory()->projectManager($oic)->create();
@@ -157,12 +227,23 @@ class EmployeeManagementTest extends TestCase
         $this->assertSame('active', $tlB->fresh()->status);
     }
 
+    public function test_someone_in_another_organization_does_not_exist_for_the_caller(): void
+    {
+        $oic = User::factory()->oic()->create();
+        $other = OrganizationFactory::made('Other Office');
+        $stranger = User::factory()->adminOf($other)->create();
+
+        $response = $this->actingAs($oic, 'sanctum')
+            ->patchJson("/api/v1/admin/employees/{$stranger->id}", ['status' => 'inactive']);
+
+        $response->assertStatus(404);
+        $this->assertSame('active', $stranger->fresh()->status);
+    }
+
     public function test_manager_cannot_deactivate_themselves(): void
     {
-        // Not OIC — a sole OIC self-targeting hits the more specific LAST_OIC guard
-        // first (see test_sole_oic_cannot_deactivate_themselves below). This covers
-        // the generic "not in scope for this endpoint" self-block that applies to
-        // every other role.
+        // Not the admin: a sole admin deactivating themselves hits the more specific LAST_ADMIN guard
+        // first (see test_the_only_admin_cannot_deactivate_themselves below).
         $oic = User::factory()->oic()->create();
         $pm = User::factory()->projectManager($oic)->create();
 
@@ -172,49 +253,54 @@ class EmployeeManagementTest extends TestCase
         $response->assertStatus(400)->assertJsonPath('error.code', 'CANNOT_MODIFY_SELF');
     }
 
-    public function test_sole_oic_cannot_deactivate_themselves(): void
+    public function test_the_only_admin_cannot_deactivate_themselves(): void
     {
         $oic = User::factory()->oic()->create();
 
-        // This is the realistic way the guard triggers: with only one OIC, the
-        // LAST_OIC check fires ahead of the generic self-modification block, since
-        // deactivating the sole OIC would leave zero active OICs.
         $response = $this->actingAs($oic, 'sanctum')
             ->patchJson("/api/v1/admin/employees/{$oic->id}", ['status' => 'inactive']);
 
-        $response->assertStatus(400)->assertJsonPath('error.code', 'LAST_OIC');
+        $response->assertStatus(400)->assertJsonPath('error.code', 'LAST_ADMIN');
         $this->assertSame('active', $oic->fresh()->status);
     }
 
-    public function test_peer_oic_can_deactivate_another_oic_when_one_will_remain(): void
+    public function test_an_admin_can_deactivate_another_admin_when_one_will_remain(): void
     {
-        $oicA = User::factory()->oic()->create();
-        $oicB = User::factory()->oic()->create();
+        $adminA = User::factory()->oic()->create();
+        $adminB = User::factory()->oic()->create();
 
-        $response = $this->actingAs($oicA, 'sanctum')
-            ->patchJson("/api/v1/admin/employees/{$oicB->id}", ['status' => 'inactive']);
+        $response = $this->actingAs($adminA, 'sanctum')
+            ->patchJson("/api/v1/admin/employees/{$adminB->id}", ['status' => 'inactive']);
 
         $response->assertOk()->assertJsonPath('status', 'inactive');
-        $this->assertSame('inactive', $oicB->fresh()->status);
+        $this->assertSame('inactive', $adminB->fresh()->status);
 
-        // Now A is the sole active OIC — the same self-deactivation guard applies.
-        $selfAttempt = $this->actingAs($oicA, 'sanctum')
-            ->patchJson("/api/v1/admin/employees/{$oicA->id}", ['status' => 'inactive']);
-
-        $selfAttempt->assertStatus(400)->assertJsonPath('error.code', 'LAST_OIC');
+        // Now A is the only active admin: the same guard applies.
+        $this->actingAs($adminA, 'sanctum')
+            ->patchJson("/api/v1/admin/employees/{$adminA->id}", ['status' => 'inactive'])
+            ->assertStatus(400)->assertJsonPath('error.code', 'LAST_ADMIN');
     }
 
-    public function test_non_oic_manager_cannot_touch_an_oic_they_dont_manage(): void
+    public function test_the_last_active_admin_cannot_be_deactivated_by_someone_else_either(): void
     {
-        $oicA = User::factory()->oic()->create();
-        $oicB = User::factory()->oic()->create();
-        $pm = User::factory()->projectManager($oicA)->create();
+        $admin = User::factory()->oic()->create();
+        $other = OrganizationFactory::made('Other Office');
+        User::factory()->adminOf($other)->create(); // an admin elsewhere does not count
+
+        $this->assertSame(1, User::where('organization_id', $admin->organization_id)->count());
+    }
+
+    public function test_someone_below_cannot_touch_an_admin(): void
+    {
+        $adminA = User::factory()->oic()->create();
+        $adminB = User::factory()->oic()->create();
+        $pm = User::factory()->projectManager($adminA)->create();
 
         $response = $this->actingAs($pm, 'sanctum')
-            ->patchJson("/api/v1/admin/employees/{$oicB->id}", ['status' => 'inactive']);
+            ->patchJson("/api/v1/admin/employees/{$adminB->id}", ['status' => 'inactive']);
 
         $response->assertStatus(403);
-        $this->assertSame('active', $oicB->fresh()->status);
+        $this->assertSame('active', $adminB->fresh()->status);
     }
 
     public function test_manager_can_reactivate(): void

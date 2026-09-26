@@ -3,8 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
+use Database\Factories\RoleFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -17,14 +17,6 @@ class AdminAuditTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
     }
 
     public function test_oic_sees_audit_entries_from_the_whole_hierarchy_not_just_their_own_actions(): void
@@ -98,7 +90,7 @@ class AdminAuditTest extends TestCase
         $oic = User::factory()->oic()->create();
 
         $this->actingAs($oic, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'New PM', 'email' => 'pm@example.com', 'role' => 'project_manager',
+            'name' => 'New PM', 'email' => 'pm@example.com', 'roleId' => RoleFactory::forTests('project_manager')->id,
         ])->assertCreated();
 
         $response = $this->actingAs($oic, 'sanctum')->getJson('/api/v1/admin/audit');

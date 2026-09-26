@@ -2,16 +2,21 @@
 
 namespace Database\Seeders;
 
-use App\Models\OfficeSetting;
+use App\Models\Organization;
+use App\Models\OrganizationSetting;
+use App\Models\Role;
 use App\Models\Screenshot;
 use App\Models\User;
+use App\Services\OrganizationService;
+use App\Support\OrganizationContext;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
-// a small office for trying the dashboard by hand and for the live tests of docs/DEVELOPMENT_PLAN.md
-// phases 6 and 11: the OIC from UserSeeder, 2 project managers, 3 team leaders and 6 members, all with
+// two small offices for trying the dashboard by hand and for the live tests of docs/DEVELOPMENT_PLAN.md
+// phases 6 and 11. The demo office (made by UserSeeder) has the OIC, 2 project managers, 3 team leaders and 6 members with
+// roles it made itself, all with
 // the password "password", 60 days of daily totals and a mix of live states (tracking, idle, paused,
 // not tracking, offline) with a few timelines for today. never runs in production. run it after
 // `php artisan migrate:fresh --seed` with: php artisan db:seed --class=DemoHierarchySeeder
@@ -26,28 +31,84 @@ class DemoHierarchySeeder extends Seeder
         'figma' => 'Figma',
     ];
 
+    private Organization $org;
+
+    /** @var array<string, Role> the roles of the office being seeded, by name */
+    private array $roles = [];
+
     public function run(): void
     {
         if (app()->isProduction()) {
             return;
         }
 
-        mt_srand(2026); // the same office every time
-        $timezone = OfficeSetting::current()->timezone;
+        mt_srand(2026); // the same offices every time
+        $context = app(OrganizationContext::class);
 
-        $oic = $this->person('OIC', 'oic@test.com', 'oic', null);
-        $pm1 = $this->person('Paula Reyes', 'pm1@test.com', 'project_manager', $oic);
-        $pm2 = $this->person('Pedro Santos', 'pm2@test.com', 'project_manager', $oic);
-        $tl1 = $this->person('Tina Cruz', 'tl1@test.com', 'team_leader', $pm1);
-        $tl2 = $this->person('Tomas Diaz', 'tl2@test.com', 'team_leader', $pm1);
-        $tl3 = $this->person('Tess Lim', 'tl3@test.com', 'team_leader', $pm2);
+        $this->org = Organization::where('slug', 'demo-office')->firstOrFail(); // made by UserSeeder
+        $context->within($this->org->id, fn () => $this->seedDemoOffice());
+
+        // a second office, so the isolation between offices can be tried: its own admin, roles and two people
+        $this->org = Organization::where('slug', 'other-office')->first() ?? app(OrganizationService::class)->create('Other Office');
+        $context->within($this->org->id, fn () => $this->seedOtherOffice());
+    }
+
+    private function seedOtherOffice(): void
+    {
+        $admin = Role::where('is_system', true)->firstOrFail();
+        $admin->name = 'Admin';
+        $admin->save();
+        $this->roles = ['Admin' => $admin];
+        $this->role('Lead', 'team', ['people.view', 'people.create', 'people.update', 'timeline.view', 'screenshots.view', 'reports.view', 'reports.export']);
+        $this->role('Staff', 'self', []);
+
+        $boss = $this->person('Bea Admin', 'admin.b@test.com', 'Admin', null);
+        $lead = $this->person('Lena Lead', 'lead.b@test.com', 'Lead', $boss);
+        $staff = [
+            $this->person('Ben Staff', 'b1@test.com', 'Staff', $lead),
+            $this->person('Bianca Staff', 'b2@test.com', 'Staff', $lead),
+        ];
+        $timezone = OrganizationSetting::current()->timezone;
+        foreach ([$lead, ...$staff] as $user) {
+            for ($back = 1; $back <= 5; $back++) {
+                $day = now($timezone)->subDays($back);
+                if ($day->isWeekend()) {
+                    continue;
+                }
+                $tracked = mt_rand(4 * 3600, 8 * 3600);
+                $active = (int) ($tracked * 0.85);
+                $this->upsertSummary($user, $day->format('Y-m-d'), $tracked, $active, $tracked - $active, $this->split($active),
+                    $day->copy()->setTime(9, 0)->utc(), $day->copy()->setTime(9, 0)->addSeconds($tracked)->utc());
+            }
+        }
+        $this->live($staff[0], 'active', 'Google Chrome', 1);
+        $this->todaysSessions($staff[0], $timezone);
+    }
+
+    private function seedDemoOffice(): void
+    {
+        $timezone = OrganizationSetting::current()->timezone;
+        $this->roles = ['OIC' => Role::where('is_system', true)->firstOrFail()];
+        $manager = ['people.view', 'people.create', 'people.update', 'people.assign_role', 'timeline.view', 'screenshots.view', 'reports.view', 'reports.export'];
+        $this->role('Project Manager', 'team', $manager);
+        $this->role('Team Leader', 'team', $manager);
+        foreach (['Lead Developer', 'Developer', 'Client Support', 'QA', 'System Analyst'] as $name) {
+            $this->role($name, 'self', []);
+        }
+
+        $oic = $this->person('OIC', 'oic@test.com', 'OIC', null);
+        $pm1 = $this->person('Paula Reyes', 'pm1@test.com', 'Project Manager', $oic);
+        $pm2 = $this->person('Pedro Santos', 'pm2@test.com', 'Project Manager', $oic);
+        $tl1 = $this->person('Tina Cruz', 'tl1@test.com', 'Team Leader', $pm1);
+        $tl2 = $this->person('Tomas Diaz', 'tl2@test.com', 'Team Leader', $pm1);
+        $tl3 = $this->person('Tess Lim', 'tl3@test.com', 'Team Leader', $pm2);
         $members = [
-            $this->person('Dan Ramos', 'dev1@test.com', 'lead_developer', $tl1),
-            $this->person('Dana Uy', 'dev2@test.com', 'developer', $tl1),
-            $this->person('Dex Tan', 'dev3@test.com', 'developer', $tl2),
-            $this->person('Quinn Go', 'qa1@test.com', 'qa', $tl2),
-            $this->person('Cara Sy', 'cs1@test.com', 'client_support', $tl3),
-            $this->person('Sam Ong', 'sa1@test.com', 'system_analyst', $tl3),
+            $this->person('Dan Ramos', 'dev1@test.com', 'Lead Developer', $tl1),
+            $this->person('Dana Uy', 'dev2@test.com', 'Developer', $tl1),
+            $this->person('Dex Tan', 'dev3@test.com', 'Developer', $tl2),
+            $this->person('Quinn Go', 'qa1@test.com', 'QA', $tl2),
+            $this->person('Cara Sy', 'cs1@test.com', 'Client Support', $tl3),
+            $this->person('Sam Ong', 'sa1@test.com', 'System Analyst', $tl3),
         ];
 
         // sixty days of totals for everyone below the OIC, weekdays only
@@ -108,12 +169,22 @@ class DemoHierarchySeeder extends Seeder
         }
     }
 
-    private function person(string $name, string $email, string $role, ?User $manager): User
+    /** a role this office made for itself (or the one it already has under that name) */
+    private function role(string $name, string $scope, array $permissions): Role
     {
-        return User::unguarded(fn () => User::updateOrCreate(['email' => $email], [
+        return $this->roles[$name] ??= Role::unguarded(fn () => Role::firstOrCreate(
+            ['name' => $name],
+            ['scope' => $scope, 'permissions' => $permissions, 'is_system' => false],
+        ));
+    }
+
+    private function person(string $name, string $email, string $roleName, ?User $manager): User
+    {
+        return User::unguarded(fn () => User::withoutGlobalScopes()->updateOrCreate(['email' => $email], [
             'name' => $name,
             'password' => Hash::make('password'),
-            'role' => $role,
+            'organization_id' => $this->org->id,
+            'role_id' => $this->roles[$roleName]->id,
             'manager_id' => $manager?->id,
             'status' => 'active',
         ]));
@@ -137,6 +208,7 @@ class DemoHierarchySeeder extends Seeder
     private function upsertSummary(User $user, string $day, int $tracked, int $active, int $idle, array $apps, $first, $last): void
     {
         DB::table('daily_summaries')->updateOrInsert(['user_id' => $user->id, 'day' => $day], [
+            'organization_id' => $this->org->id,
             'tracked_seconds' => $tracked,
             'active_seconds' => $active,
             'idle_seconds' => $idle,
@@ -150,6 +222,7 @@ class DemoHierarchySeeder extends Seeder
     private function live(User $user, string $state, ?string $app, int $minutesAgo, ?string $idleApp = null): void
     {
         DB::table('employee_statuses')->updateOrInsert(['user_id' => $user->id], [
+            'organization_id' => $this->org->id,
             'state' => $state,
             'current_app' => $app,
             'idle_app_name' => $idleApp,
@@ -178,6 +251,7 @@ class DemoHierarchySeeder extends Seeder
 
             DB::table('sessions')->insert([
                 'id' => (string) Str::uuid(),
+                'organization_id' => $this->org->id,
                 'user_id' => $user->id,
                 'device_id' => $device,
                 'type' => $idle ? 'idle' : 'application',

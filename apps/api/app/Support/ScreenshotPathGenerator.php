@@ -6,8 +6,8 @@ use App\Models\Screenshot;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\MediaLibrary\Support\PathGenerator\PathGenerator;
 
-// where the files of a screenshot go on the screenshots disk: {user}/{yyyy}/{mm}/{dd}/{screenshot id}/,
-// so the bucket (or folder) stays browsable and easy to back up per person and per day.
+// where the files of a screenshot go on the screenshots disk: org_{organization}/{user}/{yyyy}/{mm}/{dd}/{screenshot id}/,
+// so the bucket (or folder) stays browsable and easy to back up (or hand over) per organization, person and day.
 class ScreenshotPathGenerator implements PathGenerator
 {
     public function getPath(Media $media): string
@@ -31,6 +31,6 @@ class ScreenshotPathGenerator implements PathGenerator
         $screenshot = $media->model;
         $day = $screenshot->taken_at->utc();
 
-        return $screenshot->user_id.'/'.$day->format('Y/m/d').'/'.$screenshot->id;
+        return 'org_'.$screenshot->organization_id.'/'.$screenshot->user_id.'/'.$day->format('Y/m/d').'/'.$screenshot->id;
     }
 }

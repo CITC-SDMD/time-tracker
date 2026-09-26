@@ -78,6 +78,7 @@ class SummaryService
         if ($row === null) {
             try {
                 DB::table('daily_summaries')->insert([
+                    'organization_id' => DB::table('users')->where('id', $userId)->value('organization_id'),
                     'user_id' => $userId,
                     'day' => $day,
                     'apps' => '{}',

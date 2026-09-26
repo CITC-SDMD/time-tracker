@@ -33,7 +33,7 @@ class ReportService
                 'userId' => (string) $row->user_id,
                 'name' => $people[$row->user_id]->name ?? '',
                 'email' => $people[$row->user_id]->email ?? '',
-                'role' => $people[$row->user_id]->role ?? '',
+                'role' => $people[$row->user_id]->role?->name ?? '',
                 'trackedSeconds' => $row->tracked_seconds,
                 'activeSeconds' => $row->active_seconds,
                 'idleSeconds' => $row->idle_seconds,
@@ -91,7 +91,7 @@ class ReportService
                     'userId' => (string) $person->id,
                     'name' => $person->name,
                     'email' => $person->email,
-                    'role' => $person->role,
+                    'role' => $person->role?->name ?? '',
                     'managerName' => $managers[$person->manager_id] ?? null,
                     'daysTracked' => $daysTracked,
                     'trackedSeconds' => $tracked,
@@ -121,6 +121,6 @@ class ReportService
      */
     private function people(array $userIds): Collection
     {
-        return User::whereIn('id', $userIds)->get(['id', 'name', 'email', 'role', 'manager_id'])->keyBy('id');
+        return User::whereIn('id', $userIds)->with('role:id,name')->get(['id', 'name', 'email', 'role_id', 'manager_id'])->keyBy('id');
     }
 }

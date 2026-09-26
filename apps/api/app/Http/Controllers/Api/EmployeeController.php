@@ -5,18 +5,18 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\DailySummary;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\User;
-use App\Services\HierarchyService;
+use App\Services\AccessService;
 use App\Services\TimelineService;
+use App\Support\OrganizationContext;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 // GET /api/v1/employees, /employees/{id}/summary and /employees/{id}/timeline
-// (docs/DEVELOPMENT_PLAN.md §10, §10.3, §12 Phase 6). Every route is behind the `manager`
-// middleware, and the per-person ones also behind `self-or-visible`, so both the list and
-// the 403 checks use the same HierarchyService walk and can never disagree.
+// (docs/DEVELOPMENT_PLAN.md §10, §10.3, §12 Phase 6). The per-person routes are behind `self-or-visible`, so both
+// the list and the 403 checks use the same AccessService reach and can never disagree.
 class EmployeeController extends Controller
 {
     private const TIMELINE_PAGE = 500;
@@ -27,19 +27,28 @@ class EmployeeController extends Controller
     private const VIEW_AUDIT_WINDOW_MINUTES = 10;
 
     public function __construct(
-        private HierarchyService $hierarchy,
+        private AccessService $access,
         private TimelineService $timelines,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $timezone = OfficeSetting::current()->timezone;
+        $caller = $request->user();
+        // a superadmin outside an office has no people to list (inside one, the office routes are used)
+        if ($caller->isSuperadmin() && app(OrganizationContext::class)->id() === null) {
+            return response()->json([]);
+        }
+
+        $timezone = OrganizationSetting::current()->timezone;
         $today = now($timezone)->format('Y-m-d');
+
+        // Someone without the permission to see people still gets their own row (their own overview).
+        $ids = $this->access->can($caller, 'people.view') ? $this->access->visibleUserIds($caller) : [$caller->id];
 
         // Three eager loads (manager, status, today's summary) on top of the users query: the number of
         // queries does not grow with the number of people (§10.3, Test 6.12).
-        $query = User::whereIn('id', $this->hierarchy->visibleUserIds($request->user()))
-            ->with(['manager:id,name', 'employeeStatus', 'dailySummaries' => fn ($q) => $q->where('day', $today)])
+        $query = User::whereIn('id', $ids)
+            ->with(['role:id,name', 'manager:id,name', 'employeeStatus', 'dailySummaries' => fn ($q) => $q->where('day', $today)])
             ->orderBy('name');
 
         if (! $request->boolean('includeDeactivated')) {
@@ -60,7 +69,8 @@ class EmployeeController extends Controller
                 'id' => (string) $employee->id,
                 'name' => $employee->name,
                 'email' => $employee->email,
-                'role' => $employee->role,
+                'role' => $employee->role?->name ?? '',
+                'roleId' => $employee->role_id === null ? null : (string) $employee->role_id,
                 'accountStatus' => $employee->status,
                 'managerId' => $employee->manager_id === null ? null : (string) $employee->manager_id,
                 'managerName' => $employee->manager?->name,
@@ -118,7 +128,7 @@ class EmployeeController extends Controller
         ]);
 
         $day = $request->string('day')->toString();
-        $timezone = OfficeSetting::current()->timezone;
+        $timezone = OrganizationSetting::current()->timezone;
         $blocks = $this->timelines->forDay($id, $day, $timezone);
 
         // Cursor = start of the last block already delivered, in epoch milliseconds. The whole
@@ -154,7 +164,8 @@ class EmployeeController extends Controller
 
     private function auditView(User $viewer, int $targetId, string $day): void
     {
-        if ($viewer->id === $targetId) {
+        // looking at your own day, or a superadmin looking inside an organization, is not logged
+        if ($viewer->id === $targetId || $viewer->isSuperadmin()) {
             return;
         }
 

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -17,7 +18,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 #[Fillable(['id', 'user_id', 'device_id', 'taken_at', 'width', 'height'])]
 class Screenshot extends Model implements HasMedia
 {
-    use InteractsWithMedia;
+    use BelongsToOrganization, InteractsWithMedia;
 
     public const COLLECTION = 'screenshot';
 

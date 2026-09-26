@@ -3,8 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
+use Database\Factories\RoleFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -25,10 +25,6 @@ class DeleteEmployeeTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1, 'timezone' => 'Asia/Manila', 'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full', 'min_agent_version' => '0.1.0', 'consent_version' => 1,
-        ]);
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
         $this->tl = User::factory()->teamLeader($this->pm)->create(['name' => 'Tina']);
@@ -61,7 +57,7 @@ class DeleteEmployeeTest extends TestCase
     public function test_deleting_a_person_who_did_things_keeps_their_audit_entries(): void
     {
         $this->actingAs($this->pm, 'sanctum')->postJson('/api/v1/admin/employees', [
-            'name' => 'Made By Pat', 'email' => 'made@example.com', 'role' => 'team_leader',
+            'name' => 'Made By Pat', 'email' => 'made@example.com', 'roleId' => RoleFactory::forTests('team_leader')->id,
         ])->assertCreated();
         $made = User::where('email', 'made@example.com')->firstOrFail();
         $this->remove($this->pm, $made)->assertNoContent();
@@ -100,15 +96,27 @@ class DeleteEmployeeTest extends TestCase
         $this->assertDatabaseHas('users', ['id' => $this->tl->id]);
     }
 
-    public function test_you_cannot_delete_yourself_an_oic_or_someone_outside_your_hierarchy(): void
+    public function test_you_cannot_delete_yourself_or_someone_outside_your_reach(): void
     {
         $otherTl = User::factory()->teamLeader($this->pm)->create();
-        $secondOic = User::factory()->oic()->create();
 
         $this->remove($this->tl, $this->tl)->assertStatus(400)->assertJsonPath('error.code', 'CANNOT_MODIFY_SELF');
-        $this->remove($this->oic, $secondOic)->assertStatus(400)->assertJsonPath('error.code', 'CANNOT_DELETE_OIC');
         $this->remove($this->tl, $otherTl)->assertForbidden();
         $this->assertDatabaseHas('users', ['id' => $otherTl->id]);
+    }
+
+    public function test_the_only_active_admin_cannot_be_deleted_but_one_of_two_can(): void
+    {
+        // someone who reaches the whole organization and may manage people, but is not an admin
+        $registrar = User::factory()->withRole(RoleFactory::make2('Registrar', 'organization', ['people.view', 'people.update']))->create();
+        $only = User::factory()->oic()->create(['name' => 'Only Admin']);
+        $this->oic->forceFill(['status' => 'inactive'])->save(); // the other admin of the office is away
+
+        $this->remove($registrar, $only)->assertStatus(400)->assertJsonPath('error.code', 'LAST_ADMIN');
+        $this->assertDatabaseHas('users', ['id' => $only->id]);
+
+        $this->oic->forceFill(['status' => 'active'])->save(); // now one of two
+        $this->remove($registrar, $only)->assertNoContent();
     }
 
     public function test_an_individual_contributor_cannot_delete_anyone(): void

@@ -3,26 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\UpdateOfficeSettingsRequest;
+use App\Http\Requests\UpdateOrganizationSettingsRequest;
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\Screenshot;
+use App\Support\OrganizationContext;
 use Illuminate\Http\JsonResponse;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Illuminate\Support\Facades\DB;
 
-// GET/PUT /api/v1/admin/settings (docs/DEVELOPMENT_PLAN.md §9.1, §10). Both routes
-// carry the `oic` middleware — office-wide settings aren't scoped to a hierarchy
-// branch, so no manager below OIC may read or change them (§10 Test 2.13).
+// GET/PUT /api/v1/admin/settings (docs/DEVELOPMENT_PLAN.md §9.1, §10). Both routes carry
+// `permission:settings.manage`; the settings are the caller's own organization's (a superadmin opening an office
+// gets that one's), never another's.
 class AdminSettingsController extends Controller
 {
+    public function __construct(private OrganizationContext $context) {}
+
     public function show(): JsonResponse
     {
-        return response()->json($this->payload(OfficeSetting::current()));
+        return response()->json($this->payload(OrganizationSetting::current()));
     }
 
-    public function update(UpdateOfficeSettingsRequest $request): JsonResponse
+    public function update(UpdateOrganizationSettingsRequest $request): JsonResponse
     {
-        $settings = OfficeSetting::current();
+        $settings = OrganizationSetting::current();
 
         // Turning screenshots on means everyone must accept a new notice first, so the consent
         // version has to go up in the same change (docs phase 10).
@@ -47,9 +50,6 @@ class AdminSettingsController extends Controller
         if ($request->has('windowTitleMode')) {
             $settings->window_title_mode = $request->string('windowTitleMode');
         }
-        if ($request->has('minAgentVersion')) {
-            $settings->min_agent_version = $request->string('minAgentVersion');
-        }
         if ($request->has('consentVersion')) {
             $settings->consent_version = $request->integer('consentVersion');
         }
@@ -62,7 +62,7 @@ class AdminSettingsController extends Controller
         $settings->save();
 
         AuditLog::record($request->user(), 'settings.updated', null, $request->only([
-            'timezone', 'idleThresholdSeconds', 'windowTitleMode', 'minAgentVersion', 'consentVersion',
+            'timezone', 'idleThresholdSeconds', 'windowTitleMode', 'consentVersion',
             'screenshotIntervalMinutes', 'screenshotRandom',
         ]));
 
@@ -70,18 +70,27 @@ class AdminSettingsController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function payload(OfficeSetting $settings): array
+    private function payload(OrganizationSetting $settings): array
     {
         return [
             'timezone' => $settings->timezone,
             'idleThresholdSeconds' => $settings->idle_threshold_seconds,
             'windowTitleMode' => $settings->window_title_mode,
-            'minAgentVersion' => $settings->min_agent_version,
             'consentVersion' => $settings->consent_version,
             'screenshotIntervalMinutes' => $settings->screenshot_interval_minutes,
             'screenshotRandom' => $settings->screenshot_random,
-            // the space the screenshots take on the storage disk, for the settings page
-            'screenshotStorageBytes' => (int) Media::where('model_type', Screenshot::class)->sum('size'),
+            // the space this organization's screenshots take on the storage disk, for the settings page
+            'screenshotStorageBytes' => $this->storageBytes((int) $this->context->id()),
         ];
+    }
+
+    /** The bytes the screenshots of one organization take (the picture and its thumbnail are both media rows). */
+    public static function storageBytes(int $organizationId): int
+    {
+        return (int) DB::table('media')
+            ->join('screenshots', 'screenshots.id', '=', 'media.model_id')
+            ->where('media.model_type', Screenshot::class)
+            ->where('screenshots.organization_id', $organizationId)
+            ->sum('media.size');
     }
 }

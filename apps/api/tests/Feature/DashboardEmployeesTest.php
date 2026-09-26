@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -34,14 +33,6 @@ class DashboardEmployeesTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
 
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
@@ -115,6 +106,8 @@ class DashboardEmployeesTest extends TestCase
     public function test_query_count_does_not_grow_with_the_number_of_people(): void
     {
         $this->actingAs($this->tlA, 'sanctum');
+        // the first request also loads the caller's role and organization; measure the ones after it
+        $this->getJson('/api/v1/employees')->assertOk();
         DB::enableQueryLog();
         $this->getJson('/api/v1/employees')->assertOk();
         $small = count(DB::getQueryLog());
@@ -156,13 +149,19 @@ class DashboardEmployeesTest extends TestCase
             ->assertOk();
     }
 
-    public function test_an_individual_contributor_is_refused_on_every_manager_route(): void
+    public function test_someone_without_permissions_sees_only_their_own_data(): void
     {
         $this->actingAs($this->devA1, 'sanctum');
 
-        $this->getJson('/api/v1/employees')->assertForbidden();
-        $this->getJson("/api/v1/employees/{$this->devA1->id}/summary?from=2026-09-20&to=2026-09-20")->assertForbidden();
-        $this->getJson("/api/v1/employees/{$this->devA1->id}/timeline?day=2026-09-20")->assertForbidden();
+        // their own row, their own day and timeline: always allowed
+        $this->getJson('/api/v1/employees')->assertOk()->assertJsonCount(1);
+        $this->getJson("/api/v1/employees/{$this->devA1->id}/summary?from=2026-09-20&to=2026-09-20")->assertOk();
+        $this->getJson("/api/v1/employees/{$this->devA1->id}/timeline?day=2026-09-20")->assertOk();
+
+        // anybody else's, even a teammate's, needs the permission and the reach
+        $this->getJson("/api/v1/employees/{$this->devA2->id}/summary?from=2026-09-20&to=2026-09-20")->assertForbidden();
+        $this->getJson("/api/v1/employees/{$this->devA2->id}/timeline?day=2026-09-20")->assertForbidden();
+        $this->getJson('/api/v1/reports/daily?from=2026-09-20&to=2026-09-20')->assertForbidden()->assertJsonPath('error.code', 'PERMISSION_DENIED');
     }
 
     public function test_a_deactivated_manager_is_refused(): void
@@ -175,11 +174,11 @@ class DashboardEmployeesTest extends TestCase
             ->assertJsonPath('error.code', 'ACCOUNT_DEACTIVATED');
     }
 
-    public function test_settings_and_audit_are_oic_only(): void
+    public function test_settings_and_audit_need_their_own_permissions(): void
     {
         foreach ([$this->pm, $this->tlA] as $viewer) {
-            $this->actingAs($viewer, 'sanctum')->getJson('/api/v1/admin/settings')->assertForbidden();
-            $this->actingAs($viewer, 'sanctum')->getJson('/api/v1/admin/audit')->assertForbidden();
+            $this->actingAs($viewer, 'sanctum')->getJson('/api/v1/admin/settings')->assertForbidden()->assertJsonPath('error.code', 'PERMISSION_DENIED');
+            $this->actingAs($viewer, 'sanctum')->getJson('/api/v1/admin/audit')->assertForbidden()->assertJsonPath('error.code', 'PERMISSION_DENIED');
         }
         $this->actingAs($this->oic, 'sanctum')->getJson('/api/v1/admin/settings')->assertOk();
     }
@@ -277,7 +276,7 @@ class DashboardEmployeesTest extends TestCase
     private function liveStatus(User $user, string $state, $lastSeen): void
     {
         DB::table('employee_statuses')->insert([
-            'user_id' => $user->id, 'state' => $state, 'since' => $lastSeen, 'last_seen_at' => $lastSeen,
+            'organization_id' => $user->organization_id, 'user_id' => $user->id, 'state' => $state, 'since' => $lastSeen, 'last_seen_at' => $lastSeen,
         ]);
     }
 
@@ -285,7 +284,7 @@ class DashboardEmployeesTest extends TestCase
     private function summary(User $user, string $day, int $tracked, int $active, int $idle, array $apps = [], array $names = []): void
     {
         DB::table('daily_summaries')->insert([
-            'user_id' => $user->id, 'day' => $day, 'tracked_seconds' => $tracked, 'active_seconds' => $active,
+            'organization_id' => $user->organization_id, 'user_id' => $user->id, 'day' => $day, 'tracked_seconds' => $tracked, 'active_seconds' => $active,
             'idle_seconds' => $idle, 'apps' => json_encode((object) $apps), 'app_names' => json_encode((object) $names),
         ]);
     }
@@ -299,7 +298,7 @@ class DashboardEmployeesTest extends TestCase
     private function sessionRow(User $user, string $type, ?string $app, ?string $title, string $from, string $to, ?string $idleApp): array
     {
         return [
-            'id' => (string) Str::uuid(), 'user_id' => $user->id, 'device_id' => (string) Str::uuid(),
+            'id' => (string) Str::uuid(), 'organization_id' => $user->organization_id, 'user_id' => $user->id, 'device_id' => (string) Str::uuid(),
             'type' => $type, 'app_name' => $app, 'app_key' => $app ? strtolower($app) : null,
             'window_title' => $title, 'idle_app_name' => $idleApp,
             'started_at' => $from, 'ended_at' => $to,

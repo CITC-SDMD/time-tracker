@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -21,14 +20,6 @@ class ProfileTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
     }
@@ -45,11 +36,11 @@ class ProfileTest extends TestCase
             ->patchJson('/api/v1/me', ['name' => '  Patricia  ', 'email' => 'other@example.com', 'role' => 'oic', 'managerId' => $this->pm->id])
             ->assertOk()
             ->assertJsonPath('name', 'Patricia')
-            ->assertJsonPath('role', 'project_manager');
+            ->assertJsonPath('role.name', 'Project Manager');
 
         $fresh = $this->pm->fresh();
         $this->assertSame('Patricia', $fresh->name);
-        $this->assertSame('project_manager', $fresh->role);
+        $this->assertSame('Project Manager', $fresh->role->name);
         $this->assertSame($this->oic->id, $fresh->manager_id);
         $this->assertNotSame('other@example.com', $fresh->email);
     }

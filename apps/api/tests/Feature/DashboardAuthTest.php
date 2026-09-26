@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\OfficeSetting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -15,14 +14,6 @@ class DashboardAuthTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
     }
 
     public function test_a_manager_can_sign_in_and_then_read_their_own_profile_by_cookie(): void
@@ -31,7 +22,7 @@ class DashboardAuthTest extends TestCase
 
         $this->postJson('/auth/login', ['email' => $oic->email, 'password' => 'secret-pass'])
             ->assertOk()
-            ->assertJsonPath('role', 'oic');
+            ->assertJsonPath('role.name', 'OIC');
 
         $this->getJson('/api/v1/me', ['Origin' => 'http://localhost:3100', 'Referer' => 'http://localhost:3100/'])
             ->assertOk()
@@ -47,13 +38,27 @@ class DashboardAuthTest extends TestCase
             ->assertJsonPath('error.code', 'WRONG_PASSWORD');
     }
 
-    public function test_an_individual_contributor_gets_the_managers_only_message(): void
+    public function test_everyone_can_sign_in_and_what_they_see_follows_their_role(): void
     {
         $dev = User::factory()->create(['password' => bcrypt('secret-pass')]);
 
         $this->postJson('/auth/login', ['email' => $dev->email, 'password' => 'secret-pass'])
+            ->assertOk()
+            ->assertJsonPath('role.name', 'Developer')
+            ->assertJsonPath('permissions', [])
+            ->assertJsonPath('scope', 'self');
+
+        $this->assertAuthenticated('web');
+    }
+
+    public function test_someone_of_a_suspended_organization_cannot_sign_in(): void
+    {
+        $dev = User::factory()->create(['password' => bcrypt('secret-pass')]);
+        $dev->organization()->update(['status' => 'suspended']);
+
+        $this->postJson('/auth/login', ['email' => $dev->email, 'password' => 'secret-pass'])
             ->assertForbidden()
-            ->assertJsonPath('error.message', 'This dashboard is for managers only.');
+            ->assertJsonPath('error.code', 'ORG_SUSPENDED');
 
         $this->assertGuest('web');
     }

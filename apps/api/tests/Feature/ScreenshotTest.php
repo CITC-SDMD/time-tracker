@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\Screenshot;
 use App\Models\User;
 use Illuminate\Database\QueryException;
@@ -39,15 +38,7 @@ class ScreenshotTest extends TestCase
         parent::setUp();
         Carbon::setTestNow(Carbon::parse(self::NOW, 'UTC'));
         Storage::fake('screenshots');
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-            'screenshot_interval_minutes' => 10,
-        ]);
+        $this->settings()->update(['screenshot_interval_minutes' => 10]);
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
         $this->tl = User::factory()->teamLeader($this->pm)->create(['name' => 'Tina']);
@@ -84,13 +75,14 @@ class ScreenshotTest extends TestCase
 
     private function shot(User $user, ?Carbon $takenAt = null): Screenshot
     {
-        $shot = Screenshot::create([
+        $shot = Screenshot::unguarded(fn () => Screenshot::create([
             'id' => (string) Str::uuid(),
+            'organization_id' => $user->organization_id,
             'user_id' => $user->id,
             'taken_at' => $takenAt ?? Carbon::now('UTC')->subHour(),
             'width' => 1280,
             'height' => 720,
-        ]);
+        ]));
         $shot->addMedia($this->jpeg())->usingFileName($shot->id.'.jpg')->toMediaCollection(Screenshot::COLLECTION);
 
         return $shot;
@@ -109,7 +101,8 @@ class ScreenshotTest extends TestCase
         $media = $shot->getFirstMedia(Screenshot::COLLECTION);
         $this->assertSame('screenshots', $media->disk);
         $this->assertTrue($media->hasGeneratedConversion('thumb'));
-        $this->assertSame("{$this->dev->id}/2026/09/26/{$id}/{$id}.jpg", $media->getPathRelativeToRoot());
+        // the organization first, so each office's pictures sit in their own folder of the bucket
+        $this->assertSame("org_{$this->dev->organization_id}/{$this->dev->id}/2026/09/26/{$id}/{$id}.jpg", $media->getPathRelativeToRoot());
         Storage::disk('screenshots')->assertExists($media->getPathRelativeToRoot());
         Storage::disk('screenshots')->assertExists($media->getPathRelativeToRoot('thumb'));
     }
@@ -143,7 +136,7 @@ class ScreenshotTest extends TestCase
 
     public function test_it_is_refused_while_screenshots_are_switched_off(): void
     {
-        OfficeSetting::current()->update(['screenshot_interval_minutes' => 0]);
+        $this->settings()->update(['screenshot_interval_minutes' => 0]);
 
         $this->upload($this->dev)->assertStatus(409)->assertJsonPath('error.code', 'SCREENSHOTS_DISABLED');
 
@@ -360,7 +353,7 @@ class ScreenshotTest extends TestCase
 
     public function test_screenshots_are_off_by_default_and_the_settings_show_the_storage_used(): void
     {
-        OfficeSetting::current()->update(['screenshot_interval_minutes' => 0]);
+        $this->settings()->update(['screenshot_interval_minutes' => 0]);
         $this->shot($this->dev);
 
         $this->actingAs($this->oic, 'sanctum')->getJson('/api/v1/admin/settings')->assertOk()
@@ -371,12 +364,12 @@ class ScreenshotTest extends TestCase
 
     public function test_turning_screenshots_on_needs_a_higher_consent_version_in_the_same_change(): void
     {
-        OfficeSetting::current()->update(['screenshot_interval_minutes' => 0]);
+        $this->settings()->update(['screenshot_interval_minutes' => 0]);
         $put = fn (array $data) => $this->actingAs($this->oic, 'sanctum')->putJson('/api/v1/admin/settings', $data);
 
         $put(['screenshotIntervalMinutes' => 10])->assertStatus(422)->assertJsonPath('error.code', 'SCREENSHOTS_NEED_CONSENT');
         $put(['screenshotIntervalMinutes' => 10, 'consentVersion' => 1])->assertStatus(422)->assertJsonPath('error.code', 'SCREENSHOTS_NEED_CONSENT');
-        $this->assertSame(0, OfficeSetting::current()->screenshot_interval_minutes);
+        $this->assertSame(0, $this->settings()->screenshot_interval_minutes);
 
         $put(['screenshotIntervalMinutes' => 10, 'consentVersion' => 2, 'screenshotRandom' => true])->assertOk()
             ->assertJsonPath('screenshotIntervalMinutes', 10)->assertJsonPath('screenshotRandom', true)->assertJsonPath('consentVersion', 2);
@@ -388,7 +381,7 @@ class ScreenshotTest extends TestCase
 
         $put(['screenshotIntervalMinutes' => 30])->assertOk();
         $put(['screenshotIntervalMinutes' => 0])->assertOk();
-        $this->assertSame(0, OfficeSetting::current()->screenshot_interval_minutes);
+        $this->assertSame(0, $this->settings()->screenshot_interval_minutes);
     }
 
     public function test_only_the_allowed_intervals_are_accepted(): void
@@ -404,11 +397,11 @@ class ScreenshotTest extends TestCase
 
     public function test_the_settings_reach_the_desktop_app_in_me_and_in_the_sync_answer(): void
     {
-        OfficeSetting::current()->update(['screenshot_interval_minutes' => 15, 'screenshot_random' => true]);
+        $this->settings()->update(['screenshot_interval_minutes' => 15, 'screenshot_random' => true]);
 
         $this->actingAs($this->dev, 'sanctum')->getJson('/api/v1/me')->assertOk()
-            ->assertJsonPath('officeSettings.screenshotIntervalMinutes', 15)
-            ->assertJsonPath('officeSettings.screenshotRandom', true);
+            ->assertJsonPath('settings.screenshotIntervalMinutes', 15)
+            ->assertJsonPath('settings.screenshotRandom', true);
     }
 
     public function test_the_person_who_owns_screenshots_can_never_be_deleted(): void

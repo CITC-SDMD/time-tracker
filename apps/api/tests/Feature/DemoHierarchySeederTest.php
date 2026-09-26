@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\Screenshot;
 use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
@@ -42,12 +43,15 @@ class DemoHierarchySeederTest extends TestCase
         $sessions = DB::table('sessions')->count();
         $this->seed(DemoHierarchySeeder::class);
 
-        $this->assertSame(1, User::where('role', 'oic')->count());
-        $this->assertSame(2, User::where('role', 'project_manager')->count());
-        $this->assertSame(3, User::where('role', 'team_leader')->count());
-        $this->assertSame(6, User::whereIn('role', User::INDIVIDUAL_CONTRIBUTOR_ROLES)->count());
+        $demo = Organization::where('slug', 'demo-office')->firstOrFail();
+        $inDemo = fn (string $role) => User::withoutGlobalScopes()->where('organization_id', $demo->id)
+            ->whereHas('role', fn ($q) => $q->withoutGlobalScopes()->where('name', $role))->count();
+        $this->assertSame(1, $inDemo('OIC') + $inDemo('Admin'));
+        $this->assertSame(2, $inDemo('Project Manager'));
+        $this->assertSame(3, $inDemo('Team Leader'));
+        $this->assertSame(6, $inDemo('Lead Developer') + $inDemo('Developer') + $inDemo('QA') + $inDemo('Client Support') + $inDemo('System Analyst'));
         $this->assertSame($sessions, DB::table('sessions')->count());
-        $this->assertSame(0, User::whereIn('role', ['project_manager', 'team_leader', 'developer'])->whereNull('manager_id')->count());
+        $this->assertSame(0, User::withoutGlobalScopes()->where('organization_id', $demo->id)->whereNull('manager_id')->count() - 1); // only the admin has no manager
         $this->assertGreaterThan(300, DB::table('daily_summaries')->count());
     }
 

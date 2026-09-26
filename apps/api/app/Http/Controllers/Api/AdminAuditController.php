@@ -4,17 +4,29 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 // GET /api/v1/admin/audit?cursor=&action=&q=&from=&to= (docs/DEVELOPMENT_PLAN.md §9.1, §10). Carries the
-// `oic` middleware — the audit log spans the whole hierarchy (§10 Test 2.14), not just
-// the caller's own branch, so it's OIC-only rather than hierarchy-scoped.
+// `permission:audit.view` middleware. The log spans the caller's whole organization (the model is limited to it),
+// not just their own branch of the reporting line.
 class AdminAuditController extends Controller
 {
     private const PER_PAGE = 50;
+
+    /** The entries this log lists: an organization's own (the model is limited to it). The platform log overrides this. */
+    protected function baseQuery(): Builder
+    {
+        return AuditLog::with(['actor', 'target']);
+    }
+
+    protected function timezone(): string
+    {
+        return OrganizationSetting::current()->timezone;
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -25,7 +37,7 @@ class AdminAuditController extends Controller
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
         ]);
 
-        $query = AuditLog::with(['actor', 'target'])
+        $query = $this->baseQuery()
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 
@@ -41,7 +53,7 @@ class AdminAuditController extends Controller
         }
 
         // Days are office-timezone days, like everything else on the dashboard.
-        $timezone = OfficeSetting::current()->timezone;
+        $timezone = $this->timezone();
         if ($request->filled('from')) {
             $query->where('created_at', '>=', CarbonImmutable::createFromFormat('Y-m-d', $request->string('from')->toString(), $timezone)->startOfDay()->utc());
         }

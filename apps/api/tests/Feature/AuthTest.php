@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\OfficeSetting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -15,14 +14,6 @@ class AuthTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
     }
 
     public function test_login_with_correct_password_returns_a_token_and_me(): void
@@ -35,7 +26,7 @@ class AuthTest extends TestCase
         ]);
 
         $response->assertOk()
-            ->assertJsonStructure(['token', 'me' => ['id', 'name', 'email', 'role', 'consentRequired', 'officeSettings']]);
+            ->assertJsonStructure(['token', 'me' => ['id', 'name', 'email', 'role', 'permissions', 'scope', 'organization', 'consentRequired', 'settings']]);
         $this->assertNotEmpty($response->json('token'));
     }
 
@@ -86,7 +77,8 @@ class AuthTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('id', (string) $user->id)
-            ->assertJsonPath('role', 'oic')
+            ->assertJsonPath('role.name', 'OIC')
+            ->assertJsonPath('scope', 'organization')
             ->assertJsonPath('consentRequired', true); // consent_version starts null
     }
 

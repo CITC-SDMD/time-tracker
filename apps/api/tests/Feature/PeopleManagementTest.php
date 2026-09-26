@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
 use App\Notifications\WelcomeNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -33,14 +32,6 @@ class PeopleManagementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
 
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pmA = User::factory()->projectManager($this->oic)->create(['name' => 'Pat A']);
@@ -87,17 +78,35 @@ class PeopleManagementTest extends TestCase
         $this->assertSame(0, AuditLog::where('action', 'employee.moved')->count());
     }
 
-    public function test_the_new_manager_must_hold_the_role_one_tier_above(): void
+    public function test_there_is_no_tier_rule_any_active_person_in_reach_can_be_the_manager(): void
     {
-        // a member under a project manager, a team leader under a team leader, a team leader under the OIC
-        $this->move($this->oic, $this->dev, $this->pmB->id)->assertStatus(422)->assertJsonPath('error.code', 'WRONG_TIER');
-        $this->move($this->oic, $this->tlA1, $this->tlB1->id)->assertStatus(422)->assertJsonPath('error.code', 'WRONG_TIER');
-        $this->move($this->oic, $this->tlA1, $this->oic->id)->assertStatus(422)->assertJsonPath('error.code', 'WRONG_TIER');
-        // nobody ends up under an individual contributor
-        $this->move($this->oic, $this->tlA1, $this->dev->id)->assertStatus(422)->assertJsonPath('error.code', 'WRONG_TIER');
+        // a member under a project manager, a team leader under a team leader, a team leader under a member
+        $this->move($this->oic, $this->dev, $this->pmB->id)->assertOk();
+        $this->move($this->oic, $this->tlA1, $this->tlB1->id)->assertOk();
+        $this->move($this->oic, $this->tlA2, $this->dev->id)->assertOk();
 
-        $this->assertSame($this->pmA->id, $this->tlA1->fresh()->manager_id);
-        $this->assertSame($this->tlA1->id, $this->dev->fresh()->manager_id);
+        $this->assertSame($this->pmB->id, $this->dev->fresh()->manager_id);
+        $this->assertSame($this->tlB1->id, $this->tlA1->fresh()->manager_id);
+        $this->assertSame($this->dev->id, $this->tlA2->fresh()->manager_id);
+    }
+
+    public function test_nobody_can_be_put_under_themselves_or_under_someone_below_them(): void
+    {
+        // Dev One reports (through Tina A1) to Pat A: Pat A cannot report to Dev One, directly or further down
+        $this->move($this->oic, $this->pmA, $this->dev->id)->assertStatus(422)->assertJsonPath('error.code', 'WOULD_CREATE_LOOP');
+        $this->move($this->oic, $this->pmA, $this->tlA1->id)->assertStatus(422)->assertJsonPath('error.code', 'WOULD_CREATE_LOOP');
+
+        $this->assertSame($this->oic->id, $this->pmA->fresh()->manager_id);
+    }
+
+    public function test_only_someone_reaching_the_whole_organization_can_leave_a_person_without_a_manager(): void
+    {
+        $this->actingAs($this->pmA, 'sanctum')->patchJson("/api/v1/admin/employees/{$this->dev->id}", ['managerId' => null])
+            ->assertStatus(422)->assertJsonPath('error.code', 'MANAGER_REQUIRED');
+
+        $this->actingAs($this->oic, 'sanctum')->patchJson("/api/v1/admin/employees/{$this->dev->id}", ['managerId' => null])
+            ->assertOk()->assertJsonPath('managerId', null);
+        $this->assertNull($this->dev->fresh()->manager_id);
     }
 
     public function test_a_manager_cannot_move_people_out_of_or_into_a_branch_that_is_not_theirs(): void
@@ -120,18 +129,17 @@ class PeopleManagementTest extends TestCase
         $this->move($this->oic, $this->dev, $this->tlA2->id)->assertStatus(422)->assertJsonPath('error.code', 'MANAGER_INACTIVE');
     }
 
-    public function test_an_oic_is_never_moved_and_nobody_moves_themselves(): void
+    public function test_nobody_moves_themselves(): void
     {
-        $otherOic = User::factory()->oic()->create();
-
-        $this->move($this->oic, $otherOic, $this->pmA->id)->assertStatus(400)->assertJsonPath('error.code', 'CANNOT_MOVE_OIC');
         $this->move($this->pmA, $this->pmA, $this->oic->id)->assertStatus(400)->assertJsonPath('error.code', 'CANNOT_MODIFY_SELF');
     }
 
     public function test_a_refused_move_does_not_apply_the_name_change_sent_with_it(): void
     {
+        $this->tlA2->forceFill(['status' => 'inactive'])->save();
+
         $this->actingAs($this->oic, 'sanctum')
-            ->patchJson("/api/v1/admin/employees/{$this->dev->id}", ['name' => 'Renamed', 'managerId' => $this->pmB->id])
+            ->patchJson("/api/v1/admin/employees/{$this->dev->id}", ['name' => 'Renamed', 'managerId' => $this->tlA2->id])
             ->assertStatus(422);
 
         $this->assertSame('Dev One', $this->dev->fresh()->name);

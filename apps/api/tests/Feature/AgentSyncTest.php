@@ -5,7 +5,7 @@ namespace Tests\Feature;
 use App\Models\DailySummary;
 use App\Models\Device;
 use App\Models\EmployeeStatus;
-use App\Models\OfficeSetting;
+use App\Models\PlatformSetting;
 use App\Models\Session;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -28,14 +28,6 @@ class AgentSyncTest extends TestCase
     {
         parent::setUp();
         Carbon::setTestNow(Carbon::parse(self::NOW, 'UTC'));
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
         $this->deviceA = (string) Str::uuid();
         $this->deviceB = (string) Str::uuid();
     }
@@ -214,7 +206,7 @@ class AgentSyncTest extends TestCase
 
     public function test_window_titles_are_dropped_when_the_office_only_wants_app_names(): void
     {
-        OfficeSetting::current()->update(['window_title_mode' => 'app_only']);
+        $this->settings()->update(['window_title_mode' => 'app_only']);
         $user = User::factory()->create();
         $session = $this->makeSession(['windowTitle' => 'Secret plans.docx']);
 
@@ -323,7 +315,7 @@ class AgentSyncTest extends TestCase
 
     public function test_an_agent_older_than_the_minimum_gets_426(): void
     {
-        OfficeSetting::current()->update(['min_agent_version' => '1.2.0']);
+        PlatformSetting::current()->update(['min_agent_version' => '1.2.0']);
         $user = User::factory()->create();
 
         $this->sync($user, $this->body([]), null, '1.1.9')

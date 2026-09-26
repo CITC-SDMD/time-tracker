@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\AgentSyncRequest;
 use App\Models\Device;
 use App\Models\EmployeeStatus;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\Session;
 use App\Services\SummaryService;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -34,7 +34,7 @@ class AgentController extends Controller
         $deviceId = $data['deviceId'];
         $agentVersion = (string) $request->header('X-Agent-Version');
         $incoming = $data['status'];
-        $office = OfficeSetting::current();
+        $office = OrganizationSetting::current();
         $now = Carbon::now('UTC');
         $deactivated = $user->status !== 'active';
 

@@ -2,7 +2,10 @@
 
 namespace Database\Factories;
 
+use App\Models\Organization;
+use App\Models\Role;
 use App\Models\User;
+use App\Support\Permissions;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -30,10 +33,10 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
-            // Individual-contributor by default — tests opt into a manager role
-            // explicitly via the state helpers below, so a plain factory call never
-            // accidentally creates someone with dashboard access.
-            'role' => 'developer',
+            // A member with no permissions in the default test organization by default: tests opt into a role with the
+            // state helpers below, so a plain factory call never accidentally creates someone with wider access.
+            'organization_id' => fn () => OrganizationFactory::forTests()->id,
+            'role_id' => fn () => RoleFactory::forTests('developer')->id,
             'status' => 'active',
         ];
     }
@@ -48,29 +51,64 @@ class UserFactory extends Factory
         ]);
     }
 
+    /** The organization admin of the default test organization (every permission, the whole organization). */
     public function oic(): static
     {
-        return $this->state(fn () => ['role' => 'oic', 'manager_id' => null]);
+        return $this->state(fn () => ['role_id' => fn () => RoleFactory::forTests('oic')->id, 'manager_id' => null]);
     }
 
     public function projectManager(?User $reportsTo = null): static
     {
-        return $this->state(fn () => ['role' => 'project_manager', 'manager_id' => $reportsTo?->id]);
+        return $this->reportingTo($reportsTo, 'project_manager');
     }
 
     public function teamLeader(?User $reportsTo = null): static
     {
-        return $this->state(fn () => ['role' => 'team_leader', 'manager_id' => $reportsTo?->id]);
+        return $this->reportingTo($reportsTo, 'team_leader');
     }
 
-    /** Any individual-contributor role — LEAD_DEVELOPER/DEVELOPER/CLIENT_SUPPORT/QA/SYSTEM_ANALYST. */
+    /** Any member role: lead_developer/developer/client_support/qa/system_analyst. */
     public function individualContributor(?User $reportsTo = null, string $role = 'developer'): static
     {
-        return $this->state(fn () => ['role' => $role, 'manager_id' => $reportsTo?->id]);
+        return $this->reportingTo($reportsTo, $role);
+    }
+
+    /** Holds $role (in $role's organization) and, when given, reports to $reportsTo. */
+    public function withRole(Role $role, ?User $reportsTo = null): static
+    {
+        return $this->state(fn () => ['organization_id' => $role->organization_id, 'role_id' => $role->id, 'manager_id' => $reportsTo?->id]);
+    }
+
+    /** A person of $organization holding its built-in admin role. */
+    public function adminOf(Organization $organization): static
+    {
+        return $this->withRole(Role::withoutGlobalScopes()->where('organization_id', $organization->id)->where('is_system', true)->firstOrFail());
+    }
+
+    /** A platform superadmin with these platform permissions (all of them by default), the owner when $owner. */
+    public function superadmin(?array $permissions = null, bool $owner = false): static
+    {
+        return $this->state(fn () => [
+            'organization_id' => null,
+            'role_id' => null,
+            'is_superadmin' => true,
+            'is_owner' => $owner,
+            'superadmin_permissions' => $permissions ?? Permissions::superadminKeys(),
+        ]);
     }
 
     public function deactivated(): static
     {
         return $this->state(fn () => ['status' => 'inactive', 'deactivated_at' => now()]);
+    }
+
+    /** the person reports to $reportsTo (and so is in their organization), holding the old role $key */
+    private function reportingTo(?User $reportsTo, string $key): static
+    {
+        return $this->state(fn () => [
+            'organization_id' => $reportsTo?->organization_id ?? fn () => OrganizationFactory::forTests()->id,
+            'role_id' => fn () => RoleFactory::forTests($key, $reportsTo?->organization)->id,
+            'manager_id' => $reportsTo?->id,
+        ]);
     }
 }

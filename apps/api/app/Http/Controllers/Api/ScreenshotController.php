@@ -5,10 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreScreenshotRequest;
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\Screenshot;
 use App\Models\User;
-use App\Services\HierarchyService;
+use App\Services\AccessService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -20,13 +20,13 @@ use Throwable;
 
 // Screenshots (docs/DEVELOPMENT_PLAN.md phase 10). The desktop app uploads one JPEG; the files live
 // on the private `screenshots` disk and reach a browser only through `show`, after the same
-// hierarchy check as a timeline. No path, bucket or link ever appears in an answer.
+// reach check as a timeline. No path, bucket or link ever appears in an answer.
 class ScreenshotController extends Controller
 {
     /** the same person looking at the same day again within this time is not logged again */
     private const VIEW_AUDIT_WINDOW_MINUTES = 30;
 
-    public function __construct(private HierarchyService $hierarchy) {}
+    public function __construct(private AccessService $access) {}
 
     /** POST /api/v1/agent/screenshots */
     public function store(StoreScreenshotRequest $request): JsonResponse
@@ -34,8 +34,8 @@ class ScreenshotController extends Controller
         $user = $request->user();
         $data = $request->validated();
 
-        if (OfficeSetting::current()->screenshot_interval_minutes === 0) {
-            return $this->error('SCREENSHOTS_DISABLED', 'Screenshots are switched off for the office.', 409);
+        if (OrganizationSetting::current()->screenshot_interval_minutes === 0) {
+            return $this->error('SCREENSHOTS_DISABLED', 'Screenshots are switched off for your organization.', 409);
         }
 
         $existing = Screenshot::find($data['id']);
@@ -76,7 +76,7 @@ class ScreenshotController extends Controller
     {
         $request->validate(['day' => ['required', 'date_format:Y-m-d']]);
         $day = $request->string('day')->toString();
-        $timezone = OfficeSetting::current()->timezone;
+        $timezone = OrganizationSetting::current()->timezone;
         $from = CarbonImmutable::createFromFormat('Y-m-d', $day, $timezone)->startOfDay()->utc();
 
         $items = Screenshot::where('user_id', $id)
@@ -104,7 +104,7 @@ class ScreenshotController extends Controller
         if ($shot === null) {
             return $this->error('NOT_FOUND', 'Not found.', 404);
         }
-        if (! $this->hierarchy->isVisible($request->user(), $shot->user_id)) {
+        if (! $this->access->canSee($request->user(), $shot->user_id, 'screenshots.view')) {
             return $this->error('FORBIDDEN', 'You cannot view this person\'s data.', 403);
         }
 
@@ -142,7 +142,8 @@ class ScreenshotController extends Controller
     /** looking at someone else's day is written to the audit log, once per viewer, person and day within a window */
     private function recordView(User $viewer, int $targetId, string $day): void
     {
-        if ($viewer->id === $targetId) {
+        // looking at your own pictures, or a superadmin looking inside an organization, is not logged
+        if ($viewer->id === $targetId || $viewer->isSuperadmin()) {
             return;
         }
 

@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
 use App\Notifications\EmailChangedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -24,14 +23,6 @@ class MeEmailTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
         $this->oic = User::factory()->oic()->create(['name' => 'Olive', 'email' => 'olive@example.com']);
         $this->dev = User::factory()->individualContributor($this->oic)->create(['name' => 'Dev', 'email' => 'dev@example.com']);
     }
@@ -48,7 +39,7 @@ class MeEmailTest extends TestCase
         $this->change($this->dev, ['email' => 'new.dev@example.com', 'currentPassword' => 'password'])
             ->assertOk()
             ->assertJsonPath('email', 'new.dev@example.com')
-            ->assertJsonPath('role', 'developer');
+            ->assertJsonPath('role.name', 'Developer');
 
         $this->assertSame('new.dev@example.com', $this->dev->fresh()->email);
     }

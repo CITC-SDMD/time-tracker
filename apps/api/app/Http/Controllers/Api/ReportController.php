@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\User;
-use App\Services\HierarchyService;
+use App\Services\AccessService;
 use App\Services\ReportService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -14,12 +14,13 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 // GET /api/v1/reports/daily, /reports/apps and /reports/team (docs/DEVELOPMENT_PLAN.md §12 Phase 11).
-// Behind the `manager` middleware and always limited to the people the caller can see (§9.1): an
-// OIC gets the office, a Team Leader their team. `format=csv` downloads the same rows as a file.
+// Behind `permission:reports.view` and always limited to the people the caller can see (§9.1): a role that reaches
+// the organization gets everyone, one that reaches a team gets that team. `format=csv` downloads the same rows as a
+// file and needs `reports.export`.
 class ReportController extends Controller
 {
     public function __construct(
-        private HierarchyService $hierarchy,
+        private AccessService $access,
         private ReportService $reports,
     ) {}
 
@@ -59,19 +60,32 @@ class ReportController extends Controller
 
         $caller = $request->user();
         $uid = $request->filled('uid') ? $request->integer('uid') : null;
-        if ($uid !== null && ! $this->hierarchy->isVisible($caller, $uid)) {
+        if ($uid !== null && ! User::whereKey($uid)->exists()) {
+            return response()->json(['error' => ['code' => 'NOT_FOUND', 'message' => 'Not found.']], 404);
+        }
+        if ($uid !== null && ! $this->access->isVisible($caller, $uid)) {
             return response()->json([
-                'error' => ['code' => 'FORBIDDEN', 'message' => 'This person is not in your hierarchy.'],
+                'error' => ['code' => 'FORBIDDEN', 'message' => 'This person is not in your reach.'],
             ], 403);
         }
 
-        $rows = $build($uid !== null ? [$uid] : $this->hierarchy->visibleUserIds($caller), $from, $to);
+        $csv = $request->string('format')->toString() === 'csv';
+        if ($csv && ! $this->access->can($caller, 'reports.export')) {
+            return response()->json([
+                'error' => ['code' => 'PERMISSION_DENIED', 'message' => 'Your role does not allow downloading reports.'],
+            ], 403);
+        }
 
-        if ($request->string('format')->toString() !== 'csv') {
+        $rows = $build($uid !== null ? [$uid] : $this->access->visibleUserIds($caller), $from, $to);
+
+        if (! $csv) {
             return response()->json($rows);
         }
 
-        AuditLog::record($caller, 'report.exported', $uid !== null ? User::find($uid) : null, ['report' => $report, 'from' => $from, 'to' => $to]);
+        // a superadmin looking inside an organization is not logged
+        if (! $caller->isSuperadmin()) {
+            AuditLog::record($caller, 'report.exported', $uid !== null ? User::find($uid) : null, ['report' => $report, 'from' => $from, 'to' => $to]);
+        }
 
         return $this->csv($report, $rows, $from, $to);
     }
@@ -79,7 +93,7 @@ class ReportController extends Controller
     /** @param  list<array<string, mixed>>  $rows */
     private function csv(string $report, array $rows, string $from, string $to): StreamedResponse
     {
-        $timezone = OfficeSetting::current()->timezone;
+        $timezone = OrganizationSetting::current()->timezone;
         [$header, $line] = match ($report) {
             'daily' => [
                 ['Date', 'Name', 'Email', 'Role', 'Tracked (HH:MM)', 'Tracked (seconds)', 'Active (HH:MM)', 'Active (seconds)', 'Idle (HH:MM)', 'Idle (seconds)', 'First activity', 'Last activity'],

@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AcceptConsentRequest;
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
+use App\Models\OrganizationSetting;
 use App\Models\User;
 use App\Notifications\EmailChangedNotification;
+use App\Services\AccessService;
+use App\Services\AccountService;
+use App\Support\Permissions;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -79,8 +82,8 @@ class MeController extends Controller
             ], 422);
         }
         $taken = ['error' => ['code' => 'EMAIL_TAKEN', 'message' => 'A user with this email already exists.']];
-        // compared without regard to case on every database (MySQL already does, SQLite does not)
-        if (User::whereRaw('LOWER(email) = ?', [mb_strtolower($new)])->whereKeyNot($user->id)->exists()) {
+        // emails are unique across every organization, compared without regard to case on every database (MySQL already does, SQLite does not)
+        if (app(AccountService::class)->emailTaken($new, $user->id)) {
             return response()->json($taken, 409);
         }
 
@@ -140,30 +143,51 @@ class MeController extends Controller
     }
 
     /**
-     * Shared by AuthController@login and GET /me so both return the identical `Me`
-     * shape (packages/shared/src/api.ts).
+     * Shared by AuthController@login, DashboardAuthController@login and GET /me so all return the identical `Me`
+     * shape (packages/shared/src/api.ts). It is also called before a request works inside an organization (at
+     * login), so the organization's settings are looked up by id rather than through the request's context.
      *
      * @return array<string, mixed>
      */
     public static function payload(User $user): array
     {
-        $settings = OfficeSetting::current();
-        $consentRequired = $user->consent_version === null || $user->consent_version < $settings->consent_version;
+        $access = app(AccessService::class);
+        $organization = $user->organization;
+        $settings = $organization === null ? null : OrganizationSetting::withoutGlobalScopes()->where('organization_id', $organization->id)->first();
+        $consentRequired = $settings !== null && ($user->consent_version === null || $user->consent_version < $settings->consent_version);
+
+        $platformPermissions = [];
+        if ($user->isSuperadmin()) {
+            $platformPermissions = array_values(array_filter(
+                Permissions::superadminKeys(),
+                fn (string $key) => $access->superadminCan($user, $key),
+            ));
+        }
 
         return [
             'id' => (string) $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->role,
             'status' => $user->status,
             'managerName' => $user->manager?->name,
             'consentVersion' => $user->consent_version,
             'consentRequired' => $consentRequired,
-            'officeSettings' => [
+            // what the person may do: their role's permissions and how far they reach (self, team, organization)
+            'role' => $user->role === null ? null : ['id' => (string) $user->role->id, 'name' => $user->role->name],
+            'permissions' => $user->isSuperadmin() ? [] : $access->permissions($user),
+            'scope' => $user->isSuperadmin() ? 'self' : $access->scope($user),
+            'isSuperadmin' => $user->isSuperadmin(),
+            'isOwner' => (bool) $user->is_owner,
+            'platformPermissions' => $platformPermissions,
+            'organization' => $organization === null ? null : [
+                'id' => (string) $organization->id,
+                'name' => $organization->name,
+                'timezone' => $settings?->timezone,
+            ],
+            'settings' => $settings === null ? null : [
                 'timezone' => $settings->timezone,
                 'idleThresholdSeconds' => $settings->idle_threshold_seconds,
                 'windowTitleMode' => $settings->window_title_mode,
-                'minAgentVersion' => $settings->min_agent_version,
                 'consentVersion' => $settings->consent_version,
                 'screenshotIntervalMinutes' => $settings->screenshot_interval_minutes,
                 'screenshotRandom' => $settings->screenshot_random,

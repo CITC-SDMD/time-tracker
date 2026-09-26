@@ -2,20 +2,17 @@
 
 namespace App\Http\Requests;
 
-use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-// PATCH /api/v1/admin/employees/{id} (docs/DEVELOPMENT_PLAN.md §10). Changes `name`, `status`, `role`
-// or `managerId` (moving the person to another manager). Only people above someone may change their
-// role (never their own), and never to `oic` or `superadmin`. Whether the caller may touch this
-// person, and whether the new manager sits exactly one tier above the (new) role, is checked in
-// AdminEmployeeController.
+// PATCH /api/v1/admin/employees/{id} (docs/DEVELOPMENT_PLAN.md §10). Changes `name`, `status`, `roleId` or
+// `managerId` (who the person reports to; null takes their manager away, which only someone reaching the whole
+// organization may do). Which of them the caller may change, and for whom, is checked in AdminEmployeeController.
 class UpdateEmployeeRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true; // controller checks the hierarchy/self rules — see AdminEmployeeController
+        return true; // controller checks the permissions, the reach and the self rules
     }
 
     /** @return array<string, mixed> */
@@ -24,8 +21,8 @@ class UpdateEmployeeRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:255'],
             'status' => ['sometimes', 'string', Rule::in(['active', 'inactive'])],
-            'role' => ['sometimes', 'string', Rule::in(User::ASSIGNABLE_ROLES)],
-            'managerId' => ['sometimes', 'integer'],
+            'roleId' => ['sometimes', 'integer'],
+            'managerId' => ['sometimes', 'nullable', 'integer'],
         ];
     }
 }

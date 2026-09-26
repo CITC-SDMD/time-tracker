@@ -2,9 +2,13 @@
 
 use App\Http\Middleware\CheckAgentVersion;
 use App\Http\Middleware\EnsureActiveUser;
-use App\Http\Middleware\EnsureManager;
-use App\Http\Middleware\EnsureOic;
+use App\Http\Middleware\EnsureAgentOrganization;
 use App\Http\Middleware\EnsureSelfOrVisible;
+use App\Http\Middleware\EnsureSuperadmin;
+use App\Http\Middleware\RequirePermission;
+use App\Http\Middleware\RequirePlatformPermission;
+use App\Http\Middleware\ResetOrganizationContext;
+use App\Http\Middleware\SetOrganizationContext;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -31,12 +35,18 @@ return Application::configure(basePath: dirname(__DIR__))
         // answered 401 even when it does not ask for JSON, instead of failing on a missing "login" route.
         $middleware->redirectGuestsTo(fn () => null);
 
+        // every request starts outside any organization; `org` puts the signed-in person inside theirs
+        $middleware->prepend(ResetOrganizationContext::class);
+
         $middleware->alias([
             'active' => EnsureActiveUser::class,
+            'agent-organization' => EnsureAgentOrganization::class,
             'check-agent-version' => CheckAgentVersion::class,
-            'manager' => EnsureManager::class,
-            'oic' => EnsureOic::class,
+            'org' => SetOrganizationContext::class,
+            'permission' => RequirePermission::class,
+            'platform' => RequirePlatformPermission::class,
             'self-or-visible' => EnsureSelfOrVisible::class,
+            'superadmin' => EnsureSuperadmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

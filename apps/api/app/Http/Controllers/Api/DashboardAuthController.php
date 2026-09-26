@@ -14,8 +14,7 @@ use Illuminate\Support\Facades\Hash;
 // POST /auth/login and /auth/logout for the dashboard (docs/DEVELOPMENT_PLAN.md §9.2): Sanctum SPA
 // authentication — a session cookie plus CSRF token, not a bearer token. These are Laravel's
 // own unprefixed web routes, unlike the agent's token login under /api/v1/auth/login.
-// Individual contributors have the right password but no business in a manager dashboard, so
-// they are refused here as well as by every API route.
+// Everyone with an account may sign in: what they see is decided by their role's permissions.
 class DashboardAuthController extends Controller
 {
     public function login(LoginRequest $request): JsonResponse
@@ -34,9 +33,9 @@ class DashboardAuthController extends Controller
             ], 403);
         }
 
-        if (! $user->isManagerRole()) {
+        if (! $user->isSuperadmin() && $user->organization?->isSuspended()) {
             return response()->json([
-                'error' => ['code' => 'FORBIDDEN', 'message' => 'This dashboard is for managers only.'],
+                'error' => ['code' => 'ORG_SUSPENDED', 'message' => 'Your organization is suspended. Ask the platform administrator.'],
             ], 403);
         }
 

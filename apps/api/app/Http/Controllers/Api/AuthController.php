@@ -32,6 +32,18 @@ class AuthController extends Controller
             ], 403);
         }
 
+        // the desktop app is for people of an organization; superadmins work in the dashboard only
+        if ($user->isSuperadmin()) {
+            return response()->json([
+                'error' => ['code' => 'FORBIDDEN', 'message' => 'Superadmin accounts do not use the desktop app.'],
+            ], 403);
+        }
+        if ($user->organization?->isSuspended()) {
+            return response()->json([
+                'error' => ['code' => 'ORG_SUSPENDED', 'message' => 'Your organization is suspended. Ask the platform administrator.'],
+            ], 403);
+        }
+
         $deviceId = $request->header('X-Device-Id', 'unknown');
         $token = $user->createToken("agent-{$deviceId}", ['agent'])->plainTextToken;
 

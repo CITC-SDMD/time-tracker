@@ -3,38 +3,16 @@
 namespace App\Services;
 
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Computes who's visible to whom under the OIC -> Project Manager -> Team Leader ->
- * individual-contributor hierarchy (docs/DEVELOPMENT_PLAN.md §9.1). One office, so
- * the whole `users` table is small — this loads just `id, manager_id` for everyone
- * (one indexed query) and walks the tree in PHP rather than reaching for a MySQL
- * recursive CTE. Simple to read, simple to unit test, and fast enough at this scale;
- * revisit only if the office genuinely outgrows an in-memory walk.
+ * The reporting line of an organization: who reports to whom (docs/DEVELOPMENT_PLAN.md §9.1). It is a free
+ * tree, any person may report to any other in the same organization, with no tier rule. Who may SEE whom is
+ * decided by AccessService (a role reaches only itself, its team, or the organization); this class only walks
+ * the tree. It reads `id, manager_id` of the people of the current organization (User is limited to it by the
+ * organization context) in one query and walks the tree in PHP, which is simple to read and test.
  */
 class HierarchyService
 {
-    /**
-     * Every user id visible to $user: themselves, plus — if they hold a manager role
-     * — everyone below them in the tree, at any depth.
-     *
-     * @return list<int>
-     */
-    public function visibleUserIds(User $user): array
-    {
-        if (! $user->isManagerRole()) {
-            return [$user->id];
-        }
-
-        return [$user->id, ...$this->allDescendantIds($user->id)];
-    }
-
-    public function isVisible(User $viewer, int $targetUserId): bool
-    {
-        return in_array($targetUserId, $this->visibleUserIds($viewer), true);
-    }
-
     /**
      * Every descendant of $userId (direct reports, their reports, and so on),
      * NOT including $userId itself.
@@ -59,15 +37,19 @@ class HierarchyService
         return $descendants;
     }
 
+    /** Whether making $managerId the manager of $personId would put someone above themselves (a loop). */
+    public function wouldCreateLoop(int $personId, int $managerId): bool
+    {
+        return $managerId === $personId || in_array($managerId, $this->allDescendantIds($personId), true);
+    }
+
     /**
      * @return array<int, list<int>> manager_id => [direct report ids]
      */
     private function childrenByManagerId(): array
     {
-        $rows = DB::table('users')->select('id', 'manager_id')->get();
-
         $byManager = [];
-        foreach ($rows as $row) {
+        foreach (User::query()->select('id', 'manager_id')->get() as $row) {
             if ($row->manager_id !== null) {
                 $byManager[$row->manager_id][] = $row->id;
             }

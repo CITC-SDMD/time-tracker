@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
-use App\Models\OfficeSetting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -32,14 +31,6 @@ class ReportTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        OfficeSetting::create([
-            'id' => 1,
-            'timezone' => 'Asia/Manila',
-            'idle_threshold_seconds' => 300,
-            'window_title_mode' => 'full',
-            'min_agent_version' => '0.1.0',
-            'consent_version' => 1,
-        ]);
 
         $this->oic = User::factory()->oic()->create(['name' => 'Olive']);
         $this->pm = User::factory()->projectManager($this->oic)->create(['name' => 'Pat']);
@@ -59,7 +50,7 @@ class ReportTest extends TestCase
     private function summary(User $user, string $day, int $tracked, int $active, int $idle, array $apps = [], array $names = [], ?string $first = null, ?string $last = null): void
     {
         DB::table('daily_summaries')->insert([
-            'user_id' => $user->id, 'day' => $day, 'tracked_seconds' => $tracked, 'active_seconds' => $active,
+            'organization_id' => $user->organization_id, 'user_id' => $user->id, 'day' => $day, 'tracked_seconds' => $tracked, 'active_seconds' => $active,
             'idle_seconds' => $idle, 'apps' => json_encode((object) $apps), 'app_names' => json_encode((object) $names),
             'first_activity_at' => $first, 'last_activity_at' => $last,
         ]);
@@ -157,6 +148,8 @@ class ReportTest extends TestCase
     public function test_the_query_count_does_not_grow_with_the_number_of_people(): void
     {
         $this->seedWeek();
+        // the first request also loads the caller's role and organization; measure the ones after it
+        $this->report($this->oic, 'team')->assertOk();
         $count = function () {
             DB::flushQueryLog();
             DB::enableQueryLog();
@@ -189,7 +182,7 @@ class ReportTest extends TestCase
         $lines = array_map('str_getcsv', explode("\n", trim(substr($body, 3))));
         $this->assertSame('Tracked (HH:MM)', $lines[0][4]);
         // 00:30 UTC is 08:30 in Manila, 09:45 UTC is 17:45
-        $this->assertSame(['2026-09-01', 'Dev A1', $this->devA1->email, 'developer', '08:00', '28800', '07:00', '25200', '01:00', '3600', '08:30', '17:45'], $lines[1]);
+        $this->assertSame(['2026-09-01', 'Dev A1', $this->devA1->email, 'Developer', '08:00', '28800', '07:00', '25200', '01:00', '3600', '08:30', '17:45'], $lines[1]);
 
         $entry = AuditLog::where('action', 'report.exported')->firstOrFail();
         $this->assertSame($this->oic->id, $entry->actor_user_id);
