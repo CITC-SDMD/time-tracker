@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\ScreenshotController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -22,11 +23,21 @@ Route::prefix('v1')->group(function () {
     Route::post('/agent/sync', [AgentController::class, 'sync'])
         ->middleware(['auth:sanctum', 'check-agent-version', 'throttle:agent-sync']);
 
+    // The desktop app's screenshots (phase 10): one JPEG per request, at most 60 a minute.
+    Route::post('/agent/screenshots', [ScreenshotController::class, 'store'])
+        ->middleware(['auth:sanctum', 'active', 'check-agent-version', 'throttle:60,1']);
+
     Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('/me', [MeController::class, 'show']);
         Route::patch('/me', [MeController::class, 'update']);
         Route::put('/me/password', [MeController::class, 'changePassword'])->middleware('throttle:5,1');
         Route::post('/me/consent', [MeController::class, 'acceptConsent']);
+
+        // Screenshots (phase 10). Someone can always see their own; a manager sees their branch.
+        Route::get('/employees/{id}/screenshots', [ScreenshotController::class, 'index'])
+            ->whereNumber('id')->middleware('self-or-visible');
+        Route::get('/screenshots/{screenshot}/{kind}', [ScreenshotController::class, 'show'])
+            ->whereUuid('screenshot')->whereIn('kind', ['thumb', 'image']);
 
         Route::middleware('manager')->group(function () {
             Route::get('/employees', [EmployeeController::class, 'index']);

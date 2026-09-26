@@ -2,11 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Models\Screenshot;
 use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\DemoHierarchySeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 // the development office used for the live tests: it must build, be safe to run twice, and
@@ -14,6 +16,24 @@ use Tests\TestCase;
 class DemoHierarchySeederTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('screenshots'); // the demo pictures must not land in the real folder
+    }
+
+    public function test_it_makes_a_few_screenshots_for_the_gallery_and_replaces_them_when_run_again(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $this->seed(DemoHierarchySeeder::class);
+        $this->seed(DemoHierarchySeeder::class);
+
+        $dev1 = User::where('email', 'dev1@test.com')->first();
+        $this->assertSame(6, Screenshot::where('user_id', $dev1->id)->count());
+        $this->assertSame(12, Screenshot::count());
+        $this->assertSame(12, DB::table('media')->count());
+    }
 
     public function test_it_builds_the_office_and_can_be_run_again(): void
     {

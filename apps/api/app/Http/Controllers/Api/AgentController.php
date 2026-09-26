@@ -184,6 +184,8 @@ class AgentController extends Controller
             'settings' => [
                 'idleThresholdSeconds' => $office->idle_threshold_seconds,
                 'windowTitleMode' => $office->window_title_mode,
+                'screenshotIntervalMinutes' => $office->screenshot_interval_minutes,
+                'screenshotRandom' => $office->screenshot_random,
             ],
         ]);
     }

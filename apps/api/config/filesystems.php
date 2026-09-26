@@ -47,6 +47,30 @@ return [
             'report' => false,
         ],
 
+        // Screenshots (docs Phase 10): the office's storage server over the S3 protocol in
+        // production (SCREENSHOT_DISK=s3), a private folder while developing. Never public.
+        'screenshots' => env('SCREENSHOT_DISK', 'local') === 's3'
+            ? [
+                'driver' => 's3',
+                'key' => env('AWS_ACCESS_KEY_ID'),
+                'secret' => env('AWS_SECRET_ACCESS_KEY'),
+                'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
+                'bucket' => env('AWS_BUCKET'),
+                'endpoint' => env('AWS_ENDPOINT'),
+                // MinIO addresses buckets by path, not by sub-domain
+                'use_path_style_endpoint' => true,
+                'visibility' => 'private',
+                'throw' => true,
+                'report' => false,
+            ]
+            : [
+                'driver' => 'local',
+                'root' => storage_path('app/private/screenshots'),
+                'visibility' => 'private',
+                'throw' => true,
+                'report' => false,
+            ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

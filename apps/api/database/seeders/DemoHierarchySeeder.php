@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\OfficeSetting;
+use App\Models\Screenshot;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -74,6 +75,36 @@ class DemoHierarchySeeder extends Seeder
         $this->live($tl1, 'active', 'Google Chrome', 1);
         foreach ([$dev1, $dev2, $tl1] as $user) {
             $this->todaysSessions($user, $timezone);
+        }
+        // a few pictures for the gallery (screenshots stay switched off in the office settings)
+        foreach ([$dev1, $dev2] as $user) {
+            $this->screenshots($user);
+        }
+    }
+
+    /** six small generated pictures over the last hour, written through the real model so the files and thumbnails exist */
+    private function screenshots(User $user): void
+    {
+        if (! function_exists('imagejpeg')) {
+            return; // the image extension is missing: no pictures, the rest of the demo still works
+        }
+
+        Screenshot::where('user_id', $user->id)->get()->each->delete(); // deleting also removes the files
+
+        foreach (range(1, 6) as $i) {
+            $shot = Screenshot::create([
+                'id' => (string) Str::uuid(),
+                'user_id' => $user->id,
+                'taken_at' => now()->subMinutes($i * 10),
+                'width' => 640,
+                'height' => 360,
+            ]);
+            $path = tempnam(sys_get_temp_dir(), 'demo');
+            $image = imagecreatetruecolor(640, 360);
+            imagefilledrectangle($image, 0, 0, 640, 360, imagecolorallocate($image, 30 + $i * 25, 60, 200 - $i * 20));
+            imagestring($image, 5, 20, 20, "demo screenshot {$i} of {$user->name}", imagecolorallocate($image, 255, 255, 255));
+            imagejpeg($image, $path, 70);
+            $shot->addMedia($path)->usingFileName($shot->id.'.jpg')->toMediaCollection(Screenshot::COLLECTION);
         }
     }
 

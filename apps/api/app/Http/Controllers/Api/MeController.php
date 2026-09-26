@@ -104,6 +104,8 @@ class MeController extends Controller
                 'windowTitleMode' => $settings->window_title_mode,
                 'minAgentVersion' => $settings->min_agent_version,
                 'consentVersion' => $settings->consent_version,
+                'screenshotIntervalMinutes' => $settings->screenshot_interval_minutes,
+                'screenshotRandom' => $settings->screenshot_random,
             ],
         ];
     }
