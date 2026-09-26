@@ -77,7 +77,7 @@ class AuthTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('id', (string) $user->id)
-            ->assertJsonPath('role.name', 'OIC')
+            ->assertJsonPath('role.name', 'Admin')
             ->assertJsonPath('scope', 'organization')
             ->assertJsonPath('consentRequired', true); // consent_version starts null
     }

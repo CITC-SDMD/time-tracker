@@ -46,7 +46,7 @@ class DemoHierarchySeederTest extends TestCase
         $demo = Organization::where('slug', 'demo-office')->firstOrFail();
         $inDemo = fn (string $role) => User::withoutGlobalScopes()->where('organization_id', $demo->id)
             ->whereHas('role', fn ($q) => $q->withoutGlobalScopes()->where('name', $role))->count();
-        $this->assertSame(1, $inDemo('OIC') + $inDemo('Admin'));
+        $this->assertSame(1, $inDemo('Admin'));
         $this->assertSame(2, $inDemo('Project Manager'));
         $this->assertSame(3, $inDemo('Team Leader'));
         $this->assertSame(6, $inDemo('Lead Developer') + $inDemo('Developer') + $inDemo('QA') + $inDemo('Client Support') + $inDemo('System Analyst'));

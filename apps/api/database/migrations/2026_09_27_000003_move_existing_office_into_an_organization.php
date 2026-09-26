@@ -29,7 +29,7 @@ return new class extends Migration
 
     /** old role => [name, scope, permissions, is_system] */
     private const OLD_ROLES = [
-        'oic' => ['OIC', 'organization', self::ALL, true],
+        'oic' => ['Admin', 'organization', self::ALL, true],
         'project_manager' => ['Project Manager', 'team', self::MANAGER, false],
         'team_leader' => ['Team Leader', 'team', self::MANAGER, false],
         'lead_developer' => ['Lead Developer', 'self', [], false],

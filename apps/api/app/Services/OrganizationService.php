@@ -15,7 +15,7 @@ use Illuminate\Support\Str;
  */
 class OrganizationService
 {
-    public const ADMIN_ROLE_NAME = 'Organization Admin';
+    public const ADMIN_ROLE_NAME = 'Admin';
 
     public function create(string $name, string $timezone = 'Asia/Manila'): Organization
     {

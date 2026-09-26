@@ -27,8 +27,8 @@ class OrganizationFactory extends Factory
     public static function made(string $name = 'Test Office'): Organization
     {
         $organization = app(OrganizationService::class)->create($name);
-        // the old office called its admin role "OIC"; a name the tests keep using
-        $organization->roles()->where('is_system', true)->update(['name' => 'OIC']);
+        // the admin role is called Admin
+        $organization->roles()->where('is_system', true)->update(['name' => 'Admin']);
 
         return $organization;
     }

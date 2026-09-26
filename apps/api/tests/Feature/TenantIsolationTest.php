@@ -138,7 +138,7 @@ class TenantIsolationTest extends TestCase
     public function test_roles_are_per_organization(): void
     {
         $names = collect($this->asB()->getJson('/api/v1/roles')->assertOk()->json())->pluck('name')->all();
-        $this->assertEqualsCanonicalizing(['OIC', 'Staff B'], $names);
+        $this->assertEqualsCanonicalizing(['Admin', 'Staff B'], $names);
 
         $this->asB()->patchJson("/api/v1/roles/{$this->roleA->id}", ['name' => 'Renamed'])->assertNotFound();
         $this->asB()->deleteJson("/api/v1/roles/{$this->roleA->id}")->assertNotFound();

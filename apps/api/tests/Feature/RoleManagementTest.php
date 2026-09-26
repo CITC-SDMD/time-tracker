@@ -107,9 +107,9 @@ class RoleManagementTest extends TestCase
 
         $rows = collect($this->actingAs($manager, 'sanctum')->getJson('/api/v1/roles')->assertOk()->json())->keyBy('name');
 
-        $this->assertFalse($rows['OIC']['assignable']);
+        $this->assertFalse($rows['Admin']['assignable']);
         $this->assertTrue($rows['Project Manager']['assignable']);
-        $this->assertSame(1, $rows['OIC']['memberCount']);
+        $this->assertSame(1, $rows['Admin']['memberCount']);
     }
 
     public function test_the_list_needs_a_permission_that_uses_it(): void

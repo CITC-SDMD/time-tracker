@@ -82,9 +82,9 @@ class OfficeToOrganizationMigrationTest extends TestCase
 
         // roles made from the old ones: only the ones somebody held
         $roles = DB::table('roles')->where('organization_id', $org->id)->get()->keyBy('name');
-        $this->assertEqualsCanonicalizing(['OIC', 'Project Manager', 'Team Leader', 'Developer', 'QA'], $roles->keys()->all());
-        $this->assertTrue((bool) $roles['OIC']->is_system);
-        $this->assertSame('organization', $roles['OIC']->scope);
+        $this->assertEqualsCanonicalizing(['Admin', 'Project Manager', 'Team Leader', 'Developer', 'QA'], $roles->keys()->all());
+        $this->assertTrue((bool) $roles['Admin']->is_system);
+        $this->assertSame('organization', $roles['Admin']->scope);
         $this->assertSame('team', $roles['Team Leader']->scope);
         $this->assertContains('people.assign_role', json_decode($roles['Team Leader']->permissions));
         $this->assertNotContains('settings.manage', json_decode($roles['Team Leader']->permissions));
@@ -92,7 +92,7 @@ class OfficeToOrganizationMigrationTest extends TestCase
         $this->assertSame([], json_decode($roles['Developer']->permissions));
 
         // everybody is placed, the reporting line is untouched
-        foreach (['oic' => 'OIC', 'pm' => 'Project Manager', 'tl' => 'Team Leader', 'dev' => 'Developer', 'qa' => 'QA'] as $key => $roleName) {
+        foreach (['oic' => 'Admin', 'pm' => 'Project Manager', 'tl' => 'Team Leader', 'dev' => 'Developer', 'qa' => 'QA'] as $key => $roleName) {
             $user = DB::table('users')->where('email', "{$key}@x.test")->first();
             $this->assertSame($org->id, $user->organization_id);
             $this->assertSame($roles[$roleName]->id, $user->role_id);

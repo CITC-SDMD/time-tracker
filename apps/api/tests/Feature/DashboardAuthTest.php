@@ -22,7 +22,7 @@ class DashboardAuthTest extends TestCase
 
         $this->postJson('/auth/login', ['email' => $oic->email, 'password' => 'secret-pass'])
             ->assertOk()
-            ->assertJsonPath('role.name', 'OIC');
+            ->assertJsonPath('role.name', 'Admin');
 
         $this->getJson('/api/v1/me', ['Origin' => 'http://localhost:3100', 'Referer' => 'http://localhost:3100/'])
             ->assertOk()
