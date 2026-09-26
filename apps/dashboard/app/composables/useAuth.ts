@@ -1,14 +1,13 @@
-import { isManagerRole, type Me } from 'shared'
+import type { Me } from 'shared'
 
 // Sanctum SPA authentication: a session cookie + CSRF token, not a bearer token
-// (docs/DEVELOPMENT_PLAN.md §9.2). Only managers (OIC, Project Manager, Team Leader) may
-// use the dashboard; the server refuses everyone else at login and on every route.
+// (docs/DEVELOPMENT_PLAN.md §9.2). Everyone with an account may sign in; what they then see follows the permissions
+// of their role (useAccess), and the server checks them again on every route.
 export function useAuth() {
   const { web } = useApi()
   const me = useState<Me | null>('auth:me', () => null)
 
-  const isManager = computed(() => !!me.value && isManagerRole(me.value.role))
-  const isOic = computed(() => me.value?.role === 'oic')
+  const isSuperadmin = computed(() => !!me.value?.isSuperadmin)
 
   async function login(email: string, password: string) {
     await web('/sanctum/csrf-cookie')
@@ -37,5 +36,5 @@ export function useAuth() {
     }
   }
 
-  return { me, isManager, isOic, login, logout, restore }
+  return { me, isSuperadmin, login, logout, restore }
 }

@@ -2,17 +2,33 @@
   <div>
     <UiPageHeader
       title="People"
-      :description="isOic ? 'Everyone in the office, who they report to, and their accounts.' : 'You and everyone who reports to you.'"
+      :description="scope === 'organization' ? 'Everyone in the organization, who they report to, and their accounts.' : 'You and everyone who reports to you.'"
     >
       <template
-        v-if="addableRoles.length"
+        v-if="canAdd"
         #actions
       >
         <FormButton @click="openAdd">
-          Add {{ addLabel }}
+          Add a person
         </FormButton>
       </template>
     </UiPageHeader>
+
+    <UiAlert
+      v-if="canAdd && rolesLoaded && !addRoleOptions.length"
+      variant="warning"
+      class="mb-6"
+    >
+      There is no role you can give yet.
+      <template v-if="can('roles.manage')">
+        <UiLink :to="office.to('/user/roles')">
+          Make a role
+        </UiLink> first, then add people.
+      </template>
+      <template v-else>
+        Ask an admin of your organization to make one.
+      </template>
+    </UiAlert>
 
     <UiAlert
       v-if="notice"
@@ -60,7 +76,7 @@
       empty-description="Change the search or the filters."
     >
       <template #cell-name="{ row }">
-        <UiLink :to="`/user/employees/${row.id}`">
+        <UiLink :to="office.to(`/user/employees/${row.id}`)">
           {{ row.name }}
         </UiLink>
         <span
@@ -70,7 +86,7 @@
         <span class="block text-xs text-gray-500 dark:text-gray-400">{{ row.email }}</span>
       </template>
       <template #cell-role="{ row }">
-        {{ ROLE_LABEL[row.role as Role] }}
+        {{ row.role }}
       </template>
       <template #cell-managerName="{ row }">
         {{ row.managerName ?? '—' }}
@@ -85,7 +101,7 @@
       </template>
       <template #cell-actions="{ row }">
         <div
-          v-if="row.id !== me?.id"
+          v-if="row.id !== me?.id && !readOnly"
           class="flex flex-wrap justify-end gap-x-2"
         >
           <FormButton
@@ -103,7 +119,7 @@
             Change role
           </FormButton>
           <FormButton
-            v-if="row.accountStatus === 'active'"
+            v-if="can('people.update') && row.accountStatus === 'active'"
             variant="link"
             :loading="busyId === row.id"
             @click="resend(row as EmployeeListItem)"
@@ -111,12 +127,14 @@
             Resend link
           </FormButton>
           <FormButton
+            v-if="can('people.update')"
             variant="link"
             @click="ask(row.accountStatus === 'active' ? 'deactivate' : 'reactivate', row as EmployeeListItem)"
           >
             {{ row.accountStatus === 'active' ? 'Deactivate' : 'Reactivate' }}
           </FormButton>
           <FormButton
+            v-if="can('people.update')"
             variant="link"
             class="text-red-600 hover:text-red-500 dark:text-red-400"
             @click="ask('delete', row as EmployeeListItem)"
@@ -129,7 +147,7 @@
 
     <UiModal
       v-model="addOpen"
-      :title="`Add ${addLabel}`"
+      title="Add a person"
       :persistent="adding"
     >
       <form
@@ -156,11 +174,20 @@
           @blur="addV$.email.$touch()"
         />
         <FormSelect
-          v-model="addForm.role"
+          v-model="addForm.roleId"
           label="Role"
           :options="addRoleOptions"
-          :errors="addV$.role.$errors"
-          @blur="addV$.role.$touch()"
+          placeholder="Choose a role"
+          :errors="addV$.roleId.$errors"
+          @blur="addV$.roleId.$touch()"
+        />
+        <FormSelect
+          v-model="addForm.managerId"
+          label="Reports to"
+          :options="addManagerOptions"
+          placeholder="Choose who they report to"
+          :errors="addV$.managerId.$errors"
+          @blur="addV$.managerId.$touch()"
         />
         <FormError v-if="addError">
           {{ addError }}
@@ -236,34 +263,16 @@
         @submit.prevent="submitRole"
       >
         <p class="text-sm/6 text-gray-500 dark:text-gray-400">
-          {{ changing?.name }} is {{ changing ? ROLE_LABEL[changing.role] : '' }}. Their history stays with them.
+          {{ changing?.name }} is {{ changing?.role }}. Their history stays with them, and who they report to does not change.
         </p>
         <FormSelect
-          v-model="roleForm.role"
+          v-model="roleForm.roleId"
           label="New role"
           :options="roleOptionsFor"
           placeholder="Choose a role"
-          :errors="roleV$.role.$errors"
-          @blur="roleV$.role.$touch()"
+          :errors="roleV$.roleId.$errors"
+          @blur="roleV$.roleId.$touch()"
         />
-        <FormSelect
-          v-if="roleNeedsManager"
-          v-model="roleForm.managerId"
-          label="Reports to"
-          :options="roleManagerOptions"
-          placeholder="Choose who they will report to"
-          :errors="roleV$.managerId.$errors"
-          @blur="roleV$.managerId.$touch()"
-        />
-        <p
-          v-if="roleNeedsManager"
-          class="text-sm/6 text-gray-500 dark:text-gray-400"
-        >
-          A change of level also changes who they report to.
-        </p>
-        <FormError v-if="roleBlocked">
-          {{ roleBlocked }}
-        </FormError>
         <FormError v-if="roleError">
           {{ roleError }}
         </FormError>
@@ -278,7 +287,6 @@
           <FormButton
             type="submit"
             :loading="roleBusy"
-            :disabled="!!roleBlocked"
           >
             Change role
           </FormButton>
@@ -301,18 +309,22 @@
 
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
-import { email as emailRule, helpers, maxLength, required, requiredIf } from '@vuelidate/validators'
-import { ASSIGNABLE_ROLES, ROLE_LABEL, rolesOneTierBelow, type CreatedEmployee, type EmployeeListItem, type Role, type UserStatus } from 'shared'
+import { email as emailRule, helpers, maxLength, required } from '@vuelidate/validators'
+import type { CreatedEmployee, EmployeeListItem, RoleItem, UserStatus } from 'shared'
 
 definePageMeta({
   layout: 'user',
+  permission: 'people.view',
+  alias: ['/platform/organizations/:orgId/office/people'],
 })
 
-// Add, move, change the role of, deactivate and delete the accounts the signed-in person manages (docs/DEVELOPMENT_PLAN.md
-// §9.1): an OIC sees the whole office, everyone else only their own branch. The API enforces every
-// rule again; this page only offers what the person is allowed to do.
+// Add, move, change the role of, deactivate and delete the accounts the signed-in person reaches (docs/DEVELOPMENT_PLAN.md
+// §9.1). What they see depends on how far their role reaches, and each button on the permission behind it. The API
+// enforces every rule again; this page only offers what the person is allowed to do.
 const { api } = useApi()
-const { me, isOic } = useAuth()
+const { me } = useAuth()
+const { can, scope, readOnly } = useAccess()
+const office = useOffice()
 
 const COLUMNS = [
   { key: 'name', label: 'Name' },
@@ -329,7 +341,9 @@ const STATUS_OPTIONS = [
 ]
 
 const people = ref<EmployeeListItem[]>([])
+const roles = ref<RoleItem[]>([])
 const loaded = ref(false)
+const rolesLoaded = ref(false)
 const error = ref<string | null>(null)
 
 const search = ref('')
@@ -352,12 +366,27 @@ async function load() {
   }
 }
 
-onMounted(load)
+// the organization's roles, to choose from when adding a person or changing a role
+async function loadRoles() {
+  if (!can('people.create') && !can('people.assign_role'))
+    return
+  try {
+    roles.value = await api<RoleItem[]>('/roles')
+  }
+  catch {
+    roles.value = []
+  }
+  finally {
+    rolesLoaded.value = true
+  }
+}
 
-const roleOptions = computed(() => {
-  const present = new Set(people.value.map(p => p.role))
-  return [...present].map(role => ({ value: role, label: ROLE_LABEL[role] }))
+onMounted(() => {
+  load()
+  loadRoles()
 })
+
+const roleOptions = computed(() => [...new Set(people.value.map(p => p.role))].sort().map(name => ({ value: name, label: name })))
 
 const filtered = computed(() => {
   const needle = search.value.trim().toLowerCase()
@@ -368,16 +397,38 @@ const filtered = computed(() => {
   )
 })
 
+/** everyone below `id` in the reporting line, at any depth (a person cannot be put under someone below them) */
+function below(id: string): Set<string> {
+  const found = new Set<string>()
+  const queue = [id]
+  while (queue.length) {
+    const current = queue.shift()!
+    for (const p of people.value) {
+      if (p.managerId === current && !found.has(p.id)) {
+        found.add(p.id)
+        queue.push(p.id)
+      }
+    }
+  }
+  return found
+}
+
+const NO_MANAGER = 'none'
+
 // ---- add a person ----------------------------------------------------------------------------
 
-const addableRoles = computed<readonly Role[]>(() => (me.value ? rolesOneTierBelow(me.value.role) : []))
-const addRoleOptions = computed(() => addableRoles.value.map(role => ({ value: role, label: ROLE_LABEL[role] })))
-const addLabel = computed(() => addableRoles.value.length === 1 ? ROLE_LABEL[addableRoles.value[0]!] : 'person')
+const canAdd = computed(() => can('people.create') && !readOnly.value)
+// only roles the person may give (nobody gives more than they have)
+const addRoleOptions = computed(() => roles.value.filter(r => r.assignable).map(r => ({ value: r.id, label: r.name })))
+const addManagerOptions = computed(() => [
+  ...people.value.filter(p => p.accountStatus === 'active').map(p => ({ value: p.id, label: p.id === me.value?.id ? `${p.name} (you)` : `${p.name} (${p.role})` })),
+  ...(scope.value === 'organization' ? [{ value: NO_MANAGER, label: 'No manager' }] : []),
+])
 
 const addOpen = ref(false)
 const adding = ref(false)
 const addError = ref<string | null>(null)
-const addForm = reactive({ name: '', email: '', role: '' })
+const addForm = reactive({ name: '', email: '', roleId: '', managerId: '' })
 const addRules = {
   name: {
     required: helpers.withMessage('Enter their full name.', required),
@@ -388,14 +439,17 @@ const addRules = {
     email: helpers.withMessage('Enter a valid email address.', emailRule),
     maxLength: helpers.withMessage('Use at most 255 characters.', maxLength(255)),
   },
-  role: { required: helpers.withMessage('Choose a role.', required) },
+  roleId: { required: helpers.withMessage('Choose a role.', required) },
+  managerId: { required: helpers.withMessage('Choose who they report to.', required) },
 }
 const addV$ = useVuelidate(addRules, addForm)
 
 function openAdd() {
   addForm.name = ''
   addForm.email = ''
-  addForm.role = addableRoles.value.length === 1 ? addableRoles.value[0]! : ''
+  addForm.roleId = addRoleOptions.value.length === 1 ? addRoleOptions.value[0]!.value : ''
+  // unless said otherwise the new person reports to whoever adds them
+  addForm.managerId = me.value && !me.value.isSuperadmin ? me.value.id : ''
   addError.value = null
   addV$.value.$reset()
   addOpen.value = true
@@ -409,13 +463,19 @@ async function submitAdd() {
   try {
     const created = await api<CreatedEmployee>('/admin/employees', {
       method: 'POST',
-      body: { name: addForm.name.trim(), email: addForm.email.trim(), role: addForm.role },
+      body: {
+        name: addForm.name.trim(),
+        email: addForm.email.trim(),
+        roleId: Number(addForm.roleId),
+        managerId: addForm.managerId === NO_MANAGER ? null : Number(addForm.managerId),
+      },
     })
     addOpen.value = false
     notice.value = created.emailSent
       ? { variant: 'success', text: `We emailed a set-password link to ${created.email}. It works for 3 days.` }
       : { variant: 'danger', text: `${created.name} was added, but the email could not be sent. Pass this link on yourself:`, link: created.setPasswordUrl }
     await load()
+    await loadRoles()
   }
   catch (e) {
     addError.value = messageOf(e, 'Could not add this person.')
@@ -454,22 +514,29 @@ const moving = ref<EmployeeListItem | null>(null)
 const moveForm = reactive({ managerId: '' })
 const moveV$ = useVuelidate({ managerId: { required: helpers.withMessage('Choose the new manager.', required) } }, moveForm)
 
-// people who could take `person`: active, holding the role one tier above theirs, and not the current manager
+// anyone active who is not the person, not their current manager and not somebody below them (that would be a loop)
 function managersFor(person: EmployeeListItem): EmployeeListItem[] {
+  const under = below(person.id)
   return people.value.filter(p =>
     p.id !== person.id
     && p.id !== person.managerId
     && p.accountStatus === 'active'
-    && rolesOneTierBelow(p.role).includes(person.role),
+    && !under.has(p.id),
   )
 }
 
-const moveOptions = computed(() => moving.value
-  ? managersFor(moving.value).map(m => ({ value: m.id, label: `${m.name} (${ROLE_LABEL[m.role]})` }))
-  : [])
+const moveOptions = computed(() => {
+  const person = moving.value
+  if (!person)
+    return []
+  return [
+    ...managersFor(person).map(m => ({ value: m.id, label: `${m.name} (${m.role})` })),
+    ...(scope.value === 'organization' && person.managerId !== null ? [{ value: NO_MANAGER, label: 'No manager' }] : []),
+  ]
+})
 
 function canMove(person: EmployeeListItem): boolean {
-  return person.role !== 'oic' && managersFor(person).length > 0
+  return can('people.update') && (managersFor(person).length > 0 || (scope.value === 'organization' && person.managerId !== null))
 }
 
 function openMove(person: EmployeeListItem) {
@@ -486,9 +553,9 @@ async function submitMove() {
   moveBusy.value = true
   moveError.value = null
   try {
-    await api(`/admin/employees/${moving.value.id}`, { method: 'PATCH', body: { managerId: Number(moveForm.managerId) } })
+    await api(`/admin/employees/${moving.value.id}`, { method: 'PATCH', body: { managerId: moveForm.managerId === NO_MANAGER ? null : Number(moveForm.managerId) } })
     const to = people.value.find(p => p.id === moveForm.managerId)
-    notice.value = { variant: 'success', text: `${moving.value.name} now reports to ${to?.name ?? 'the new manager'}.` }
+    notice.value = { variant: 'success', text: moveForm.managerId === NO_MANAGER ? `${moving.value.name} no longer reports to anyone.` : `${moving.value.name} now reports to ${to?.name ?? 'the new manager'}.` }
     moveOpen.value = false
     await load()
   }
@@ -502,90 +569,49 @@ async function submitMove() {
 
 // ---- change role ------------------------------------------------------------------------------
 
-// Only people above someone can do this (the list only holds the caller's own branch). Moving to a role
-// in the same tier keeps the manager; another tier needs a new manager in the same step.
+// Giving a person another role is separate from moving them: nobody's manager changes here. The person may only
+// offer roles they may give (nobody gives more than they have).
 const roleOpen = ref(false)
 const roleBusy = ref(false)
 const roleError = ref<string | null>(null)
 const changing = ref<EmployeeListItem | null>(null)
-const roleForm = reactive({ role: '', managerId: '' })
+const roleForm = reactive({ roleId: '' })
 
-// can the person's current manager hold someone in `role`?
-function currentManagerFits(person: EmployeeListItem, role: Role): boolean {
-  const manager = people.value.find(p => p.id === person.managerId)
-  return !!manager && rolesOneTierBelow(manager.role).includes(role)
-}
-
-// active people who could manage someone in `role`
-function managersForRole(person: EmployeeListItem, role: Role): EmployeeListItem[] {
-  return people.value.filter(p =>
-    p.id !== person.id
-    && p.accountStatus === 'active'
-    && rolesOneTierBelow(p.role).includes(role),
-  )
-}
-
-// the roles that can work: same level, or another level with someone available to report to
-function roleChoices(person: EmployeeListItem): Role[] {
-  return ASSIGNABLE_ROLES.filter(role =>
-    role !== person.role && (currentManagerFits(person, role) || managersForRole(person, role).length > 0),
-  )
+// the roles that could replace the person's current one
+function roleChoices(person: EmployeeListItem): RoleItem[] {
+  return roles.value.filter(r => r.assignable && r.id !== person.roleId)
 }
 
 function canChangeRole(person: EmployeeListItem): boolean {
-  return person.id !== me.value?.id && person.role !== 'oic' && roleChoices(person).length > 0
+  // someone holding a role that can do more than the caller's cannot be changed by them (the API says so too)
+  const held = roles.value.find(r => r.id === person.roleId)
+  return can('people.assign_role') && (held?.assignable ?? true) && roleChoices(person).length > 0
 }
 
-const roleOptionsFor = computed(() => changing.value
-  ? roleChoices(changing.value).map(role => ({ value: role, label: ROLE_LABEL[role] }))
-  : [])
+const roleOptionsFor = computed(() => changing.value ? roleChoices(changing.value).map(r => ({ value: r.id, label: r.name })) : [])
 
-const roleNeedsManager = computed(() =>
-  !!changing.value && roleForm.role !== '' && !currentManagerFits(changing.value, roleForm.role as Role))
-
-const roleManagerOptions = computed(() => changing.value && roleForm.role
-  ? managersForRole(changing.value, roleForm.role as Role).map(m => ({ value: m.id, label: `${m.name} (${ROLE_LABEL[m.role]})` }))
-  : [])
-
-// the people reporting to them must still fit the new role (the API checks this too)
-const roleBlocked = computed(() => {
-  const person = changing.value
-  if (!person || !roleForm.role)
-    return null
-  const fits = rolesOneTierBelow(roleForm.role as Role)
-  const team = people.value.filter(p => p.managerId === person.id)
-  return team.some(p => !fits.includes(p.role))
-    ? `${person.name} has people reporting to them who could not report to a ${ROLE_LABEL[roleForm.role as Role]}. Move those people first.`
-    : null
-})
-
-const roleV$ = useVuelidate({
-  role: { required: helpers.withMessage('Choose the new role.', required) },
-  managerId: { required: helpers.withMessage('Choose who they will report to.', requiredIf(roleNeedsManager)) },
-}, roleForm)
+const roleV$ = useVuelidate({ roleId: { required: helpers.withMessage('Choose the new role.', required) } }, roleForm)
 
 function openRole(person: EmployeeListItem) {
   changing.value = person
-  roleForm.role = ''
-  roleForm.managerId = ''
+  roleForm.roleId = ''
   roleError.value = null
   roleV$.value.$reset()
   roleOpen.value = true
 }
 
 async function submitRole() {
-  if (!changing.value || roleBlocked.value || !(await roleV$.value.$validate()))
+  if (!changing.value || !(await roleV$.value.$validate()))
     return
   roleBusy.value = true
   roleError.value = null
   try {
-    await api(`/admin/employees/${changing.value.id}`, {
-      method: 'PATCH',
-      body: { role: roleForm.role, ...(roleNeedsManager.value ? { managerId: Number(roleForm.managerId) } : {}) },
-    })
-    notice.value = { variant: 'success', text: `${changing.value.name} is now ${ROLE_LABEL[roleForm.role as Role]}.` }
+    await api(`/admin/employees/${changing.value.id}`, { method: 'PATCH', body: { roleId: Number(roleForm.roleId) } })
+    const role = roles.value.find(r => r.id === roleForm.roleId)
+    notice.value = { variant: 'success', text: `${changing.value.name} is now ${role?.name ?? 'in the new role'}.` }
     roleOpen.value = false
     await load()
+    await loadRoles()
   }
   catch (e) {
     roleError.value = messageOf(e, 'Could not change this role.')

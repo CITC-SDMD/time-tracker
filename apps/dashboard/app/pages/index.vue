@@ -98,7 +98,7 @@ async function onSubmit() {
   error.value = null
   try {
     const signedIn = await login(form.email.trim(), form.password)
-    await navigateTo(homeFor(signedIn.role))
+    await navigateTo(homeFor(signedIn))
   }
   catch (e) {
     error.value = messageOf(e, 'Could not log in. Check your connection and try again.')

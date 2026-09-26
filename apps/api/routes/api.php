@@ -99,7 +99,8 @@ Route::prefix('v1')->group(function () {
 
         // from here on the request works inside the organization named in the URL (the `org` middleware)
         Route::prefix('organizations/{organization}')->whereNumber('organization')->middleware('org')->group(function () use ($insideAnOrganization) {
-            Route::get('/', [OrganizationController::class, 'show'])->middleware('platform:organizations.view');
+            // whoever may open an office may also read its name and timezone
+            Route::get('/', [OrganizationController::class, 'show'])->middleware('platform:organizations.view,organizations.data.view');
             Route::patch('/', [OrganizationController::class, 'update'])->middleware('platform:organizations.update');
 
             Route::middleware('platform:organizations.admins.manage')->group(function () {

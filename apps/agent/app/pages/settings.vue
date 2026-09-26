@@ -13,7 +13,7 @@
       {{ error }}
     </p>
 
-    <UiCard title="Set by your office">
+    <UiCard title="Set by your organization">
       <dl class="grid grid-cols-[6.5rem_1fr] gap-y-1 text-sm">
         <dt class="text-gray-500 dark:text-gray-400">
           Idle after
@@ -114,11 +114,11 @@ const launchAtStartup = ref(false)
 const error = ref<string | null>(null)
 
 const idleLimit = computed(() => {
-  const seconds = me.value?.officeSettings.idleThresholdSeconds ?? 0
+  const seconds = me.value?.settings.idleThresholdSeconds ?? 0
   return seconds % 60 === 0 ? `${seconds / 60} minutes` : `${seconds} seconds`
 })
 const titleMode = computed(() =>
-  me.value?.officeSettings.windowTitleMode === 'app_only'
+  me.value?.settings.windowTitleMode === 'app_only'
     ? 'App names only'
     : 'App names and window titles',
 )

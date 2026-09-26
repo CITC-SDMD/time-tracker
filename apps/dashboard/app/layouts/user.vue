@@ -55,60 +55,13 @@
                 </div>
               </TransitionChild>
 
-              <!-- Sidebar component, swap this element with another sidebar if you like -->
-              <div
-                class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-white px-6 pb-4 ring-1 ring-gray-950/5 dark:bg-gray-950 dark:ring-white/10"
-              >
-                <div class="relative flex h-16 shrink-0 items-center">
-                  <span class="text-lg font-semibold tracking-tight text-primary-600 dark:text-primary-500">
-                    Time Tracker
-                  </span>
-                </div>
-                <nav class="relative flex flex-1 flex-col">
-                  <ul
-                    role="list"
-                    class="flex flex-1 flex-col gap-y-7"
-                  >
-                    <li>
-                      <ul
-                        role="list"
-                        class="-mx-2 space-y-1"
-                      >
-                        <li
-                          v-for="item in navigation"
-                          :key="item.name"
-                        >
-                          <UiNavLink
-                            :to="item.to"
-                            :current="isCurrent(route.path, item.to)"
-                            @click="sidebarOpen = false"
-                          >
-                            <component
-                              :is="item.icon"
-                              class="size-6 shrink-0"
-                              aria-hidden="true"
-                            />
-                            {{ item.name }}
-                          </UiNavLink>
-                        </li>
-                      </ul>
-                    </li>
-                    <li class="mt-auto">
-                      <UiNavLink
-                        to="/user/profile"
-                        class="-mx-2"
-                        :current="route.path === '/user/profile'"
-                        @click="sidebarOpen = false"
-                      >
-                        <UserCircleIcon
-                          class="size-6 shrink-0"
-                          aria-hidden="true"
-                        />
-                        Your profile
-                      </UiNavLink>
-                    </li>
-                  </ul>
-                </nav>
+              <div class="relative flex grow flex-col bg-white ring-1 ring-gray-950/5 dark:bg-gray-950 dark:ring-white/10">
+                <AppSidebarNav
+                  :brand="brand"
+                  :subtitle="subtitle"
+                  :items="navigation"
+                  @navigate="sidebarOpen = false"
+                />
               </div>
             </DialogPanel>
           </TransitionChild>
@@ -118,62 +71,15 @@
 
     <!-- Static sidebar for desktop -->
     <div class="hidden bg-white ring-1 ring-gray-950/5 lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col dark:bg-gray-950 dark:ring-white/10">
-      <!-- Sidebar component, swap this element with another sidebar if you like -->
-      <div class="flex grow flex-col gap-y-5 overflow-y-auto px-6 pb-4">
-        <div class="flex h-16 shrink-0 items-center">
-          <span class="text-lg font-semibold tracking-tight text-primary-500">
-            Time Tracker
-          </span>
-        </div>
-        <nav class="flex flex-1 flex-col">
-          <ul
-            role="list"
-            class="flex flex-1 flex-col gap-y-7"
-          >
-            <li>
-              <ul
-                role="list"
-                class="-mx-2 space-y-1"
-              >
-                <li
-                  v-for="item in navigation"
-                  :key="item.name"
-                >
-                  <UiNavLink
-                    :to="item.to"
-                    :current="isCurrent(route.path, item.to)"
-                    @click="sidebarOpen = false"
-                  >
-                    <component
-                      :is="item.icon"
-                      class="size-6 shrink-0"
-                      aria-hidden="true"
-                    />
-                    {{ item.name }}
-                  </UiNavLink>
-                </li>
-              </ul>
-            </li>
-            <li class="mt-auto">
-              <UiNavLink
-                to="/user/profile"
-                class="-mx-2"
-                :current="route.path === '/user/profile'"
-                @click="sidebarOpen = false"
-              >
-                <UserCircleIcon
-                  class="size-6 shrink-0"
-                  aria-hidden="true"
-                />
-                Your profile
-              </UiNavLink>
-            </li>
-          </ul>
-        </nav>
-      </div>
+      <AppSidebarNav
+        :brand="brand"
+        :subtitle="subtitle"
+        :items="navigation"
+      />
     </div>
 
     <div class="lg:pl-72">
+      <AppOfficeBanner v-if="office.inOffice.value" />
       <div
         class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 bg-white px-4 shadow-xs ring-1 ring-gray-950/5 sm:gap-x-6 sm:px-6 lg:px-8 dark:bg-gray-900 dark:ring-white/10"
       >
@@ -274,30 +180,65 @@ import {
 } from '@headlessui/vue'
 import {
   Bars3Icon,
+  BuildingOffice2Icon,
   ChartPieIcon,
   ClipboardDocumentListIcon,
   Cog6ToothIcon,
   HomeIcon,
-  UserCircleIcon,
+  KeyIcon,
+  ShieldCheckIcon,
   UsersIcon,
   XMarkIcon,
 } from '@heroicons/vue/24/outline'
 import { ChevronDownIcon } from '@heroicons/vue/20/solid'
 
 // ends the session on the server, clears the signed-in person and goes back to the sign-in page
-const { me, logout } = useAuth()
-const route = useRoute()
+const { me, isSuperadmin, logout } = useAuth()
+const { can, canPlatform } = useAccess()
+const office = useOffice()
+const { api } = useApi()
 
 const ICONS = {
   overview: HomeIcon,
   people: UsersIcon,
   reports: ChartPieIcon,
+  roles: ShieldCheckIcon,
   settings: Cog6ToothIcon,
   audit: ClipboardDocumentListIcon,
+  organizations: BuildingOffice2Icon,
+  superadmins: KeyIcon,
 }
 
-// what the sidebar shows depends on the role: settings and the audit log are the OIC's only
-const navigation = computed(() => (me.value ? navFor(me.value.role) : []).map(item => ({ ...item, icon: ICONS[item.icon] })))
+// what the sidebar shows follows the permissions: an organization's own pages (also inside an opened office), or the platform pages
+const navigation = computed(() => {
+  if (!me.value)
+    return []
+  const list = isSuperadmin.value && !office.inOffice.value ? PLATFORM_NAV : ORGANIZATION_NAV
+  return list
+    .filter(item => (!item.permission || can(item.permission)) && (!item.platformPermission || canPlatform(item.platformPermission)))
+    .map(item => ({ ...item, to: office.to(item.to), icon: ICONS[item.icon] }))
+})
+
+// an opened office shows its own name, so a superadmin never mistakes it for the platform
+watch(() => office.id.value, async (id) => {
+  if (!id) {
+    office.organization.value = null
+    return
+  }
+  try {
+    office.organization.value = await api(`/platform/organizations/${id}`)
+  }
+  catch {
+    office.organization.value = null
+  }
+}, { immediate: true })
+
+const brand = computed(() => {
+  if (office.inOffice.value)
+    return office.organization.value?.name ?? 'Organization'
+  return me.value?.organization?.name ?? 'Time Tracker'
+})
+const subtitle = computed(() => (office.inOffice.value || me.value?.organization ? 'Time Tracker' : 'Platform'))
 
 const initials = computed(() => (me.value?.name ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join(''))
 

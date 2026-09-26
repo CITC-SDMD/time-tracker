@@ -3,18 +3,18 @@
 // zod here (that moved server-side, into PHP) and no codegen yet, so keep this file in
 // sync with apps/api whenever a request/response shape changes.
 
-import type { Role, UserStatus } from './roles'
+import type { Permission, PlatformPermission, Scope, UserStatus } from './permissions'
 import type { Session, TrackingState } from './session'
 
 export interface ApiError {
   error: { code: string; message: string }
 }
 
-export interface OfficeSettings {
+/** what an organization's admins set: the settings of one organization */
+export interface OrganizationSettings {
   timezone: string
   idleThresholdSeconds: number
   windowTitleMode: 'full' | 'app_only'
-  minAgentVersion: string
   consentVersion: number
   /** minutes between screenshots taken by the desktop apps: 0 = off, otherwise 5, 10, 15 or 30 */
   screenshotIntervalMinutes: number
@@ -22,8 +22,8 @@ export interface OfficeSettings {
   screenshotRandom: boolean
 }
 
-// GET / PUT /api/v1/admin/settings (OIC only): the office settings and the space screenshots take.
-export interface AdminOfficeSettings extends OfficeSettings {
+// GET / PUT /api/v1/admin/settings (needs settings.manage): the organization settings and the space screenshots take.
+export interface AdminOrganizationSettings extends OrganizationSettings {
   /** bytes used by the stored screenshots on the storage disk */
   screenshotStorageBytes: number
 }
@@ -42,12 +42,22 @@ export interface Me {
   id: string
   name: string
   email: string
-  role: Role
   status: UserStatus
   managerName: string | null
   consentVersion: number | null
   consentRequired: boolean
-  officeSettings: OfficeSettings
+  /** the role the person holds in their organization; null for a superadmin */
+  role: { id: string; name: string } | null
+  /** what the role allows, and how far it reaches: everything the dashboard shows follows these */
+  permissions: Permission[]
+  scope: Scope
+  isSuperadmin: boolean
+  isOwner: boolean
+  /** a superadmin's platform permissions (empty for everybody else) */
+  platformPermissions: PlatformPermission[]
+  /** null for a superadmin, who belongs to no organization */
+  organization: { id: string; name: string; timezone: string | null } | null
+  settings: OrganizationSettings | null
 }
 
 // POST /api/v1/agent/sync — headers: Authorization, X-Agent-Version, X-Device-Id (UUID).
@@ -87,7 +97,7 @@ export interface AgentSyncResponse {
     stopReason: 'STARTED_ON_OTHER_PC' | null
     signOut: boolean
   }
-  settings: Pick<OfficeSettings, 'idleThresholdSeconds' | 'windowTitleMode' | 'screenshotIntervalMinutes' | 'screenshotRandom'>
+  settings: Pick<OrganizationSettings, 'idleThresholdSeconds' | 'windowTitleMode' | 'screenshotIntervalMinutes' | 'screenshotRandom'>
 }
 
 // GET /api/v1/employees
@@ -95,7 +105,9 @@ export interface EmployeeListItem {
   id: string
   name: string
   email: string
-  role: Role
+  /** the name of their role */
+  role: string
+  roleId: string | null
   accountStatus: UserStatus
   managerId: string | null
   managerName: string | null
@@ -145,7 +157,8 @@ export interface CreatedEmployee {
   id: string
   name: string
   email: string
-  role: Role
+  role: string
+  roleId: string
   emailSent: boolean // a set-password link was emailed to them
   setPasswordUrl?: string // only when the email could not be sent: pass this link on yourself
 }
@@ -172,7 +185,7 @@ export interface ReportDailyRow {
   userId: string
   name: string
   email: string
-  role: Role
+  role: string
   trackedSeconds: number
   activeSeconds: number
   idleSeconds: number
@@ -192,11 +205,56 @@ export interface ReportTeamRow {
   userId: string
   name: string
   email: string
-  role: Role
+  role: string
   managerName: string | null
   daysTracked: number
   trackedSeconds: number
   activeSeconds: number
   idleSeconds: number
   averageTrackedSeconds: number
+}
+
+// ---- platform (superadmins) -------------------------------------------------------------------------------------
+
+// GET /api/v1/platform/organizations and /organizations/{id}
+export interface OrganizationItem {
+  id: string
+  name: string
+  slug: string
+  status: 'active' | 'suspended'
+  timezone: string | null
+  peopleCount: number
+  adminCount: number
+  /** bytes the organization's screenshots take on the storage disk */
+  storageBytes: number
+  createdAt: string | null
+}
+
+// GET/POST /api/v1/platform/organizations/{id}/admins
+export interface OrganizationAdminItem {
+  id: string
+  name: string
+  email: string
+  status: UserStatus
+  createdAt: string | null
+  emailSent?: boolean
+  setPasswordUrl?: string
+}
+
+// GET/POST/PATCH /api/v1/platform/superadmins
+export interface SuperadminItem {
+  id: string
+  name: string
+  email: string
+  status: UserStatus
+  isOwner: boolean
+  permissions: PlatformPermission[]
+  createdAt: string | null
+  emailSent?: boolean
+  setPasswordUrl?: string
+}
+
+// GET/PUT /api/v1/platform/settings
+export interface PlatformSettings {
+  minAgentVersion: string
 }

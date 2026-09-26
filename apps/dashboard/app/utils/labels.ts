@@ -1,4 +1,4 @@
-import { ROLE_LABEL, type AuditLogEntry, type EmployeeListItem, type Role, type UserStatus } from 'shared'
+import type { AuditLogEntry, EmployeeListItem, UserStatus } from 'shared'
 
 // The words and colours the dashboard uses for the values the API sends as snake_case codes.
 
@@ -43,7 +43,17 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.moved': 'Moved a person to another manager',
   'employee.role_changed': 'Changed a role',
   'employee.invite_resent': 'Sent a new set-password link',
-  'settings.updated': 'Changed office settings',
+  'role.created': 'Made a role',
+  'role.updated': 'Edited a role',
+  'role.deleted': 'Deleted a role',
+  'settings.updated': 'Changed organization settings',
+  'organization.created': 'Created an organization',
+  'organization.renamed': 'Renamed an organization',
+  'organization.suspended': 'Suspended an organization',
+  'organization.reactivated': 'Reactivated an organization',
+  'superadmin.created': 'Added a superadmin',
+  'superadmin.permissions_changed': 'Changed the permissions of a superadmin',
+  'platform.settings_updated': 'Changed platform settings',
   'timeline.viewed': 'Viewed a timeline',
   'screenshots.viewed': 'Viewed screenshots',
   'password.reset': 'Reset a password with an emailed link',
@@ -60,7 +70,6 @@ const SETTING_LABEL: Record<string, string> = {
   timezone: 'timezone',
   idleThresholdSeconds: 'idle limit',
   windowTitleMode: 'window titles',
-  minAgentVersion: 'minimum app version',
   consentVersion: 'consent version',
   screenshotIntervalMinutes: 'screenshot interval (minutes)',
   screenshotRandom: 'screenshots at a random moment',
@@ -72,14 +81,40 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
   switch (entry.action) {
     case 'employee.created':
     case 'employee.deleted':
-      return typeof d.role === 'string' ? (ROLE_LABEL[d.role as Role] ?? d.role) : ''
+      return typeof d.role === 'string' ? d.role : ''
     case 'employee.moved':
-      return `${d.from ?? 'no one'} → ${d.to ?? '?'}`
+      return `${d.from ?? 'no one'} → ${d.to ?? 'no one'}`
     case 'employee.role_changed': {
-      const role = (value: unknown) => ROLE_LABEL[value as Role] ?? String(value ?? '?')
-      const moved = d.managerFrom !== d.managerTo ? `, now reports to ${d.managerTo ?? 'no one'}` : ''
-      return `${role(d.from)} → ${role(d.to)}${moved}`
+      const moved = 'managerTo' in d ? `, now reports to ${d.managerTo ?? 'no one'}` : ''
+      return `${d.from ?? '?'} → ${d.to ?? '?'}${moved}`
     }
+    case 'role.created':
+    case 'role.deleted':
+      return typeof d.role === 'string' ? d.role : ''
+    case 'role.updated': {
+      const added = Array.isArray(d.permissionsAdded) ? d.permissionsAdded.length : 0
+      const removed = Array.isArray(d.permissionsRemoved) ? d.permissionsRemoved.length : 0
+      const changes = [
+        typeof d.renamedFrom === 'string' ? `was ${d.renamedFrom}` : '',
+        added ? `+${added} permission${added === 1 ? '' : 's'}` : '',
+        removed ? `−${removed} permission${removed === 1 ? '' : 's'}` : '',
+        d.scopeTo ? `reach: ${d.scopeFrom} → ${d.scopeTo}` : '',
+      ].filter(Boolean)
+      return [d.role, changes.length ? `(${changes.join(', ')})` : ''].filter(Boolean).join(' ')
+    }
+    case 'organization.created':
+    case 'organization.suspended':
+    case 'organization.reactivated':
+      return typeof d.organization === 'string' ? d.organization : ''
+    case 'organization.renamed':
+      return `${d.from ?? '?'} → ${d.to ?? '?'}`
+    case 'superadmin.permissions_changed': {
+      const added = Array.isArray(d.added) ? d.added.length : 0
+      const removed = Array.isArray(d.removed) ? d.removed.length : 0
+      return [added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(', ')
+    }
+    case 'platform.settings_updated':
+      return `minimum app version ${d.minAgentVersionFrom ?? '?'} → ${d.minAgentVersionTo ?? '?'}`
     case 'profile.email_changed':
       return `${d.from ?? '?'} → ${d.to ?? '?'}`
     case 'employee.invite_resent':

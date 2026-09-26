@@ -2,10 +2,11 @@
   <div>
     <UiPageHeader
       title="Reports"
-      description="Totals for a range of days, in office time. Download any of them as a spreadsheet."
+      description="Totals for a range of days, in organization time. Download any of them as a spreadsheet."
     >
       <template #actions>
         <FormButton
+          v-if="can('reports.export')"
           variant="secondary"
           :loading="downloading"
           :disabled="!valid || !loaded"
@@ -91,7 +92,7 @@
       :loading="!loaded"
       :error="loaded ? null : error"
       :id-key="tab === 'daily' ? 'rowId' : tab === 'apps' ? 'app' : 'userId'"
-      :row-link="(row) => row.userId ? `/user/employees/${row.userId}` : null"
+      :row-link="(row) => row.userId ? office.to(`/user/employees/${row.userId}`) : null"
       empty-title="Nothing tracked in this range"
       empty-description="Try a longer range, or check that people's desktop apps have synced."
     >
@@ -99,12 +100,12 @@
         {{ formatDay(row.day) }}
       </template>
       <template #cell-name="{ row }">
-        <UiLink :to="`/user/employees/${row.userId}`">
+        <UiLink :to="office.to(`/user/employees/${row.userId}`)">
           {{ row.name }}
         </UiLink>
       </template>
       <template #cell-role="{ row }">
-        {{ ROLE_LABEL[row.role as Role] }}
+        {{ row.role }}
       </template>
       <template #cell-managerName="{ row }">
         {{ row.managerName ?? '—' }}
@@ -129,15 +130,19 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { helpers, required } from '@vuelidate/validators'
-import { ROLE_LABEL, type EmployeeListItem, type ReportAppRow, type ReportDailyRow, type ReportTeamRow, type Role } from 'shared'
+import type { EmployeeListItem, ReportAppRow, ReportDailyRow, ReportTeamRow } from 'shared'
 
 definePageMeta({
   layout: 'user',
+  permission: 'reports.view',
+  alias: ['/platform/organizations/:orgId/office/reports'],
 })
 
 // Daily, app-usage and team reports for the people the signed-in person can see (docs/DEVELOPMENT_PLAN.md
 // §12 Phase 11), read from the daily totals and limited to 92 days at a time.
 const { api } = useApi()
+const { can } = useAccess()
+const office = useOffice()
 const { formatDuration, formatTime, formatDay, today, shiftDay } = useFormat()
 
 type Tab = 'daily' | 'apps' | 'team'

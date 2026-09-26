@@ -14,7 +14,7 @@
         @click="$emit('open', index)"
       >
         <img
-          :src="`/api/v1/screenshots/${item.id}/thumb`"
+          :src="url(`/screenshots/${item.id}/thumb`)"
           :alt="`Screen of ${name} at ${formatTime(item.takenAt)}`"
           :width="320"
           :height="Math.round(320 * item.height / item.width)"
@@ -41,4 +41,6 @@ defineProps<{
 defineEmits<{ open: [index: number] }>()
 
 const { formatTime } = useFormat()
+// inside an opened office the pictures come through that office's address (useApi)
+const { url } = useApi()
 </script>

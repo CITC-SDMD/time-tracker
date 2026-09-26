@@ -35,28 +35,38 @@
             Role
           </dt>
           <dd class="text-gray-500 dark:text-gray-400">
-            {{ me ? ROLE_LABEL[me.role] : '' }}
+            {{ me?.role?.name ?? 'Superadmin' }}
           </dd>
         </div>
-        <div>
-          <dt class="font-medium text-gray-900 dark:text-gray-100">
-            Reports to
-          </dt>
-          <dd class="text-gray-500 dark:text-gray-400">
-            {{ me?.managerName ?? 'No one' }}
-          </dd>
-        </div>
-        <div>
-          <dt class="font-medium text-gray-900 dark:text-gray-100">
-            Office timezone
-          </dt>
-          <dd class="text-gray-500 dark:text-gray-400">
-            {{ timezone }}
-          </dd>
-        </div>
+        <template v-if="me?.organization">
+          <div>
+            <dt class="font-medium text-gray-900 dark:text-gray-100">
+              Organization
+            </dt>
+            <dd class="text-gray-500 dark:text-gray-400">
+              {{ me.organization.name }}
+            </dd>
+          </div>
+          <div>
+            <dt class="font-medium text-gray-900 dark:text-gray-100">
+              Reports to
+            </dt>
+            <dd class="text-gray-500 dark:text-gray-400">
+              {{ me.managerName ?? 'No one' }}
+            </dd>
+          </div>
+          <div>
+            <dt class="font-medium text-gray-900 dark:text-gray-100">
+              Organization timezone
+            </dt>
+            <dd class="text-gray-500 dark:text-gray-400">
+              {{ timezone }}
+            </dd>
+          </div>
+        </template>
       </dl>
       <p class="text-sm/6 text-gray-500 dark:text-gray-400">
-        Your role is set by the people above you.
+        {{ me?.isSuperadmin ? 'Your permissions are set by a superadmin who may manage superadmins.' : 'Your role is set by the people above you in your organization.' }}
       </p>
       <FormError v-if="nameError">
         {{ nameError }}
@@ -176,7 +186,7 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { email, helpers, maxLength, minLength, required, sameAs } from '@vuelidate/validators'
-import { ROLE_LABEL, type Me } from 'shared'
+import type { Me } from 'shared'
 
 definePageMeta({
   layout: 'user',

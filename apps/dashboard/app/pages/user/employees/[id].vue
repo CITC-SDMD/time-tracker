@@ -1,7 +1,7 @@
 <template>
   <div>
     <UiLink
-      to="/user"
+      :to="office.to('/user')"
       variant="muted"
       class="text-sm/6"
     >
@@ -13,7 +13,7 @@
       variant="danger"
       class="mt-4"
     >
-      You cannot view this person. They are not in your part of the organisation.
+      You cannot view this person. They are not in your reach.
     </UiAlert>
 
     <UiSpinner
@@ -35,7 +35,7 @@
       >
         <template #below>
           <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-gray-500 dark:text-gray-400">
-            <span>{{ ROLE_LABEL[person.role] }}</span>
+            <span>{{ person.role }}</span>
             <span v-if="person.managerName">· Reports to {{ person.managerName }}</span>
             <UiBadge
               dot
@@ -75,7 +75,7 @@
             />
           </div>
           <p class="pb-1.5 text-sm/6 text-gray-500 dark:text-gray-400">
-            {{ formatDay(day) }} · office time
+            {{ formatDay(day) }} · organization time
           </p>
         </div>
       </UiCard>
@@ -234,10 +234,11 @@
 </template>
 
 <script setup lang="ts">
-import { ROLE_LABEL, type DailySummary, type EmployeeListItem, type ScreenshotItem, type TimelineResponse, type TimelineSegment } from 'shared'
+import type { DailySummary, EmployeeListItem, ScreenshotItem, TimelineResponse, TimelineSegment } from 'shared'
 
 definePageMeta({
   layout: 'user',
+  alias: ['/platform/organizations/:orgId/office/employees/:id'],
 })
 
 // One person's day (docs/DEVELOPMENT_PLAN.md §12 Phase 6): totals, top apps, timeline and the
@@ -246,6 +247,8 @@ definePageMeta({
 const route = useRoute()
 const { api } = useApi()
 const { me } = useAuth()
+const { can } = useAccess()
+const office = useOffice()
 const { formatDuration, formatTime, formatDay, today, shiftDay } = useFormat()
 
 const COLUMNS = [
@@ -271,7 +274,8 @@ const lastAt = ref<string | null>(null)
 const screenshots = ref<ScreenshotItem[]>([])
 const screenshotsError = ref<string | null>(null)
 const viewing = ref<number | null>(null)
-const screenshotsOn = computed(() => (me.value?.officeSettings.screenshotIntervalMinutes ?? 0) > 0)
+// (inside an opened office the settings are not at hand: the section shows for whoever may look, and is empty when off)
+const screenshotsOn = computed(() => (office.inOffice.value ? can('screenshots.view') : (me.value?.settings?.screenshotIntervalMinutes ?? 0) > 0))
 
 const PAGE = 50
 const shown = ref(PAGE)

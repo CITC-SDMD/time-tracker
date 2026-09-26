@@ -23,7 +23,7 @@ pub enum ApiError {
     Deactivated,
     /// 401 on an authenticated call: the stored token is no longer valid.
     Unauthorized,
-    /// 426: this agent is older than `office_settings.min_agent_version`.
+    /// 426: this agent is older than `platform_settings.min_agent_version`.
     UpgradeRequired,
     RateLimited,
     Server(u16),
@@ -52,6 +52,8 @@ pub struct OfficeSettingsDto {
     pub timezone: String,
     pub idle_threshold_seconds: u64,
     pub window_title_mode: String,
+    /// no longer sent (the oldest allowed app version is the platform's, checked with a 426); older stored copies have it
+    #[serde(default)]
     pub min_agent_version: String,
     pub consent_version: i64,
     #[serde(default)]
@@ -60,17 +62,32 @@ pub struct OfficeSettingsDto {
     pub screenshot_random: bool,
 }
 
-/// `GET /me` (packages/shared `Me`).
+/// The organization the person works for (their office): its name is shown in the app.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationDto {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub timezone: Option<String>,
+}
+
+/// `GET /me` (packages/shared `Me`). The role is now an object the organization made ({id, name}) and the desktop
+/// app does not use it, so it is kept as it came. The settings were called `officeSettings` before organizations: an
+/// older stored copy still reads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeDto {
     pub id: String,
     pub name: String,
     pub email: String,
-    pub role: String,
+    #[serde(default)]
+    pub role: Option<serde_json::Value>,
     pub status: String,
     pub consent_version: Option<i64>,
     pub consent_required: bool,
+    #[serde(default)]
+    pub organization: Option<OrganizationDto>,
+    #[serde(rename = "settings", alias = "officeSettings")]
     pub office_settings: OfficeSettingsDto,
 }
 
@@ -233,10 +250,31 @@ mod tests {
     use super::*;
     use crate::testutil::{dead_root, MockServer};
 
-    const ME: &str = r#"{"id":"42","name":"Ana","email":"ana@example.com","role":"developer","status":"active","consentVersion":null,"consentRequired":true,"officeSettings":{"timezone":"Asia/Manila","idleThresholdSeconds":300,"windowTitleMode":"full","minAgentVersion":"0.1.0","consentVersion":1}}"#;
+    const ME: &str = r#"{"id":"42","name":"Ana","email":"ana@example.com","role":{"id":"3","name":"Developer"},"status":"active","consentVersion":null,"consentRequired":true,"permissions":[],"scope":"self","isSuperadmin":false,"organization":{"id":"1","name":"City Office","timezone":"Asia/Manila"},"settings":{"timezone":"Asia/Manila","idleThresholdSeconds":300,"windowTitleMode":"full","consentVersion":1}}"#;
 
     fn error_body(code: &str) -> String {
         format!(r#"{{"error":{{"code":"{code}","message":"x"}}}}"#)
+    }
+
+    #[test]
+    fn a_me_stored_before_organizations_still_reads_and_is_written_in_the_new_shape() {
+        // the role was a plain word and the settings were called officeSettings, with the minimum app version inside
+        let old = r#"{"id":"1","name":"A","email":"a@x.test","role":"developer","status":"active","consentVersion":null,"consentRequired":false,"officeSettings":{"timezone":"UTC","idleThresholdSeconds":300,"windowTitleMode":"full","minAgentVersion":"0.1.0","consentVersion":1}}"#;
+        let me: MeDto = serde_json::from_str(old).unwrap();
+        assert_eq!(me.office_settings.timezone, "UTC");
+        assert!(me.organization.is_none());
+
+        let written = serde_json::to_string(&me).unwrap();
+        assert!(written.contains("\"settings\""), "{written}");
+        assert!(!written.contains("officeSettings"), "{written}");
+    }
+
+    #[test]
+    fn the_organization_and_the_role_object_come_through() {
+        let me: MeDto = serde_json::from_str(ME).unwrap();
+        assert_eq!(me.organization.unwrap().name, "City Office");
+        assert_eq!(me.role.unwrap()["name"], "Developer");
+        assert_eq!(me.office_settings.min_agent_version, ""); // no longer sent
     }
 
     #[test]

@@ -2,7 +2,7 @@
   <div>
     <UiPageHeader
       title="Overview"
-      :description="isOic ? 'Everyone in the office, right now and today.' : 'You and everyone who reports to you, right now and today.'"
+      :description="scope === 'organization' ? 'Everyone in the organization, right now and today.' : scope === 'team' ? 'You and everyone who reports to you, right now and today.' : 'You, right now and today.'"
     >
       <template #actions>
         <FormButton
@@ -68,17 +68,17 @@
       :rows="employees"
       :loading="!loaded"
       :error="loaded ? null : error"
-      :row-link="(row) => `/user/employees/${row.id}`"
+      :row-link="(row) => office.to(`/user/employees/${row.id}`)"
       empty-title="No one to show yet"
       empty-description="People you add will appear here once they log in to the desktop app."
     >
       <template #cell-name="{ row }">
-        <UiLink :to="`/user/employees/${row.id}`">
+        <UiLink :to="office.to(`/user/employees/${row.id}`)">
           {{ row.name }}
         </UiLink>
       </template>
       <template #cell-role="{ row }">
-        {{ ROLE_LABEL[row.role as Role] }}
+        {{ row.role }}
       </template>
       <template #cell-status="{ row }">
         <UiBadge
@@ -105,17 +105,19 @@
 </template>
 
 <script setup lang="ts">
-import { ROLE_LABEL, type EmployeeListItem, type Role } from 'shared'
+import type { EmployeeListItem } from 'shared'
 
 definePageMeta({
   layout: 'user',
+  alias: ['/platform/organizations/:orgId/office'],
 })
 
-// Who is working now and today's totals, over the signed-in person's own visible set: an OIC sees
-// the whole office, a Project Manager or Team Leader only their own branch (§12 Phase 6).
-// Refreshes every 60 s while the browser tab is visible.
+// Who is working now and today's totals, over the signed-in person's own reach: a role that reaches the whole
+// organization sees everyone, one that reaches a team only that team, and someone with neither only themselves
+// (§12 Phase 6). Refreshes every 60 s while the browser tab is visible.
 const { api } = useApi()
-const { isOic } = useAuth()
+const { scope } = useAccess()
+const office = useOffice()
 const { formatDuration, formatTime } = useFormat()
 
 const COLUMNS = [

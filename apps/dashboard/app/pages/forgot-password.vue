@@ -5,7 +5,7 @@
         Forgot your password?
       </h1>
       <p class="text-sm text-gray-500 dark:text-gray-400">
-        Enter your office email and we will send you a link to choose a new one.
+        Enter your email address and we will send you a link to choose a new one.
       </p>
     </header>
 

@@ -292,7 +292,7 @@ const shotLabel = computed(() => {
   const s = shots.value
   if (!s || (!s.enabled && !s.lastTakenAt))
     return null
-  const tz = me.value?.officeSettings.timezone ?? 'UTC'
+  const tz = me.value?.settings.timezone ?? 'UTC'
   const last = s.lastTakenAt ? `Last screenshot ${clockTime(s.lastTakenAt, tz)}` : 'No screenshot yet today'
   return s.waiting > 0 ? `${last} · ${s.waiting} waiting to send` : last
 })

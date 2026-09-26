@@ -1,8 +1,8 @@
 <template>
   <div class="max-w-2xl">
     <UiPageHeader
-      title="Office settings"
-      description="These apply to the whole office. Desktop apps pick up changes within a few minutes."
+      title="Organization settings"
+      description="These apply to the whole organization. Desktop apps pick up changes within a few minutes."
     />
 
     <UiSpinner v-if="!loaded && !loadError" />
@@ -40,19 +40,10 @@
 
       <FormSelect
         v-model="form.timezone"
-        label="Office timezone"
+        label="Organization timezone"
         :options="timezoneOptions"
         :errors="v$.timezone.$errors"
         @blur="v$.timezone.$touch()"
-      />
-
-      <FormInput
-        v-model="form.minAgentVersion"
-        label="Minimum desktop app version"
-        placeholder="0.1.0"
-        hint="Older desktop apps keep tracking on the PC but stop syncing until they are updated, so do not set a version that has not been released. Use the form 1.2.3."
-        :errors="v$.minAgentVersion.$errors"
-        @blur="v$.minAgentVersion.$touch()"
       />
 
       <div class="space-y-4 border-t border-gray-200 pt-6 dark:border-white/10">
@@ -73,8 +64,8 @@
           :disabled="form.screenshotInterval === '0'"
         />
         <p class="text-sm/6 text-gray-500 dark:text-gray-400">
-          Only while tracking is on (idle time included), never while paused, stopped or locked. Managers see their own people's
-          pictures and each person sees their own. Everything is kept on the office storage server.
+          Only while tracking is on (idle time included), never while paused, stopped or locked. People with the right permission see the pictures
+          of the people they reach, and each person sees their own. Everything is kept on the storage server.
           Space used so far: <b>{{ formatBytes(current?.screenshotStorageBytes ?? 0) }}</b>.
         </p>
       </div>
@@ -132,16 +123,20 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { between, helpers, integer, minValue, required } from '@vuelidate/validators'
-import type { AdminOfficeSettings } from 'shared'
+import type { AdminOrganizationSettings } from 'shared'
 
 definePageMeta({
   layout: 'user',
+  permission: 'settings.manage',
+  alias: ['/platform/organizations/:orgId/office/settings'],
 })
 
-// Office-wide settings (docs/DEVELOPMENT_PLAN.md §9.1, §12 Phase 6): OIC only. The API refuses
-// everyone else, and the sidebar does not show this page to them.
+// The organization's settings (docs/DEVELOPMENT_PLAN.md §9.1, §12 Phase 6): for whoever holds settings.manage. The API
+// refuses everyone else, and the sidebar does not show this page to them. (The oldest allowed desktop app version is
+// the platform's, on the platform settings page.)
 const { api } = useApi()
 const { me } = useAuth()
+const office = useOffice()
 const { formatBytes } = useFormat()
 
 const WINDOW_TITLE_OPTIONS = [
@@ -156,13 +151,12 @@ const saved = ref(false)
 const error = ref<string | null>(null)
 
 // the values as they are on the server, to know what changed
-const current = ref<AdminOfficeSettings | null>(null)
+const current = ref<AdminOrganizationSettings | null>(null)
 
 const form = reactive({
   idleMinutes: '',
   windowTitleMode: 'full',
   timezone: '',
-  minAgentVersion: '',
   consentVersion: '',
   screenshotInterval: '0',
   screenshotRandom: false,
@@ -184,11 +178,7 @@ const rules = computed(() => ({
   },
   windowTitleMode: { required: helpers.withMessage('Choose one.', required) },
   screenshotInterval: { allowed: helpers.withMessage('Choose one of the options.', (value: string) => SCREENSHOT_OPTIONS.some(o => o.value === value)) },
-  timezone: { required: helpers.withMessage('Choose the office timezone.', required) },
-  minAgentVersion: {
-    required: helpers.withMessage('Enter a version.', required),
-    format: helpers.withMessage('Use the form 1.2.3.', helpers.regex(/^\d+\.\d+\.\d+$/)),
-  },
+  timezone: { required: helpers.withMessage('Choose the organization timezone.', required) },
   consentVersion: {
     required: helpers.withMessage('Enter the consent version.', required),
     integer: helpers.withMessage('Use a whole number.', integer),
@@ -206,12 +196,11 @@ const timezoneOptions = computed(() => {
 
 const consentRaised = computed(() => Number(form.consentVersion) > (current.value?.consentVersion ?? 0))
 
-function fill(settings: AdminOfficeSettings) {
+function fill(settings: AdminOrganizationSettings) {
   current.value = settings
   form.idleMinutes = String(Math.round(settings.idleThresholdSeconds / 60))
   form.windowTitleMode = settings.windowTitleMode
   form.timezone = settings.timezone
-  form.minAgentVersion = settings.minAgentVersion
   form.consentVersion = String(settings.consentVersion)
   form.screenshotInterval = String(settings.screenshotIntervalMinutes)
   form.screenshotRandom = settings.screenshotRandom
@@ -242,7 +231,6 @@ const dirty = computed(() => {
     Number(form.idleMinutes) * 60 !== c.idleThresholdSeconds
     || form.windowTitleMode !== c.windowTitleMode
     || form.timezone !== c.timezone
-    || form.minAgentVersion.trim() !== c.minAgentVersion
     || Number(form.consentVersion) !== c.consentVersion
     || Number(form.screenshotInterval) !== c.screenshotIntervalMinutes
     || form.screenshotRandom !== c.screenshotRandom
@@ -259,7 +247,7 @@ function reset() {
 
 onMounted(async () => {
   try {
-    fill(await api<AdminOfficeSettings>('/admin/settings'))
+    fill(await api<AdminOrganizationSettings>('/admin/settings'))
   }
   catch (e) {
     loadError.value = messageOf(e, 'Could not load the settings.')
@@ -276,13 +264,12 @@ async function save() {
   saving.value = true
   error.value = null
   try {
-    const updated = await api<AdminOfficeSettings>('/admin/settings', {
+    const updated = await api<AdminOrganizationSettings>('/admin/settings', {
       method: 'PUT',
       body: {
         idleThresholdSeconds: Number(form.idleMinutes) * 60,
         windowTitleMode: form.windowTitleMode,
         timezone: form.timezone,
-        minAgentVersion: form.minAgentVersion.trim(),
         consentVersion: Number(form.consentVersion),
         screenshotIntervalMinutes: Number(form.screenshotInterval),
         screenshotRandom: form.screenshotRandom,
@@ -290,9 +277,11 @@ async function save() {
     })
     fill(updated)
     v$.value.$reset()
-    // every time on the dashboard follows the office timezone, so use the new one straight away
-    if (me.value)
-      me.value = { ...me.value, officeSettings: updated }
+    // every time on the dashboard follows the organization timezone, so use the new one straight away
+    if (office.organization.value)
+      office.organization.value = { ...office.organization.value, timezone: updated.timezone }
+    if (me.value?.settings)
+      me.value = { ...me.value, settings: updated, organization: me.value.organization && { ...me.value.organization, timezone: updated.timezone } }
     saved.value = true
   }
   catch (e) {

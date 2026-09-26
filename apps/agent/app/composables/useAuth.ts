@@ -6,15 +6,17 @@ export interface Me {
   id: string
   name: string
   email: string
-  role: string
+  /** the role the organization made for them; the app does not use it */
+  role: { id: string, name: string } | null
   status: string
   consentVersion: number | null
   consentRequired: boolean
-  officeSettings: {
+  /** the office (organization) they work for */
+  organization: { id: string, name: string, timezone: string | null } | null
+  settings: {
     timezone: string
     idleThresholdSeconds: number
     windowTitleMode: 'full' | 'app_only'
-    minAgentVersion: string
     consentVersion: number
     /** minutes between screenshots: 0 = off, otherwise 5, 10, 15 or 30 */
     screenshotIntervalMinutes?: number
@@ -31,6 +33,7 @@ const LOGIN_ERRORS: Record<string, string> = {
   WRONG_PASSWORD: 'Wrong email or password.',
   OFFLINE: 'Can\'t reach the server. Check your internet connection and try again.',
   DEACTIVATED: 'Your account is deactivated.',
+  ORG_SUSPENDED: 'Your organization is suspended. Ask the platform administrator.',
   UPGRADE_REQUIRED: 'Please update the app.',
   RATE_LIMITED: 'Too many attempts. Wait a minute and try again.',
   BUSY: 'Stop tracking before switching accounts.',

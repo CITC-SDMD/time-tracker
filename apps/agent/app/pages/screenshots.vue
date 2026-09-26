@@ -10,7 +10,7 @@
       v-if="status && !status.enabled"
       class="rounded-2xl bg-gray-100 p-2.5 text-xs text-gray-600 dark:bg-white/10 dark:text-gray-300"
     >
-      Screenshots are switched off by your office. Pictures taken earlier are still listed below.
+      Screenshots are switched off by your organization. Pictures taken earlier are still listed below.
     </p>
     <p
       v-else-if="status"
@@ -78,7 +78,7 @@ import { invoke } from '@tauri-apps/api/core'
 const { me } = useAuth()
 const { status, refresh } = useScreenshots()
 
-const timezone = computed(() => me.value?.officeSettings.timezone ?? 'UTC')
+const timezone = computed(() => me.value?.settings.timezone ?? 'UTC')
 const items = ref<ScreenshotItem[]>([])
 const loaded = ref(false)
 const error = ref<string | null>(null)

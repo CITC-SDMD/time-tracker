@@ -1,4 +1,4 @@
-// Display helpers. Every time on the dashboard is shown in the office timezone
+// Display helpers. Every time on the dashboard is shown in the organization timezone
 // (docs/DEVELOPMENT_PLAN.md §12 Phase 6), not in the browser's own.
 
 /** 26520 -> "7h 22m", 18120 -> "5h 02m", 1980 -> "33m", 45 -> "45s". */
@@ -40,7 +40,9 @@ export function formatBytes(bytes: number): string {
 
 export function useFormat() {
   const { me } = useAuth()
-  const timezone = computed(() => me.value?.officeSettings.timezone ?? 'UTC')
+  const office = useOffice()
+  // the organization's own timezone (an opened office's, for a superadmin)
+  const timezone = computed(() => (office.inOffice.value ? office.organization.value?.timezone : me.value?.settings?.timezone) ?? 'UTC')
 
   /** "14:05" */
   function formatTime(iso: string | null): string {

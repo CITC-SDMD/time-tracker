@@ -15,7 +15,7 @@
         </p>
         <img
           :key="current.id"
-          :src="`/api/v1/screenshots/${current.id}/image`"
+          :src="url(`/screenshots/${current.id}/image`)"
           :alt="`Screen of ${name} at ${formatTime(current.takenAt)}`"
           class="max-h-[70vh] w-full rounded-lg object-contain"
           :class="loading || failed ? 'absolute opacity-0' : ''"
@@ -64,6 +64,8 @@ const props = defineProps<{
 const index = defineModel<number | null>({ default: null })
 
 const { formatTime, formatDateTime } = useFormat()
+// inside an opened office the pictures come through that office's address (useApi)
+const { url } = useApi()
 
 const open = computed({
   get: () => index.value !== null,

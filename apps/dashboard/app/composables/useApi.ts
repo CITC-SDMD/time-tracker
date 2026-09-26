@@ -10,7 +10,7 @@ function xsrfToken(): string | undefined {
 /** The person is signed out (or their account was deactivated): a fresh login is needed. */
 function isSignedOut(error: unknown): boolean {
   const e = error as { statusCode?: number, data?: { error?: { code?: string } } }
-  return e.statusCode === 401 || e.data?.error?.code === 'ACCOUNT_DEACTIVATED'
+  return e.statusCode === 401 || e.data?.error?.code === 'ACCOUNT_DEACTIVATED' || e.data?.error?.code === 'ORG_SUSPENDED'
 }
 
 /** The HTTP status of a failed call, if there was one. */
@@ -27,8 +27,13 @@ export function messageOf(error: unknown, fallback: string): string {
 // Thin wrapper around Laravel (docs/DEVELOPMENT_PLAN.md §10). Same origin in production; in
 // dev, nuxt.config proxies /api, /auth and /sanctum to the PHP server, so cookies just work.
 // Sanctum's SPA login needs the XSRF cookie echoed back in a header on every write.
+// The paths of what happens inside an organization: when a superadmin has an office open they go through
+// /platform/organizations/{id}/office instead (useOffice).
+const ORGANIZATION_PATH = /^\/(employees|reports|admin|roles|permissions|screenshots)(\/|$)/
+
 export function useApi() {
   const config = useRuntimeConfig()
+  const office = useOffice()
   const me = useState<Me | null>('auth:me', () => null)
 
   async function request<T>(url: string, options: FetchOptions, signOutOnAuthError: boolean): Promise<T> {
@@ -54,9 +59,14 @@ export function useApi() {
     }
   }
 
+  /** The address of an API path, inside the open office when there is one (also for pictures in <img>). */
+  function url(path: string): string {
+    return `${config.public.apiBase}${office.inOffice.value && ORGANIZATION_PATH.test(path) ? office.prefix.value : ''}${path}`
+  }
+
   /** A call under /api/v1. Signs the person out on 401 or a deactivated account. */
   function api<T>(path: string, options: FetchOptions = {}) {
-    return request<T>(`${config.public.apiBase}${path}`, options, true)
+    return request<T>(url(path), options, true)
   }
 
   /** A call to one of Laravel's own unprefixed routes (/auth/login, /sanctum/csrf-cookie). */
@@ -64,5 +74,5 @@ export function useApi() {
     return request<T>(path, options, false)
   }
 
-  return { api, web }
+  return { api, web, url }
 }

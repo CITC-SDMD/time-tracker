@@ -8,7 +8,7 @@
             Time Tracker
           </h1>
           <p class="text-sm text-gray-500 dark:text-gray-400">
-            Log in with your office account.
+            Log in with your work account.
           </p>
         </div>
       </header>
