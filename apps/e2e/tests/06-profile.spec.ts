@@ -23,11 +23,9 @@ test.describe.serial('profile', () => {
     await expect(page.getByText('Demo Office', { exact: true }).first()).toBeVisible()
   })
 
-  test('the sidebar and the menu both lead to the profile', async ({ page }) => {
+  test('the user menu leads to the profile, and the sidebar has no duplicate link', async ({ page }) => {
     await loginAs(page, WHO)
-    await page.getByRole('link', { name: 'Your profile' }).click()
-    await expect(page).toHaveURL(/\/user\/profile$/)
-    await page.goto('/user')
+    await expect(page.getByRole('link', { name: 'Your profile' })).toHaveCount(0)
     await page.getByRole('button', { name: /open user menu/i }).click()
     await page.getByRole('menuitem', { name: 'Your profile' }).click()
     await expect(page).toHaveURL(/\/user\/profile$/)

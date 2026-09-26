@@ -43,20 +43,6 @@
             </li>
           </ul>
         </li>
-        <li class="mt-auto">
-          <UiNavLink
-            to="/user/profile"
-            class="-mx-2"
-            :current="route.path === '/user/profile'"
-            @click="emit('navigate')"
-          >
-            <UserCircleIcon
-              class="size-6 shrink-0"
-              aria-hidden="true"
-            />
-            Your profile
-          </UiNavLink>
-        </li>
       </ul>
     </nav>
   </div>
@@ -64,10 +50,9 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { UserCircleIcon } from '@heroicons/vue/24/outline'
 
-// The sidebar of the signed-in person: their organization's name, the pages their permissions allow, and their
-// profile. Used by the desktop sidebar and the mobile drawer of layouts/user.vue.
+// The sidebar of the signed-in person: their organization's name and the pages their permissions allow (the profile
+// is in the user menu at the top). Used by the desktop sidebar and the mobile drawer of layouts/user.vue.
 defineProps<{
   brand: string
   subtitle?: string
