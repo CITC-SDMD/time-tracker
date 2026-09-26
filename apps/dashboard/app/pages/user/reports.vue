@@ -91,6 +91,7 @@
       :loading="!loaded"
       :error="loaded ? null : error"
       :id-key="tab === 'daily' ? 'rowId' : tab === 'apps' ? 'app' : 'userId'"
+      :row-link="(row) => row.userId ? `/user/employees/${row.userId}` : null"
       empty-title="Nothing tracked in this range"
       empty-description="Try a longer range, or check that people's desktop apps have synced."
     >

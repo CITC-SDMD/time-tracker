@@ -68,6 +68,7 @@
       :rows="employees"
       :loading="!loaded"
       :error="loaded ? null : error"
+      :row-link="(row) => `/user/employees/${row.id}`"
       empty-title="No one to show yet"
       empty-description="People you add will appear here once they log in to the desktop app."
     >

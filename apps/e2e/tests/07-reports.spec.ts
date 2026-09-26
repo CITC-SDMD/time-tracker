@@ -162,6 +162,19 @@ test.describe('reports as the OIC', () => {
     await expect(page.getByRole('heading', { name: 'Dan Ramos' })).toBeVisible()
   })
 
+  test('clicking anywhere on a report row opens that person, except in the app usage tab', async ({ page }) => {
+    await page.goto('/user/reports')
+    await tab(page, 'Team totals').click()
+    await page.getByRole('row').filter({ has: page.getByRole('link', { name: 'Dan Ramos', exact: true }) }).getByRole('cell').nth(1).click()
+    await expect(page.getByRole('heading', { name: 'Dan Ramos' })).toBeVisible()
+
+    await page.goto('/user/reports')
+    await tab(page, 'App usage').click()
+    const first = page.getByRole('row').nth(1)
+    await first.getByRole('cell').first().click()
+    await expect(page).toHaveURL(/\/user\/reports/)
+  })
+
   test('a server error is shown and the tab still works afterwards', async ({ page, allow }) => {
     allow(/GET \/api\/v1\/reports\/apps 500/)
     let fail = true

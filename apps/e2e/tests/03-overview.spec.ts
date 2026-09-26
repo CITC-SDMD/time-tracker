@@ -70,6 +70,14 @@ test.describe('overview as the OIC', () => {
     await expect(page).toHaveURL(/\/user$/)
   })
 
+  test('clicking anywhere on a row opens that person', async ({ page }) => {
+    await page.goto('/user')
+    // the role cell, not the name: the whole row is the click target
+    await page.getByRole('row').filter({ has: page.getByRole('link', { name: 'Dan Ramos', exact: true }) }).getByRole('cell').nth(1).click()
+    await expect(page).toHaveURL(/\/user\/employees\/\d+$/)
+    await expect(page.getByRole('heading', { name: 'Dan Ramos' })).toBeVisible()
+  })
+
   test('the Refresh button asks the server again', async ({ page }) => {
     await page.goto('/user')
     await expect(page.getByRole('row')).toHaveCount(OFFICE.length + 1)

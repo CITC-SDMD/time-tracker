@@ -39,6 +39,8 @@
             v-for="(row, index) in rows"
             :key="rowKey(row, index)"
             class="hover:bg-gray-50 dark:hover:bg-white/5"
+            :class="rowLink?.(row) ? 'cursor-pointer' : ''"
+            @click="openRow($event, row)"
           >
             <td
               v-for="col in columns"
@@ -64,7 +66,9 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
 // Every table in the dashboard. Describe the columns, pass the rows, and override a cell with a
 // `#cell-<key>="{ row }"` slot (for badges, links, buttons). Shows a spinner while `loading`,
-// the message when `error` is set, and the empty state when there are no rows.
+// the message when `error` is set, and the empty state when there are no rows. With `rowLink` the whole
+// row opens the page it returns (or does nothing when it returns null); links and buttons inside the row
+// keep working on their own.
 export interface TableColumn {
   key: string
   label: string
@@ -80,10 +84,23 @@ const props = withDefaults(defineProps<{
   error?: string | null
   emptyTitle?: string
   emptyDescription?: string
+  rowLink?: (row: T) => string | null
 }>(), {
   idKey: 'id',
   emptyTitle: 'Nothing to show',
 })
+
+function openRow(event: MouseEvent, row: T) {
+  const to = props.rowLink?.(row)
+  if (!to)
+    return
+  // a click on a link or control inside the row is that control's own; selecting text is not a click
+  if ((event.target as HTMLElement).closest('a, button, input, select, textarea'))
+    return
+  if (window.getSelection()?.toString())
+    return
+  navigateTo(to)
+}
 
 function rowKey(row: T, index: number): string | number {
   return row[props.idKey] ?? index
