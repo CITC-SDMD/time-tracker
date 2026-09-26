@@ -117,6 +117,18 @@ export function useTracking() {
     }
   })
 
+  /** The share of tracked time today that was active, 0 to 100, or null before anything is tracked. */
+  const activeShare = computed(() => {
+    const s = summary.value
+    if (!s)
+      return null
+    const running = now.value - fetchedAt.value
+    const activeMs = s.activeMs + (s.liveKind === 'active' ? running : 0)
+    const idleMs = s.idleMs + (s.liveKind === 'idle' ? running : 0)
+    const total = activeMs + idleMs
+    return total > 0 ? Math.round((activeMs / total) * 100) : null
+  })
+
   /** Time since Start, while a tracking run is on. */
   const workClock = computed(() => {
     const started = summary.value?.workStartedAt
@@ -216,6 +228,7 @@ export function useTracking() {
     timeline,
     status,
     clock,
+    activeShare,
     workClock,
     resumedNotice,
     error,

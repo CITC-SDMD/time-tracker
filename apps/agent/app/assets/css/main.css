@@ -1,6 +1,88 @@
+@import "@fontsource/poppins/400.css";
+@import "@fontsource/poppins/500.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
 @import "tailwindcss";
 
+/* dark mode follows the PC's setting */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* Black and amber, like the dashboard: `primary` is amber, the rest is neutral gray.
+   Use `bg-primary-500 text-gray-950` for buttons (black text: white on amber is hard to read). */
+@theme inline {
+  --color-gray-50: var(--color-zinc-50);
+  --color-gray-100: var(--color-zinc-100);
+  --color-gray-200: var(--color-zinc-200);
+  --color-gray-300: var(--color-zinc-300);
+  --color-gray-400: var(--color-zinc-400);
+  --color-gray-500: var(--color-zinc-500);
+  --color-gray-600: var(--color-zinc-600);
+  --color-gray-700: var(--color-zinc-700);
+  --color-gray-800: var(--color-zinc-800);
+  --color-gray-900: var(--color-zinc-900);
+  --color-gray-950: var(--color-zinc-950);
+
+  --color-primary-50: var(--color-amber-50);
+  --color-primary-100: var(--color-amber-100);
+  --color-primary-200: var(--color-amber-200);
+  --color-primary-300: var(--color-amber-300);
+  --color-primary-400: var(--color-amber-400);
+  --color-primary-500: var(--color-amber-500);
+  --color-primary-600: var(--color-amber-600);
+  --color-primary-700: var(--color-amber-700);
+  --color-primary-800: var(--color-amber-800);
+  --color-primary-900: var(--color-amber-900);
+  --color-primary-950: var(--color-amber-950);
+
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+html,
+body,
+#__nuxt {
+  height: 100%;
+}
+
+/* the window never scrolls: every screen is built to fit it */
 html,
 body {
-  @apply bg-slate-50 text-slate-900;
+  overflow: hidden;
+}
+
+/* a soft gradient with a faint amber glow, like the inspiration picture */
+body {
+  @apply font-sans text-gray-950 dark:text-white;
+  background-color: var(--color-gray-50);
+  background-image:
+    radial-gradient(60% 40% at 100% 0%, color-mix(in oklab, var(--color-amber-300) 45%, transparent), transparent),
+    linear-gradient(180deg, var(--color-white), var(--color-amber-50));
+  background-attachment: fixed;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: var(--color-gray-950);
+    background-image:
+      radial-gradient(60% 40% at 100% 0%, color-mix(in oklab, var(--color-amber-500) 22%, transparent), transparent),
+      linear-gradient(180deg, var(--color-gray-950), var(--color-gray-900));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

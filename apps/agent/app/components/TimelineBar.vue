@@ -2,13 +2,13 @@
   <div>
     <p
       v-if="!segments.length"
-      class="text-sm text-slate-500"
+      class="text-sm text-gray-500 dark:text-gray-400"
     >
       Nothing recorded yet today.
     </p>
     <template v-else>
       <div
-        class="flex h-4 w-full overflow-hidden rounded bg-slate-100"
+        class="flex h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10"
         role="img"
         aria-label="Today's timeline"
       >
@@ -19,24 +19,10 @@
           :title="`${bar.label}, ${time(bar.startedAt)} to ${time(bar.endedAt)}`"
         />
       </div>
-      <div class="mt-1 flex justify-between text-xs text-slate-500">
+      <div class="mt-1 flex justify-between text-xs text-gray-500 dark:text-gray-400">
         <span>{{ time(segments[0]!.startedAt) }}</span>
         <span>{{ time(segments[segments.length - 1]!.endedAt) }}</span>
       </div>
-      <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs">
-        <li
-          v-for="(bar, i) in [...bars].reverse()"
-          :key="i"
-          class="flex items-center gap-2"
-        >
-          <span
-            class="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-            :style="{ backgroundColor: bar.colour }"
-          />
-          <span class="truncate">{{ bar.label }}</span>
-          <span class="ml-auto shrink-0 tabular-nums text-slate-500">{{ time(bar.startedAt) }} to {{ time(bar.endedAt) }}</span>
-        </li>
-      </ul>
     </template>
   </div>
 </template>
@@ -47,7 +33,7 @@ import type { SegmentDto } from '~/composables/useTracking'
 const props = defineProps<{ segments: SegmentDto[] }>()
 
 const PALETTE = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16', '#ef4444']
-const IDLE_COLOUR = '#cbd5e1'
+const IDLE_COLOUR = '#a1a1aa'
 
 // The same app always gets the same colour.
 function colourFor(segment: SegmentDto) {

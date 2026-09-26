@@ -2,11 +2,11 @@
   <button
     ref="root"
     type="button"
-    class="group block w-full rounded text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+    class="group block w-full rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
     :aria-label="`Open the screenshot taken at ${time}`"
     @click="$emit('open')"
   >
-    <span class="block aspect-video overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200 group-hover:ring-slate-400">
+    <span class="block aspect-video overflow-hidden rounded-2xl bg-gray-100 ring-1 ring-gray-200 transition group-hover:ring-2 group-hover:ring-primary-500 dark:bg-white/10 dark:ring-white/10">
       <img
         v-if="picture"
         :src="picture"
@@ -15,10 +15,10 @@
       >
       <span
         v-else
-        class="flex size-full items-center justify-center text-xs text-slate-400"
+        class="flex size-full items-center justify-center text-xs text-gray-400"
       >{{ failed ? 'Not available' : 'Loading…' }}</span>
     </span>
-    <span class="mt-1 block text-xs tabular-nums text-slate-500">{{ time }}</span>
+    <span class="mt-1 block text-center text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ time }}</span>
   </button>
 </template>
 

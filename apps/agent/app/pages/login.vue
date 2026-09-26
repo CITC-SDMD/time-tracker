@@ -1,73 +1,75 @@
 <template>
-  <main class="mx-auto max-w-sm space-y-4 p-6">
-    <header>
-      <h1 class="text-lg font-semibold">
-        Time Tracker
-      </h1>
-      <p class="text-sm text-slate-500">
-        Log in with your office account.
-      </p>
-    </header>
-
-    <p
-      v-if="notice"
-      class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700"
-    >
-      {{ notice }}
-    </p>
-
-    <form
-      class="space-y-3"
-      @submit.prevent="submit"
-    >
-      <label class="block text-sm">
-        <span class="text-slate-500">Email</span>
-        <input
-          v-model="email"
-          type="email"
-          required
-          autocomplete="username"
-          class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-        >
-      </label>
-      <label class="block text-sm">
-        <span class="text-slate-500">Password</span>
-        <input
-          v-model="password"
-          type="password"
-          required
-          autocomplete="current-password"
-          class="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-        >
-      </label>
+  <main class="flex h-dvh items-center justify-center overflow-hidden p-6">
+    <div class="w-full max-w-sm space-y-5">
+      <header class="flex flex-col items-center gap-3 text-center">
+        <UiLogoMark />
+        <div>
+          <h1 class="text-2xl font-semibold leading-tight">
+            Time Tracker
+          </h1>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            Log in with your office account.
+          </p>
+        </div>
+      </header>
 
       <p
-        v-if="error"
-        class="text-sm text-red-600"
-        role="alert"
+        v-if="notice"
+        class="rounded-2xl bg-primary-100 p-3 text-sm text-primary-900 dark:bg-primary-500/15 dark:text-primary-200"
       >
-        {{ error }}
+        {{ notice }}
       </p>
 
-      <button
-        type="submit"
-        :disabled="busy"
-        class="w-full rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
-      >
-        {{ busy ? 'Logging in…' : 'Log in' }}
-      </button>
-    </form>
+      <UiCard class="p-5!">
+        <form
+          class="space-y-3"
+          @submit.prevent="submit"
+        >
+          <UiInput
+            v-model="email"
+            label="Email"
+            type="email"
+            required
+            autocomplete="username"
+          />
+          <UiInput
+            v-model="password"
+            label="Password"
+            type="password"
+            required
+            autocomplete="current-password"
+          />
 
-    <p class="text-center text-sm">
-      <button
-        type="button"
-        class="text-slate-500 underline"
-        title="Opens the password page in your browser"
-        @click="forgotPassword"
-      >
-        Forgot password?
-      </button>
-    </p>
+          <p
+            v-if="error"
+            class="rounded-2xl bg-red-100 p-3 text-sm text-red-700 dark:bg-red-500/15 dark:text-red-300"
+            role="alert"
+          >
+            {{ error }}
+          </p>
+
+          <UiButton
+            type="submit"
+            variant="primary"
+            block
+            :disabled="busy"
+            class="mt-1 py-3!"
+          >
+            {{ busy ? 'Logging in…' : 'Log in' }}
+          </UiButton>
+        </form>
+      </UiCard>
+
+      <p class="text-center text-sm">
+        <UiButton
+          variant="link"
+          title="Opens the password page in your browser"
+          @click="forgotPassword"
+        >
+          Forgot password?
+        </UiButton>
+      </p>
+    </div>
   </main>
 </template>
 

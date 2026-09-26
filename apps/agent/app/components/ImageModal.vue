@@ -1,13 +1,13 @@
 <template>
   <div
     v-if="open"
-    class="fixed inset-0 z-50 flex flex-col bg-black/80 p-3"
+    class="fixed inset-0 z-50 flex flex-col bg-black/85 p-3 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"
     :aria-label="title"
     @click.self="$emit('close')"
   >
-    <p class="mb-2 text-sm text-white">
+    <p class="mb-2 text-sm font-medium text-white">
       {{ title }}
     </p>
     <div class="flex min-h-0 flex-1 items-center justify-center">
@@ -15,7 +15,7 @@
         v-if="picture"
         :src="picture"
         :alt="title"
-        class="max-h-full max-w-full rounded"
+        class="max-h-full max-w-full rounded-2xl"
       >
       <p
         v-else
@@ -25,30 +25,25 @@
       </p>
     </div>
     <div class="mt-2 flex justify-between gap-2">
-      <button
-        type="button"
-        class="rounded bg-white/90 px-3 py-1 text-sm disabled:opacity-40"
+      <UiButton
         :disabled="!hasPrevious"
         @click="$emit('step', -1)"
       >
         Previous
-      </button>
-      <button
+      </UiButton>
+      <UiButton
         ref="closeButton"
-        type="button"
-        class="rounded bg-white px-3 py-1 text-sm font-medium"
+        variant="primary"
         @click="$emit('close')"
       >
         Close
-      </button>
-      <button
-        type="button"
-        class="rounded bg-white/90 px-3 py-1 text-sm disabled:opacity-40"
+      </UiButton>
+      <UiButton
         :disabled="!hasNext"
         @click="$emit('step', 1)"
       >
         Next
-      </button>
+      </UiButton>
     </div>
   </div>
 </template>
@@ -71,7 +66,7 @@ const emit = defineEmits<{ close: [], step: [by: number] }>()
 
 const picture = ref<string | null>(null)
 const failed = ref(false)
-const closeButton = useTemplateRef<HTMLButtonElement>('closeButton')
+const closeButton = useTemplateRef<{ $el: HTMLElement }>('closeButton')
 
 let request = 0
 
@@ -95,7 +90,7 @@ watch(() => [props.open, props.id] as const, async ([open, id]) => {
 watch(() => props.open, async (open) => {
   if (open) {
     await nextTick()
-    closeButton.value?.focus()
+    closeButton.value?.$el.focus()
   }
 })
 

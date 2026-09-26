@@ -1,39 +1,58 @@
 <template>
-  <main class="mx-auto max-w-md space-y-4 p-4">
-    <header>
-      <h1 class="text-lg font-semibold">
-        What this app tracks
-      </h1>
-      <p class="text-sm text-slate-500">
-        Please read this before tracking starts.
-      </p>
-    </header>
+  <main class="flex h-dvh flex-col gap-2.5 overflow-hidden p-3">
+    <UiPageHeader
+      title="What this app tracks"
+      subtitle="Please read this before tracking starts."
+    />
 
-    <WhatWeTrack />
+    <WhatWeTrack :page="page" />
 
     <p
       v-if="error"
-      class="text-sm text-red-600"
+      class="rounded-2xl bg-red-100 p-2.5 text-xs text-red-700 dark:bg-red-500/15 dark:text-red-300"
       role="alert"
     >
       {{ error }}
     </p>
 
-    <div class="flex gap-2">
-      <button
-        :disabled="busy"
-        class="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
-        @click="accept"
-      >
-        I understand and accept
-      </button>
-      <button
-        :disabled="busy"
-        class="rounded bg-slate-200 px-3 py-2 text-sm"
-        @click="decline"
-      >
-        Log out
-      </button>
+    <div class="mt-auto space-y-2">
+      <template v-if="page === 1">
+        <UiButton
+          variant="primary"
+          block
+          @click="page = 2"
+        >
+          Next
+        </UiButton>
+      </template>
+      <template v-else>
+        <UiButton
+          variant="primary"
+          block
+          :disabled="busy"
+          @click="accept"
+        >
+          I understand and accept
+        </UiButton>
+        <div class="flex gap-2">
+          <UiButton
+            class="flex-1"
+            @click="page = 1"
+          >
+            Back
+          </UiButton>
+          <UiButton
+            class="flex-1"
+            :disabled="busy"
+            @click="decline"
+          >
+            Log out
+          </UiButton>
+        </div>
+      </template>
+      <p class="text-center text-xs text-gray-500 dark:text-gray-400">
+        {{ page }} of 2
+      </p>
     </div>
   </main>
 </template>
@@ -41,6 +60,7 @@
 <script setup lang="ts">
 const { acceptConsent, logout } = useAuth()
 
+const page = ref<1 | 2>(1)
 const busy = ref(false)
 const error = ref<string | null>(null)
 

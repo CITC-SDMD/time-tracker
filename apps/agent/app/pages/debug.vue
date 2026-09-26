@@ -1,80 +1,82 @@
 <template>
-  <main class="mx-auto max-w-2xl space-y-4 p-4">
-    <header class="flex items-center justify-between">
-      <h1 class="text-lg font-semibold">
-        Debug: today's sessions
-      </h1>
-      <NuxtLink
-        to="/"
-        class="text-sm text-slate-500 underline"
-      >
-        Back
-      </NuxtLink>
-    </header>
+  <main class="flex h-dvh flex-col gap-2.5 overflow-hidden p-3">
+    <UiPageHeader
+      title="Today's sessions"
+      subtitle="A developer view of the local sessions."
+      back="/settings"
+    />
 
     <p
       v-if="error"
-      class="text-sm text-red-600"
+      class="rounded-2xl bg-red-100 p-2.5 text-xs text-red-700 dark:bg-red-500/15 dark:text-red-300"
     >
       {{ error }}
     </p>
 
-    <table class="w-full text-left text-sm">
-      <thead>
-        <tr class="border-b border-slate-200 text-slate-500">
-          <th class="py-1 pr-2">
-            Type
-          </th>
-          <th class="py-1 pr-2">
-            App
-          </th>
-          <th class="py-1 pr-2">
-            Start
-          </th>
-          <th class="py-1 pr-2">
-            End
-          </th>
-          <th class="py-1 pr-2">
-            Duration
-          </th>
-          <th class="py-1">
-            Sync
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="s in sessions"
-          :key="s.id"
-          class="border-b border-slate-100"
-        >
-          <td class="py-1 pr-2">
-            {{ s.sessionType }}
-          </td>
-          <td class="py-1 pr-2">
-            {{ s.appName ?? s.idleAppName ?? '—' }}
-          </td>
-          <td class="py-1 pr-2">
-            {{ formatTime(s.startedAt) }}
-          </td>
-          <td class="py-1 pr-2">
-            {{ formatTime(s.endedAt) }}
-          </td>
-          <td class="py-1 pr-2">
-            {{ s.durationSeconds ?? '—' }}
-          </td>
-          <td class="py-1">
-            {{ s.syncStatus }}
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p
-      v-if="!sessions.length"
-      class="text-sm text-slate-500"
-    >
-      No sessions yet today.
-    </p>
+    <UiCard v-if="sessions.length">
+      <table class="w-full table-fixed text-left text-xs">
+        <thead>
+          <tr class="border-b border-gray-200 text-gray-500 dark:border-white/10 dark:text-gray-400">
+            <th class="w-[34%] py-1 pr-2 font-medium">
+              App
+            </th>
+            <th class="w-[17%] py-1 pr-2 font-medium">
+              Start
+            </th>
+            <th class="w-[17%] py-1 pr-2 font-medium">
+              End
+            </th>
+            <th class="w-[14%] py-1 pr-2 font-medium">
+              Secs
+            </th>
+            <th class="w-[18%] py-1 font-medium">
+              Sync
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="s in pageItems"
+            :key="s.id"
+            class="border-b border-gray-100 last:border-0 dark:border-white/5"
+          >
+            <td
+              class="truncate py-1.5 pr-2"
+              :title="s.appName ?? s.idleAppName ?? ''"
+            >
+              {{ s.appName ?? s.idleAppName ?? '—' }}
+            </td>
+            <td class="py-1.5 pr-2 tabular-nums">
+              {{ formatTime(s.startedAt) }}
+            </td>
+            <td class="py-1.5 pr-2 tabular-nums">
+              {{ formatTime(s.endedAt) }}
+            </td>
+            <td class="py-1.5 pr-2 tabular-nums">
+              {{ s.durationSeconds ?? '—' }}
+            </td>
+            <td class="truncate py-1.5">
+              {{ s.syncStatus }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </UiCard>
+    <UiCard v-else>
+      <p class="text-sm text-gray-500 dark:text-gray-400">
+        No sessions yet today.
+      </p>
+    </UiCard>
+
+    <UiPager
+      v-if="pageCount > 1"
+      class="mt-auto"
+      :label="`${page + 1} of ${pageCount}`"
+      :has-previous="page > 0"
+      :has-next="page < pageCount - 1"
+      @previous="page--"
+      @next="page++"
+    />
   </main>
 </template>
 
@@ -84,14 +86,21 @@ import type { SessionDto } from '~/composables/useTracking'
 
 // Phase 3 task 12: a raw list of today's local sessions, for debugging the engine.
 // Deliberately not merged into display-ready timeline blocks -- see the comment on
-// get_today_timeline in src-tauri/src/commands.rs.
+// get_today_timeline in src-tauri/src/commands.rs. Shown a page at a time, newest first, so it never scrolls.
 const sessions = ref<SessionDto[]>([])
 const error = ref<string | null>(null)
 
+const PER_PAGE = 14
+const page = ref(0)
+const pageCount = computed(() => Math.max(1, Math.ceil(sessions.value.length / PER_PAGE)))
+const pageItems = computed(() => sessions.value.slice(page.value * PER_PAGE, (page.value + 1) * PER_PAGE))
+
 async function refresh() {
   try {
-    sessions.value = await invoke<SessionDto[]>('get_today_sessions_debug')
+    sessions.value = (await invoke<SessionDto[]>('get_today_sessions_debug')).reverse()
     error.value = null
+    if (page.value >= pageCount.value)
+      page.value = pageCount.value - 1
   }
   catch (e) {
     error.value = String(e)
@@ -99,7 +108,7 @@ async function refresh() {
 }
 
 function formatTime(ms: number | null) {
-  return ms === null ? '—' : new Date(ms).toLocaleTimeString()
+  return ms === null ? '—' : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 let timer: ReturnType<typeof setInterval> | undefined

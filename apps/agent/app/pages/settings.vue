@@ -1,94 +1,103 @@
 <template>
-  <main class="mx-auto max-w-md space-y-3 p-4">
-    <header class="flex items-center justify-between">
-      <h1 class="text-lg font-semibold">
-        Settings
-      </h1>
-      <NuxtLink
-        to="/"
-        class="text-sm text-slate-500 underline"
-      >
-        Back
-      </NuxtLink>
-    </header>
+  <main class="flex h-dvh flex-col gap-2.5 overflow-hidden p-3">
+    <UiPageHeader
+      title="Settings"
+      back="/"
+    />
 
     <p
       v-if="error"
-      class="text-sm text-red-600"
+      class="rounded-2xl bg-red-100 p-2.5 text-xs text-red-700 dark:bg-red-500/15 dark:text-red-300"
       role="alert"
     >
       {{ error }}
     </p>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <h2 class="mb-2 text-sm font-medium text-slate-500">
-        Set by your office
-      </h2>
-      <dl class="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
-        <dt class="text-slate-500">
+    <UiCard title="Set by your office">
+      <dl class="grid grid-cols-[6.5rem_1fr] gap-y-1 text-sm">
+        <dt class="text-gray-500 dark:text-gray-400">
           Idle after
         </dt>
         <dd>{{ idleLimit }} without keyboard or mouse</dd>
-        <dt class="text-slate-500">
+        <dt class="text-gray-500 dark:text-gray-400">
           Window titles
         </dt>
         <dd>{{ titleMode }}</dd>
       </dl>
-    </section>
+    </UiCard>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4 text-sm">
-      <label class="flex items-center justify-between gap-3">
+    <UiCard>
+      <div class="flex items-center justify-between gap-3 text-sm">
         <span>
           <span class="block font-medium">Launch at startup</span>
-          <span class="block text-xs text-slate-500">Starts in the tray when you sign in to Windows.</span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400">Starts in the tray when you sign in to Windows.</span>
         </span>
-        <input
-          type="checkbox"
-          class="h-4 w-4"
-          :checked="launchAtStartup"
-          @change="toggleStartup"
-        >
-      </label>
-    </section>
+        <UiSwitch
+          :model-value="launchAtStartup"
+          label="Launch at startup"
+          @update:model-value="toggleStartup"
+        />
+      </div>
+    </UiCard>
 
-    <WhatWeTrack />
-
-    <section class="space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-      <p class="flex items-center justify-between">
+    <UiCard>
+      <div class="flex items-center justify-between gap-3 text-sm">
         <span>
-          Version <span class="font-mono">{{ version }}</span>
+          <span class="block font-medium">What this app tracks</span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400">The notice you accepted, in two short pages.</span>
         </span>
-        <button
-          disabled
-          class="rounded bg-slate-100 px-3 py-1 text-slate-400"
-          title="Updates arrive with the installer"
+        <UiButton
+          to="/notice"
+          class="px-4! py-1.5!"
         >
-          Check for updates
-        </button>
-      </p>
-      <p class="flex gap-4">
-        <button
-          class="underline"
-          @click="run(() => invoke('open_log_folder'))"
-        >
-          Open log folder
-        </button>
-        <NuxtLink
-          to="/debug"
-          class="text-slate-500 underline"
-        >
-          Today's sessions
-        </NuxtLink>
-      </p>
-    </section>
+          Read
+        </UiButton>
+      </div>
+    </UiCard>
 
-    <button
+    <UiCard>
+      <div class="space-y-2 text-sm">
+        <p class="flex items-center justify-between gap-3">
+          <span>
+            Version <span class="font-mono">{{ version }}</span>
+          </span>
+          <UiButton
+            disabled
+            class="px-4! py-1.5!"
+            title="Updates arrive with the installer"
+          >
+            Check for updates
+          </UiButton>
+        </p>
+        <p
+          v-if="isDev"
+          class="flex gap-4"
+        >
+          <UiButton
+            variant="link"
+            @click="run(() => invoke('open_log_folder'))"
+          >
+            Open log folder
+          </UiButton>
+          <UiButton
+            variant="link"
+            to="/debug"
+          >
+            Today's sessions
+          </UiButton>
+        </p>
+      </div>
+    </UiCard>
+
+    <UiButton
+      variant="primary"
+      block
+      class="mt-auto"
       :disabled="signingOut"
-      class="w-full rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
       @click="signOut"
     >
       {{ signingOut ? 'Sending your data…' : 'Log out' }}
-    </button>
+    </UiButton>
   </main>
 </template>
 
@@ -96,6 +105,9 @@
 import { invoke } from '@tauri-apps/api/core'
 
 const { me, signOut, signingOut } = useAuth()
+
+// the log folder and the raw sessions table are developer's tools: only dev builds link to them
+const isDev = import.meta.dev
 
 const version = ref('')
 const launchAtStartup = ref(false)
@@ -126,8 +138,7 @@ onMounted(() => run(async () => {
   launchAtStartup.value = await invoke<boolean>('get_launch_at_startup')
 }))
 
-async function toggleStartup() {
-  const wanted = !launchAtStartup.value
+async function toggleStartup(wanted: boolean) {
   await run(async () => {
     await invoke('set_launch_at_startup', { enabled: wanted })
     launchAtStartup.value = wanted
