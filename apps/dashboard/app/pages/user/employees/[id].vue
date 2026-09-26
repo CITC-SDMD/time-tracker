@@ -55,6 +55,12 @@
             >
               {{ ENVIRONMENT_LABEL[person.environment] }}
             </UiBadge>
+            <UiBadge
+              v-if="person.integrityLevel && INTEGRITY_LABEL[person.integrityLevel]"
+              :variant="INTEGRITY_VARIANT[person.integrityLevel]"
+            >
+              {{ INTEGRITY_LABEL[person.integrityLevel] }}
+            </UiBadge>
           </p>
         </template>
       </UiPageHeader>
@@ -104,6 +110,31 @@
       </UiAlert>
 
       <UiCard
+        v-if="activityLevel"
+        class="mb-6"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="text-base/7 font-semibold text-gray-900 dark:text-white">
+            Activity check
+          </h2>
+          <UiBadge :variant="INTEGRITY_VARIANT[activityLevel]">
+            {{ INTEGRITY_LABEL[activityLevel] }}
+          </UiBadge>
+        </div>
+        <ul class="mt-3 list-disc space-y-1 pl-5 text-sm/6 text-gray-700 dark:text-gray-300">
+          <li
+            v-for="reason in summary?.integrityReasons ?? []"
+            :key="reason.code"
+          >
+            {{ reason.message }}
+          </li>
+        </ul>
+        <p class="mt-3 text-sm/6 text-gray-500 dark:text-gray-400">
+          A flag is a reason to look, not proof. Check the screenshots and the timeline before drawing conclusions. Tracked time is never changed by it.
+        </p>
+      </UiCard>
+
+      <UiCard
         v-if="canSwitchDetection"
         class="mb-6"
       >
@@ -111,8 +142,8 @@
           :key="switchKey"
           :model-value="person.detectionEnabled === true"
           :disabled="switching"
-          label="Virtual machine detection is on for this person"
-          hint="Their desktop app reports whether it runs in a virtual machine or a remote session. Only superadmins and this organization's admins see it."
+          label="Detection is on for this person"
+          hint="Their desktop app reports whether it runs in a virtual machine or a remote session, counts of mouse and keyboard input (never which keys) and the names of known macro programs. Only superadmins and this organization's admins see the result."
           @update:model-value="askSwitch"
         />
         <FormError v-if="switchError">
@@ -417,6 +448,12 @@ async function loadPerson() {
 }
 
 // ---- virtual machine detection switch (superadmins with the permission, inside an opened office) ----------
+
+// the activity check of the shown day: only when it found something to look into
+const activityLevel = computed(() => {
+  const level = summary.value?.integrityLevel
+  return level && INTEGRITY_LABEL[level] ? level : null
+})
 
 const canSwitchDetection = computed(() => office.inOffice.value && canPlatform('organizations.detection.manage') && person.value?.detectionEnabled !== undefined)
 const switchConfirmOpen = ref(false)

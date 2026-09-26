@@ -94,6 +94,13 @@
         >
           {{ ENVIRONMENT_LABEL[row.environment as Environment] }}
         </UiBadge>
+        <UiBadge
+          v-if="row.integrityLevel && INTEGRITY_LABEL[row.integrityLevel as IntegrityLevel]"
+          class="ml-2"
+          :variant="INTEGRITY_VARIANT[row.integrityLevel as IntegrityLevel]"
+        >
+          {{ INTEGRITY_LABEL[row.integrityLevel as IntegrityLevel] }}
+        </UiBadge>
       </template>
       <template #cell-trackedSeconds="{ row }">
         {{ formatDuration(row.trackedSeconds) }}
@@ -112,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import type { EmployeeListItem, Environment } from 'shared'
+import type { EmployeeListItem, Environment, IntegrityLevel } from 'shared'
 
 definePageMeta({
   layout: 'user',

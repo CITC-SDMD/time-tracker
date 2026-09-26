@@ -1,4 +1,4 @@
-import type { AuditLogEntry, EmployeeListItem, Environment, UserStatus } from 'shared'
+import type { AuditLogEntry, EmployeeListItem, Environment, IntegrityLevel, UserStatus } from 'shared'
 
 // The words and colours the dashboard uses for the values the API sends as snake_case codes.
 
@@ -10,6 +10,17 @@ type LiveStatus = EmployeeListItem['status']
 export const ENVIRONMENT_LABEL: Partial<Record<Environment, string>> = {
   virtual_machine: 'Virtual machine',
   remote_session: 'Remote session',
+}
+
+/** the activity check: a note to look into, so the words never say someone cheated */
+export const INTEGRITY_LABEL: Partial<Record<IntegrityLevel, string>> = {
+  review: 'Review activity',
+  strong: 'Automation likely',
+}
+
+export const INTEGRITY_VARIANT: Partial<Record<IntegrityLevel, BadgeVariant>> = {
+  review: 'warning',
+  strong: 'danger',
 }
 
 export const LIVE_STATUS_LABEL: Record<LiveStatus, string> = {

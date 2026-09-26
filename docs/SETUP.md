@@ -74,6 +74,8 @@ php artisan serve
 
 Write down the temporary password `tracker:make-superadmin` prints: that is the platform owner, the only account until you create organizations. Sign in to the dashboard, create an organization and add its admin on its profile page (or run `php artisan tracker:make-organization "Office name" "Admin name" admin@example.com`); the admin then makes their own roles and people (docs/DEVELOPMENT_PLAN.md §9).
 
+The activity check (docs/DEVELOPMENT_PLAN.md §16) has its thresholds and the list of known macro programs in `apps/api/config/integrity.php`. After changing a number, run `php artisan tracker:reevaluate-days` (optionally with an organization id) to work out every stored day again; the desktop apps do not need an update, and no tracked time is touched. A change to the program list reaches the desktop apps in their next sync.
+
 **Trying the dashboard with a filled-in office (development only):** after `php artisan migrate:fresh --seed`, run `php artisan db:seed --class=DemoHierarchySeeder`. It adds 2 project managers, 3 team leaders and 6 members under `oic@test.com` (all with the password `password`, e.g. `pm1@test.com`, `tl1@test.com`, `dev1@test.com`), 60 days of daily totals, every live state (tracking, idle, paused, not tracking, offline) and today's timelines for a few of them. It does nothing in production and can be run again.
 
 `http://127.0.0.1:8000/health` should return `{"ok":true,"version":"dev"}`. Quality checks: `vendor\bin\pint --test` (formatting) and `php artisan test`.

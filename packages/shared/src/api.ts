@@ -106,6 +106,17 @@ export interface AgentSyncResponse {
 /** where the desktop app says it runs */
 export type Environment = 'physical' | 'virtual_machine' | 'remote_session'
 
+/** what the activity check made of a day: a note to look into, never a verdict */
+export type IntegrityLevel = 'none' | 'review' | 'strong'
+
+export interface IntegrityReason {
+  code: 'software_input' | 'input_without_hardware' | 'macro_tool_running' | 'robotic_pattern' | 'mouse_only_hours' | 'virtual_or_remote'
+  /** the reason in plain words */
+  message: string
+  /** how many minutes it covers, when it is about a stretch of time */
+  minutes: number | null
+}
+
 export interface EmployeeListItem {
   id: string
   name: string
@@ -128,12 +139,18 @@ export interface EmployeeListItem {
   /** virtual machine detection: only sent to superadmins and the organization's admins */
   detectionEnabled?: boolean
   environment?: Environment | null
+  /** today's level of the activity check (same visibility) */
+  integrityLevel?: IntegrityLevel | null
 }
 
 // GET /api/v1/employees/{id}/summary
 export interface DailySummary {
   /** the strongest flag the desktop app raised that day; only sent to superadmins and the organization's admins */
   environment?: Environment | null
+  integrityLevel?: IntegrityLevel | null
+  integrityReasons?: IntegrityReason[]
+  /** known macro programs seen running that day */
+  macroTools?: string[]
   day: string // YYYY-MM-DD, office timezone
   trackedSeconds: number
   activeSeconds: number
