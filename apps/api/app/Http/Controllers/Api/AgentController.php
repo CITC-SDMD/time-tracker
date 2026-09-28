@@ -8,8 +8,10 @@ use App\Models\Device;
 use App\Models\EmployeeStatus;
 use App\Models\OrganizationSetting;
 use App\Models\Session;
+use App\Models\User;
 use App\Services\IntegrityService;
 use App\Services\SummaryService;
+use App\Services\TaskService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
@@ -26,7 +28,7 @@ class AgentController extends Controller
 
     private const LIVE_WINDOW_MINUTES = 5;
 
-    public function __construct(private SummaryService $summaries, private IntegrityService $integrity) {}
+    public function __construct(private SummaryService $summaries, private IntegrityService $integrity, private TaskService $tasks) {}
 
     public function sync(AgentSyncRequest $request): JsonResponse
     {
@@ -48,7 +50,7 @@ class AgentController extends Controller
             // Step 3 of §10.1: validate each session on its own merits.
             $candidates = [];
             foreach ($data['sessions'] as $raw) {
-                [$parsed, $reason] = $this->parseSession($raw, $now);
+                [$parsed, $reason] = $this->parseSession($raw, $now, $user);
                 if ($reason !== null) {
                     $rejected[] = ['id' => (string) ($raw['id'] ?? ''), 'reason' => $reason];
 
@@ -133,6 +135,7 @@ class AgentController extends Controller
                         'day' => $this->summaries->dayOf($s['startedAt'], $office->timezone),
                         'clock_changed' => $s['clockChanged'],
                         'input_stats' => $user->detection_enabled ? $s['inputStats'] : null,
+                        'task_id' => $s['taskId'],
                         'received_at' => $now,
                     ]);
                 } catch (UniqueConstraintViolationException) {
@@ -204,6 +207,9 @@ class AgentController extends Controller
             'rejected' => $result['rejected'],
             'serverTime' => $now->toIso8601ZuluString('millisecond'),
             'commands' => $result['commands'],
+            // the caller's own active, assigned tasks (docs/DEVELOPMENT_PLAN.md): refreshed every sync, cached by the
+            // agent so the picker still works offline.
+            'tasks' => $this->tasks->assignedActiveTasksFor($user),
             'settings' => [
                 'idleThresholdSeconds' => $office->idle_threshold_seconds,
                 'windowTitleMode' => $office->window_title_mode,
@@ -242,7 +248,7 @@ class AgentController extends Controller
     }
 
     /** @return array{0: ?array, 1: ?string} [parsed session, rejection reason] */
-    private function parseSession(array $raw, Carbon $now): array
+    private function parseSession(array $raw, Carbon $now, User $user): array
     {
         $id = $raw['id'] ?? null;
         $type = $raw['type'] ?? null;
@@ -293,6 +299,7 @@ class AgentController extends Controller
             'durationSeconds' => $duration,
             'clockChanged' => (bool) ($raw['clockChanged'] ?? false),
             'inputStats' => $this->integrity->cleanStats($raw['inputStats'] ?? null),
+            'taskId' => $this->tasks->resolveTaskId($user, $raw['taskId'] ?? null),
         ], null];
     }
 

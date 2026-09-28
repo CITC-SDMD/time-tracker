@@ -205,6 +205,6 @@ class RoleManagementTest extends TestCase
         $keys = collect($response->json('permissions'))->pluck('key')->all();
         $this->assertEqualsCanonicalizing(Permissions::organizationKeys(), $keys);
         $this->assertNotEmpty($response->json('permissions.0.label'));
-        $this->assertSame(['settings.manage', 'audit.view', 'roles.manage'], $response->json('organizationWide'));
+        $this->assertSame(Permissions::ORGANIZATION_WIDE, $response->json('organizationWide'));
     }
 }

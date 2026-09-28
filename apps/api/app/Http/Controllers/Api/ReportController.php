@@ -39,6 +39,11 @@ class ReportController extends Controller
         return $this->respond($request, 'team', fn (array $ids, string $from, string $to) => $this->reports->team($ids, $from, $to));
     }
 
+    public function tasks(Request $request): JsonResponse|StreamedResponse
+    {
+        return $this->respond($request, 'tasks', fn (array $ids, string $from, string $to) => $this->reports->tasks($ids, $from, $to));
+    }
+
     /** @param  callable(list<int>, string, string): list<array<string, mixed>>  $build */
     private function respond(Request $request, string $report, callable $build): JsonResponse|StreamedResponse
     {
@@ -108,6 +113,10 @@ class ReportController extends Controller
             'apps' => [
                 ['Application', 'Active (HH:MM)', 'Active (seconds)', 'People'],
                 fn (array $r) => [$r['app'], $this->hhmm($r['seconds']), $r['seconds'], $r['people']],
+            ],
+            'tasks' => [
+                ['Task', 'Name', 'Tracked (HH:MM)', 'Tracked (seconds)'],
+                fn (array $r) => [$r['taskTitle'], $r['name'], $this->hhmm($r['trackedSeconds']), $r['trackedSeconds']],
             ],
             default => [
                 ['Name', 'Email', 'Role', 'Manager', 'Days tracked', 'Tracked (HH:MM)', 'Tracked (seconds)', 'Active (HH:MM)', 'Active (seconds)', 'Idle (HH:MM)', 'Idle (seconds)', 'Average per day (HH:MM)'],

@@ -125,7 +125,7 @@ class RoleAssignmentTest extends TestCase
 
     public function test_the_last_active_admin_cannot_lose_the_admin_role(): void
     {
-        $registrar = User::factory()->withRole(RoleFactory::make2('Registrar', 'organization', ['people.view', 'people.assign_role', 'people.update', 'settings.manage', 'audit.view', 'roles.manage', 'people.create', 'timeline.view', 'screenshots.view', 'reports.view', 'reports.export']))->create();
+        $registrar = User::factory()->withRole(RoleFactory::make2('Registrar', 'organization', RoleFactory::allPermissions()))->create();
         // holds every permission, so escalation does not stop it: only the last-admin rule does
 
         $this->give($registrar, $this->admin, RoleFactory::forTests('developer')->id)

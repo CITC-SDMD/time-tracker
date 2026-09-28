@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\PermissionCatalogController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\ScreenshotController;
+use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\TwoFactorController;
 use App\Http\Controllers\Platform\OrganizationAdminController;
 use App\Http\Controllers\Platform\OrganizationController;
@@ -61,7 +62,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/reports/daily', [ReportController::class, 'daily']);
             Route::get('/reports/apps', [ReportController::class, 'apps']);
             Route::get('/reports/team', [ReportController::class, 'team']);
+            Route::get('/reports/tasks', [ReportController::class, 'tasks']);
         });
+
+        // Tasks: managing them (creating, editing, archiving, assigning) is organization-wide, like roles.
+        Route::get('/tasks', [TaskController::class, 'index'])->middleware('permission:tasks.view');
+        Route::post('/tasks', [TaskController::class, 'store'])->middleware('permission:tasks.manage');
+        Route::patch('/tasks/{id}', [TaskController::class, 'update'])->whereNumber('id')->middleware('permission:tasks.manage');
 
         Route::post('/admin/employees', [AdminEmployeeController::class, 'store'])->middleware('permission:people.create');
         Route::post('/admin/employees/import', [AdminEmployeeController::class, 'import'])

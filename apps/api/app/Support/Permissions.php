@@ -25,13 +25,15 @@ final class Permissions
         'settings.manage' => ['group' => 'Organization', 'label' => 'Change settings', 'description' => 'Timezone, idle limit, window titles and screenshots for the whole organization.'],
         'audit.view' => ['group' => 'Organization', 'label' => 'See the audit log', 'description' => 'Who did what in the organization.'],
         'roles.manage' => ['group' => 'Organization', 'label' => 'Manage roles', 'description' => 'Create, change and delete roles.'],
+        'tasks.view' => ['group' => 'Tasks', 'label' => 'See tasks', 'description' => 'See the task list and the hours tracked against each one.'],
+        'tasks.manage' => ['group' => 'Tasks', 'label' => 'Manage tasks', 'description' => 'Create, change and archive tasks, and choose who they are assigned to.'],
     ];
 
     /** Permissions that concern the whole organization, so they need a role with the organization scope. */
-    public const ORGANIZATION_WIDE = ['settings.manage', 'audit.view', 'roles.manage'];
+    public const ORGANIZATION_WIDE = ['settings.manage', 'audit.view', 'roles.manage', 'tasks.manage'];
 
     /** What a superadmin who may only look inside an organization gets there. */
-    public const READ_ONLY = ['people.view', 'timeline.view', 'screenshots.view', 'reports.view', 'reports.export', 'audit.view'];
+    public const READ_ONLY = ['people.view', 'timeline.view', 'screenshots.view', 'reports.view', 'reports.export', 'audit.view', 'tasks.view'];
 
     /** @var array<string, array{group: string, label: string, description: string}> */
     public const SUPERADMIN = [

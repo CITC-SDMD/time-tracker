@@ -30,9 +30,11 @@ export type Permission =
   | 'settings.manage'
   | 'audit.view'
   | 'roles.manage'
+  | 'tasks.view'
+  | 'tasks.manage'
 
 /** Permissions about the whole organization: a role holding one has to reach the whole organization. */
-export const ORGANIZATION_WIDE_PERMISSIONS: readonly Permission[] = ['settings.manage', 'audit.view', 'roles.manage']
+export const ORGANIZATION_WIDE_PERMISSIONS: readonly Permission[] = ['settings.manage', 'audit.view', 'roles.manage', 'tasks.manage']
 
 /**
  * Why `permissions` cannot go with `scope`, or null when the pair is fine. The same rule the server applies, so a
@@ -109,6 +111,8 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   'settings.manage',
   'audit.view',
   'roles.manage',
+  'tasks.view',
+  'tasks.manage',
 ]
 
 /** What a superadmin who may only look inside an office gets there. */
@@ -119,4 +123,5 @@ export const READ_ONLY_PERMISSIONS: readonly Permission[] = [
   'reports.view',
   'reports.export',
   'audit.view',
+  'tasks.view',
 ]

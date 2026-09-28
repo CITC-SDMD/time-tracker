@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'id', 'user_id', 'device_id', 'type', 'app_name', 'app_key', 'process_name',
     'window_title', 'idle_app_name', 'started_at', 'ended_at', 'duration_seconds',
-    'day', 'clock_changed', 'received_at', 'input_stats',
+    'day', 'clock_changed', 'received_at', 'input_stats', 'task_id',
 ])]
 class Session extends Model
 {
@@ -30,6 +30,11 @@ class Session extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function task(): BelongsTo
+    {
+        return $this->belongsTo(Task::class);
     }
 
     protected function casts(): array

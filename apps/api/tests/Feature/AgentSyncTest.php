@@ -7,6 +7,7 @@ use App\Models\Device;
 use App\Models\EmployeeStatus;
 use App\Models\PlatformSetting;
 use App\Models\Session;
+use App\Models\Task;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -112,6 +113,35 @@ class AgentSyncTest extends TestCase
         $this->assertNotNull($summary->first_activity_at);
         $this->assertNotNull($summary->last_activity_at);
         $this->assertNotNull(Device::find($this->deviceA));
+    }
+
+    public function test_an_assigned_tasks_id_is_stored_and_the_response_lists_the_callers_active_tasks(): void
+    {
+        $user = User::factory()->create();
+        $task = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Budget report', 'status' => 'active']));
+        $task->assignees()->attach($user->id, ['organization_id' => $user->organization_id, 'assigned_at' => now()]);
+        $other = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Not mine', 'status' => 'active']));
+
+        $tagged = $this->makeSession(['taskId' => (string) $task->id], 10);
+        $response = $this->sync($user, $this->body([$tagged]));
+
+        $response->assertOk()->assertJsonPath('rejected', []);
+        $this->assertSame($task->id, Session::find($tagged['id'])->task_id);
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report']], $response->json('tasks'));
+        $this->assertNotNull($other); // made, but never assigned: absent from the caller's own list above
+    }
+
+    public function test_a_task_id_that_is_not_assigned_to_the_person_is_dropped_not_rejected(): void
+    {
+        $user = User::factory()->create();
+        $someoneElsesTask = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Not mine', 'status' => 'active']));
+
+        $tagged = $this->makeSession(['taskId' => (string) $someoneElsesTask->id], 10);
+        $response = $this->sync($user, $this->body([$tagged]));
+
+        $response->assertOk()->assertJsonPath('rejected', []);
+        $this->assertContains($tagged['id'], $response->json('accepted'));
+        $this->assertNull(Session::find($tagged['id'])->task_id);
     }
 
     public function test_the_same_batch_twice_reports_duplicates_and_leaves_totals_alone(): void

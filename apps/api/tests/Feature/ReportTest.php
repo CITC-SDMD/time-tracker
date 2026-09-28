@@ -3,9 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\AuditLog;
+use App\Models\Session;
+use App\Models\Task;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 // docs/DEVELOPMENT_PLAN.md §12 Phase 11: /reports/daily, /reports/apps and /reports/team, limited to
@@ -220,5 +223,33 @@ class ReportTest extends TestCase
         $this->assertContains('Days tracked', $team);
         $this->assertSame("\xEF\xBB\xBFApplication", $apps[0]);
         $this->assertSame(2, AuditLog::where('action', 'report.exported')->count());
+    }
+
+    public function test_the_tasks_report_sums_tracked_seconds_per_task_per_person_and_skips_untagged_time(): void
+    {
+        $task = Task::unguarded(fn () => Task::create([
+            'organization_id' => $this->devA1->organization_id, 'title' => 'Budget report', 'status' => 'active',
+        ]));
+        $this->seedTaskSession($this->devA1, $task->id, '2026-09-01', 1800);
+        $this->seedTaskSession($this->devA1, $task->id, '2026-09-02', 600);
+        $this->seedTaskSession($this->devA2, $task->id, '2026-09-01', 300);
+        $this->seedTaskSession($this->devA1, null, '2026-09-01', 9999); // untagged: not part of a task report
+
+        $rows = $this->report($this->oic, 'tasks')->assertOk()->json();
+
+        $this->assertCount(2, $rows);
+        $byName = collect($rows)->keyBy('name');
+        $this->assertSame(2400, $byName['Dev A1']['trackedSeconds']);
+        $this->assertSame('Budget report', $byName['Dev A1']['taskTitle']);
+        $this->assertSame(300, $byName['Dev A2']['trackedSeconds']);
+    }
+
+    private function seedTaskSession(User $user, ?int $taskId, string $day, int $durationSeconds): void
+    {
+        Session::unguarded(fn () => Session::create([
+            'id' => (string) Str::uuid(), 'organization_id' => $user->organization_id, 'user_id' => $user->id, 'device_id' => (string) Str::uuid(),
+            'type' => 'application', 'app_name' => 'Code', 'started_at' => "{$day} 09:00:00", 'ended_at' => "{$day} 09:10:00",
+            'duration_seconds' => $durationSeconds, 'day' => $day, 'clock_changed' => false, 'received_at' => now(), 'task_id' => $taskId,
+        ]));
     }
 }

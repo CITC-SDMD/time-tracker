@@ -14,6 +14,8 @@ export interface Session {
   endedAt: string
   durationSeconds: number
   clockChanged: boolean
+  /** the task picked while this was tracked, or null for general/untagged time */
+  taskId: string | null
 }
 
 export type TrackingState = 'active' | 'idle' | 'paused' | 'away' | 'not_tracking'

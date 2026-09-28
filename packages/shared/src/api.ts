@@ -101,7 +101,15 @@ export interface AgentSyncResponse {
     stopReason: 'STARTED_ON_OTHER_PC' | null
     signOut: boolean
   }
+  /** the caller's own active, assigned tasks — refreshed every sync, cached by the agent so the picker works offline */
+  tasks: AssignedTask[]
   settings: Pick<OrganizationSettings, 'idleThresholdSeconds' | 'windowTitleMode' | 'screenshotIntervalMinutes' | 'screenshotRandom'>
+}
+
+/** A task as the agent sees it: just enough to show and pick from (part of AgentSyncResponse.tasks) */
+export interface AssignedTask {
+  id: string
+  title: string
 }
 
 // GET /api/v1/employees
@@ -266,6 +274,26 @@ export interface ReportTeamRow {
   activeSeconds: number
   idleSeconds: number
   averageTrackedSeconds: number
+}
+
+// GET/POST/PATCH /api/v1/tasks — managing them (tasks.manage) is organization-wide, like roles; seeing the list
+// and the report (tasks.view) can be scoped normally. Assigning is part of create/update, not separate calls.
+export interface TaskItem {
+  id: string
+  title: string
+  description: string | null
+  status: 'active' | 'archived'
+  assigneeCount: number
+  assigneeIds: string[]
+}
+
+// GET /api/v1/reports/tasks?from=&to=&uid=&format=json|csv — one row per task per person, untagged time excluded
+export interface ReportTaskRow {
+  taskId: string
+  taskTitle: string
+  userId: string
+  name: string
+  trackedSeconds: number
 }
 
 // ---- platform (superadmins) -------------------------------------------------------------------------------------

@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Models\DailySummary;
+use App\Models\Session;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The three reports of docs/DEVELOPMENT_PLAN.md §12 Phase 11, built from `daily_summaries` only
@@ -100,6 +102,42 @@ class ReportService
                     'averageTrackedSeconds' => $daysTracked > 0 ? intdiv($tracked, $daysTracked) : 0,
                 ];
             })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Tracked hours per task per person, built from `sessions` (tasks are not pre-aggregated into
+     * `daily_summaries`, so this reads the raw rows, same as the activity check does). Untagged time is not
+     * included: a task report is about tasks, not general time.
+     *
+     * @param  list<int>  $userIds
+     * @return list<array<string, mixed>>
+     */
+    public function tasks(array $userIds, string $from, string $to): array
+    {
+        $people = $this->people($userIds);
+
+        $rows = Session::query()
+            ->whereIn('user_id', $userIds)
+            ->whereBetween('day', [$from, $to])
+            ->whereNotNull('task_id')
+            ->join('tasks', 'tasks.id', '=', 'sessions.task_id')
+            ->groupBy('sessions.task_id', 'sessions.user_id', 'tasks.title')
+            ->get([
+                'sessions.task_id as task_id', 'sessions.user_id as user_id', 'tasks.title as task_title',
+                DB::raw('SUM(sessions.duration_seconds) as tracked_seconds'),
+            ]);
+
+        return $rows
+            ->sortBy([['task_title', 'asc'], fn ($a, $b) => strcmp($people[$a->user_id]->name ?? '', $people[$b->user_id]->name ?? '')])
+            ->map(fn ($row) => [
+                'taskId' => (string) $row->task_id,
+                'taskTitle' => $row->task_title,
+                'userId' => (string) $row->user_id,
+                'name' => $people[$row->user_id]->name ?? '',
+                'trackedSeconds' => (int) $row->tracked_seconds,
+            ])
             ->values()
             ->all();
     }
