@@ -104,6 +104,7 @@ mod tests {
             ended_at: end,
             duration_seconds: end.map(|e| (e - start) / 1000),
             sync_status: "PENDING".into(),
+            task_id: None,
         }
     }
 

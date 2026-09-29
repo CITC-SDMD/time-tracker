@@ -35,6 +35,10 @@ pub struct Engine<C: Clock> {
     tracking_started: Option<DateTime<Utc>>,
     /// The server's say on the activity check for this person: while off nothing is counted or kept.
     detection_on: bool,
+    /// The task the employee is currently working on, if they picked one; carried onto every
+    /// session opened from here on (app switches, chunking, idle transitions all keep it) until
+    /// they pick another one. Persisted so it survives a restart.
+    current_task_id: Option<String>,
 }
 
 /// What the sync worker reports as the live status (docs §10.1 request `status`).
@@ -58,6 +62,8 @@ impl<C: Clock> Engine<C> {
         user_id: String,
         device_id: String,
     ) -> Self {
+        // "" means "no task was ever picked" (app_state values are NOT NULL, so there is no bare absence to load).
+        let current_task_id = db.get_app_state("current_task_id").filter(|v| !v.is_empty());
         Self {
             clock,
             provider,
@@ -72,6 +78,30 @@ impl<C: Clock> Engine<C> {
             device_id,
             tracking_started: None,
             detection_on: true,
+            current_task_id,
+        }
+    }
+
+    pub fn current_task_id(&self) -> Option<&str> {
+        self.current_task_id.as_deref()
+    }
+
+    /// The employee picked a different task to work on, or cleared it (docs/DEVELOPMENT_PLAN.md): closes the
+    /// presently open session, if any, and reopens one tagged with the new task -- the same mechanic an app
+    /// switch already uses, so no separate "session splitting" logic is needed. Persisted so the choice
+    /// survives a restart.
+    pub fn set_current_task(&mut self, task_id: Option<String>) {
+        if self.current_task_id == task_id {
+            return;
+        }
+        self.current_task_id = task_id.clone();
+        let _ = self.db.set_app_state("current_task_id", task_id.as_deref().unwrap_or(""));
+        if self.state == TrackingState::Tracking {
+            let now_wall = self.clock.now_wall();
+            let now_mono = self.clock.now_mono();
+            self.close_open(now_wall, false);
+            self.open_for_current_activity(now_wall, now_mono);
+            self.candidate = None;
         }
     }
 
@@ -459,6 +489,7 @@ impl<C: Clock> Engine<C> {
             idle_app_name: None,
             started_at: at_wall.timestamp_millis(),
             last_seen_at: at_wall.timestamp_millis(),
+            task_id: self.current_task_id.clone(),
         };
         if let Err(err) = self.db.open_session(&new) {
             tracing::error!(?err, "failed to open ACTIVE session");
@@ -491,6 +522,7 @@ impl<C: Clock> Engine<C> {
             idle_app_name: idle_app_name.clone(),
             started_at: at_wall.timestamp_millis(),
             last_seen_at: at_wall.timestamp_millis(),
+            task_id: self.current_task_id.clone(),
         };
         if let Err(err) = self.db.open_session(&new) {
             tracing::error!(?err, "failed to open IDLE session");
@@ -919,6 +951,7 @@ mod tests {
             idle_app_name: None,
             started_at: last_seen - 60_000,
             last_seen_at: last_seen,
+            task_id: None,
         })
         .unwrap();
         db.set_app_state("was_tracking", "yes").unwrap();
@@ -1012,6 +1045,44 @@ mod tests {
 
         let sessions = all_sessions(&engine);
         assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn picking_a_task_mid_session_closes_the_open_one_and_reopens_it_tagged() {
+        let (mut engine, clock, _provider) = engine_with(300, (Some(app("VSCode")), 0));
+        engine.start();
+        clock.advance(Duration::from_secs(5));
+        engine.tick();
+        assert_eq!(engine.current_task_id(), None);
+
+        engine.set_current_task(Some("7".into()));
+        clock.advance(Duration::from_secs(5));
+        engine.tick();
+        engine.stop();
+
+        assert_eq!(engine.current_task_id(), Some("7"));
+        let sessions = all_sessions(&engine);
+        assert_eq!(sessions.len(), 2, "the switch closed the first session and opened a second");
+        assert_eq!(sessions[0].task_id, None);
+        assert_eq!(sessions[1].task_id.as_deref(), Some("7"));
+
+        // switching to the same task again is a no-op, not a third session
+        engine.set_current_task(Some("7".into()));
+        clock.advance(Duration::from_secs(5));
+        engine.stop();
+        assert_eq!(all_sessions(&engine).len(), 2);
+    }
+
+    #[test]
+    fn the_picked_task_survives_a_restart() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        db.set_app_state("current_task_id", "9").unwrap();
+        let clock = Arc::new(FakeClock::new(Utc::now()));
+        let provider = Arc::new(FakeActivityProvider::new((Some(app("VSCode")), 0)));
+        let settings = OfficeSettings { idle_limit_seconds: 300, title_mode: TitleMode::Full, ..OfficeSettings::default() };
+        let engine = Engine::new(clock, provider, db, settings, "test-user".into(), "test-device".into());
+
+        assert_eq!(engine.current_task_id(), Some("9"));
     }
 
     #[test]

@@ -7,6 +7,7 @@
       <ul class="list-disc space-y-1 pl-5">
         <li>When you start, pause, resume and stop tracking.</li>
         <li>Which app is in front, and for how long.</li>
+        <li>If your organization assigns you tasks, which one you have picked (or none), so hours can be reported per task.</li>
         <li v-if="titlesTracked">
           The window title of that app.
         </li>

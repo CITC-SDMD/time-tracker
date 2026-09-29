@@ -225,6 +225,7 @@ where
     let _ = e.db().set_app_state("last_sync_at", &now_ms().to_string());
     let _ = e.db().set_app_state("last_sync_error", "");
     store_settings(&mut e, &response.settings);
+    store_tasks(&e, &response.tasks);
 
     let _ = e.db().set_app_state("detection_enabled", if response.commands.detection_enabled { "1" } else { "0" });
     e.set_detection(response.commands.detection_enabled);
@@ -233,6 +234,13 @@ where
         e.stop();
     }
     response.commands
+}
+
+/// Caches the caller's own active, assigned tasks so the picker still works offline (`app_state["tasks_json"]`,
+/// unsealed like `office_settings_json` -- task titles set by managers are not personal data the way a window
+/// title is). Refreshed every cycle, so a task unassigned or archived since the last sync disappears from it.
+fn store_tasks<C: Clock>(engine: &Engine<C>, tasks: &[crate::sync::client::TaskDto]) {
+    let _ = engine.db().set_app_state("tasks_json", &serde_json::json!(tasks).to_string());
 }
 
 fn store_settings<C: Clock>(engine: &mut Engine<C>, settings: &SyncSettings) {
@@ -462,6 +470,7 @@ mod tests {
                         idle_app_name: None,
                         started_at: 1_000_000 + i as i64 * 10_000,
                         last_seen_at: 1_000_000,
+                        task_id: None,
                     })
                     .unwrap();
                 e.db().close_session(&id, 1_005_000 + i as i64 * 10_000, false).unwrap();

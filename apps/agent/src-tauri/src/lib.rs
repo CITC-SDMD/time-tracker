@@ -59,6 +59,8 @@ pub fn run() {
             commands::get_screenshot_status,
             commands::list_my_screenshots,
             commands::get_my_screenshot,
+            commands::get_my_tasks,
+            commands::set_current_task,
         ])
         .setup(|app| {
             let log_guard = logging::init(app.handle())?;

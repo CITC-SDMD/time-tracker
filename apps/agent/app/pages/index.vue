@@ -98,6 +98,14 @@
           No keyboard or mouse use.
         </p>
 
+        <UiSelect
+          v-if="taskOptions.length"
+          :model-value="state?.currentTaskId ?? ''"
+          placeholder="No task"
+          :options="taskOptions"
+          @update:model-value="(v) => selectTask(v || null)"
+        />
+
         <div class="flex gap-2">
           <UiButton
             v-if="state?.state === 'not_tracking'"
@@ -245,10 +253,18 @@
 </template>
 
 <script setup lang="ts">
-const { state, summary, timeline, status, clock, activeShare, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
+const { state, summary, timeline, status, clock, activeShare, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters, refresh: refreshTracking } = useTracking()
 const { me, refresh } = useAuth()
 const { status: sync, notice, progress, dismissNotice } = useSync()
 const { status: shots } = useScreenshots()
+const { tasks, select } = useTasks()
+
+const taskOptions = computed(() => tasks.value.map(t => ({ value: t.id, label: t.title })))
+
+async function selectTask(taskId: string | null) {
+  await select(taskId)
+  await refreshTracking()
+}
 
 // The counter Reset is a testing aid: only dev builds show it.
 const isDev = import.meta.dev

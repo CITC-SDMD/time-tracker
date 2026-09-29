@@ -22,6 +22,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (2, include_str!("migrations/002_lowercase_enums.sql")),
     (3, include_str!("migrations/003_screenshots.sql")),
     (4, include_str!("migrations/004_input_stats.sql")),
+    (5, include_str!("migrations/005_tasks.sql")),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,8 @@ pub struct NewSession {
     pub idle_app_name: Option<String>,
     pub started_at: i64,
     pub last_seen_at: i64,
+    /// the task picked when this session started, if any (see `tracker::engine::set_current_task`)
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +72,7 @@ pub struct SessionRow {
     pub ended_at: Option<i64>,
     pub duration_seconds: Option<i64>,
     pub sync_status: String,
+    pub task_id: Option<String>,
 }
 
 /// The exact JSON a `sync_queue` row carries — matches packages/shared's
@@ -91,6 +95,8 @@ struct SyncPayload {
     /// The activity check counts of this session; left out when there are none.
     #[serde(skip_serializing_if = "Option::is_none")]
     input_stats: Option<InputStats>,
+    /// The task picked while this was tracked, or None for general, untagged time.
+    task_id: Option<String>,
 }
 
 /// A screenshot waiting to be sent (see `screenshot`).
@@ -354,8 +360,8 @@ impl Db {
             "INSERT INTO sessions
                 (id, user_id, device_id, session_type, app_name, process_name, window_title,
                  idle_app_name, started_at, ended_at, last_seen_at, duration_seconds,
-                 clock_changed, sync_status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, NULL, 0, 'OPEN', ?11)",
+                 clock_changed, sync_status, created_at, task_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, NULL, 0, 'OPEN', ?11, ?12)",
             params![
                 new.id,
                 new.user_id,
@@ -368,6 +374,7 @@ impl Db {
                 new.started_at,
                 new.last_seen_at,
                 created_at,
+                new.task_id,
             ],
         )?;
         Ok(new.id.clone())
@@ -419,7 +426,7 @@ impl Db {
         )?;
 
         let payload = tx.query_row(
-            "SELECT session_type, app_name, process_name, window_title, idle_app_name, started_at
+            "SELECT session_type, app_name, process_name, window_title, idle_app_name, started_at, task_id
              FROM sessions WHERE id = ?1",
             params![session_id],
             |row| {
@@ -435,6 +442,7 @@ impl Db {
                     duration_seconds,
                     clock_changed,
                     input_stats: stats.cloned(),
+                    task_id: row.get(6)?,
                 })
             },
         )?;
@@ -496,7 +504,7 @@ impl Db {
     ) -> rusqlite::Result<Vec<SessionRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_type, app_name, idle_app_name, started_at, ended_at,
-                    duration_seconds, sync_status
+                    duration_seconds, sync_status, task_id
              FROM sessions
              WHERE user_id = ?1 AND started_at >= ?2 AND started_at < ?3
              ORDER BY started_at",
@@ -511,6 +519,7 @@ impl Db {
                 ended_at: row.get(5)?,
                 duration_seconds: row.get(6)?,
                 sync_status: row.get(7)?,
+                task_id: row.get(8)?,
             })
         })?;
         rows.collect()
@@ -779,6 +788,7 @@ mod tests {
                 idle_app_name: None,
                 started_at: 1_000,
                 last_seen_at: 1_000,
+                task_id: None,
             })
             .unwrap();
         db.close_session(&id, 6_000, false).unwrap();
@@ -989,6 +999,7 @@ mod tests {
                 idle_app_name: None,
                 started_at: 1_000,
                 last_seen_at: 1_000,
+                task_id: None,
             })
             .unwrap();
         db.close_session(&id, 6_000, false).unwrap();
@@ -1124,5 +1135,67 @@ mod tests {
         let stored = std::fs::read(&picture).unwrap();
         assert!(Cipher::is_sealed_file(&stored));
         assert_eq!(db.cipher().open_bytes(&stored).as_deref(), Some(&jpeg[..]));
+    }
+
+    // ---- tasks (docs/DEVELOPMENT_PLAN.md) -----------------------------------------------------------------------
+
+    #[test]
+    fn a_sessions_task_id_round_trips_in_the_clear_and_is_carried_into_the_sync_payload() {
+        let dir = TempDir::new();
+        let db = Db::open(&dir.db_path(), Cipher::for_test(), false).unwrap();
+        let id = db
+            .open_session(&NewSession {
+                id: uuid::Uuid::now_v7().to_string(),
+                user_id: "1".into(),
+                device_id: "dev".into(),
+                session_type: SessionType::Application,
+                app_name: Some("Excel".into()),
+                process_name: Some("EXCEL.EXE".into()),
+                window_title: None,
+                idle_app_name: None,
+                started_at: 1_000,
+                last_seen_at: 1_000,
+                task_id: Some("42".into()),
+            })
+            .unwrap();
+        db.close_session(&id, 6_000, false).unwrap();
+
+        // unlike a window title, an opaque task id is not sealed: local grouping/filtering needs it in the clear
+        let stored = raw(&dir, "SELECT task_id FROM sessions");
+        assert_eq!(stored[0], "42");
+
+        let queue = db.fetch_ready_queue("1", 10, i64::MAX).unwrap();
+        assert!(queue[0].payload.contains(r#""taskId":"42""#), "{}", queue[0].payload);
+    }
+
+    #[test]
+    fn a_session_with_no_task_carries_no_task_id() {
+        let db = Db::open_in_memory_for_test().unwrap();
+        let id = closed_session(&db, "1");
+
+        let queue = db.fetch_ready_queue("1", 10, i64::MAX).unwrap();
+        assert!(!queue.iter().any(|r| r.payload.contains("taskId")) || queue[0].payload.contains(r#""taskId":null"#), "{}", queue[0].payload);
+        let rows = db.sessions_for_range("1", 0, 10_000).unwrap();
+        assert_eq!(rows.iter().find(|r| r.id == id).unwrap().task_id, None);
+    }
+
+    #[test]
+    fn migration_five_adds_task_id_as_null_to_existing_rows() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("migrations/001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("migrations/002_lowercase_enums.sql")).unwrap();
+        conn.execute_batch(include_str!("migrations/003_screenshots.sql")).unwrap();
+        conn.execute_batch(include_str!("migrations/004_input_stats.sql")).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, user_id, device_id, session_type, started_at, last_seen_at, sync_status, created_at)
+             VALUES ('a', '1', 'd', 'application', 1, 1, 'SYNCED', 1)",
+            [],
+        )
+        .unwrap();
+
+        conn.execute_batch(include_str!("migrations/005_tasks.sql")).unwrap();
+
+        let task_id: Option<String> = conn.query_row("SELECT task_id FROM sessions WHERE id = 'a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(task_id, None);
     }
 }

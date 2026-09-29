@@ -72,12 +72,23 @@ pub struct SyncSettings {
     pub macro_tools: Vec<String>,
 }
 
+/// A task as the agent sees it: just enough to show and let the employee pick from
+/// (only the caller's own active, assigned tasks -- see App\Services\TaskService on the server).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TaskDto {
+    pub id: String,
+    pub title: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SyncResponse {
     pub accepted: Vec<String>,
     pub duplicates: Vec<String>,
     pub rejected: Vec<Rejected>,
     pub commands: SyncCommands,
+    /// Older servers do not send this: the picker just stays empty until an upgrade.
+    #[serde(default)]
+    pub tasks: Vec<TaskDto>,
     pub settings: SyncSettings,
 }
 

@@ -218,6 +218,8 @@ pub struct TrackingStateDto {
     pub open_session_id: Option<String>,
     pub open_session_app: Option<String>,
     pub open_session_started_at: Option<i64>,
+    /// The task currently picked, if any (see `get_my_tasks` for the list it comes from).
+    pub current_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,6 +270,7 @@ fn tracking_state_dto(engine: &Engine<SystemClock>) -> TrackingStateDto {
         open_session_id: open.as_ref().map(|(id, ..)| id.clone()),
         open_session_app: None,
         open_session_started_at: open.as_ref().map(|(_, _, started_at)| *started_at),
+        current_task_id: engine.current_task_id().map(str::to_owned),
     }
 }
 
@@ -484,6 +487,26 @@ pub fn get_app_version(app: AppHandle) -> String {
 pub fn get_today_sessions_debug(state: State<'_, AppState>) -> Result<Vec<SessionDto>, String> {
     let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
     today_sessions(&engine)
+}
+
+// ---- tasks (docs/DEVELOPMENT_PLAN.md) --------------------------------------------------------------
+
+/// The caller's own active, assigned tasks, as cached from the last sync (`app_state["tasks_json"]`) --
+/// no network call, so the picker still works offline. Empty until the first sync after login.
+#[tauri::command]
+pub fn get_my_tasks(state: State<'_, AppState>) -> Result<Vec<crate::sync::client::TaskDto>, String> {
+    let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    let json = engine.db().get_app_state("tasks_json").unwrap_or_else(|| "[]".into());
+    Ok(serde_json::from_str(&json).unwrap_or_default())
+}
+
+/// The employee picked a task to work on, or cleared it (`task_id: None`). Closes the currently open
+/// session, if any, and reopens one tagged with the new task.
+#[tauri::command]
+pub fn set_current_task(state: State<'_, AppState>, task_id: Option<String>) -> Result<TrackingStateDto, String> {
+    let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    engine.set_current_task(task_id);
+    Ok(tracking_state_dto(&engine))
 }
 
 // ---- screenshots (docs phase 10) -------------------------------------------------------------------

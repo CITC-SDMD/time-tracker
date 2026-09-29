@@ -9,6 +9,8 @@ export interface TrackingStateDto {
   openSessionId: string | null
   openSessionApp: string | null
   openSessionStartedAt: number | null
+  /** The task currently picked, if any (see useTasks). */
+  currentTaskId: string | null
 }
 
 export interface AppTimeDto {
