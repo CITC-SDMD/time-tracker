@@ -63,6 +63,17 @@ export const TASK_STATUS_VARIANT: Record<TaskStatus, BadgeVariant> = {
   archived: 'neutral',
 }
 
+/** whether one assignee has marked their own part of a task done (completion is per person, not per task) */
+export const ASSIGNEE_COMPLETION_LABEL: Record<'done' | 'not_done', string> = {
+  done: 'Completed',
+  not_done: 'Not yet',
+}
+
+export const ASSIGNEE_COMPLETION_VARIANT: Record<'done' | 'not_done', BadgeVariant> = {
+  done: 'success',
+  not_done: 'neutral',
+}
+
 // Every action the API writes to the audit log (apps/api: AuditLog::record).
 export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.created': 'Added an account',
@@ -101,6 +112,8 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'task.updated': 'Edited a task',
   'task.assigned': 'Assigned a task to a person',
   'task.unassigned': 'Unassigned a task from a person',
+  'task.completed': 'Marked a task complete',
+  'task.reopened': 'Reopened a task',
 }
 
 export function auditActionLabel(action: string): string {
@@ -178,6 +191,9 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
       return typeof d.title === 'string' ? d.title : ''
     case 'task.updated':
       return [typeof d.title === 'string' ? d.title : '', d.statusTo ? `(${d.statusFrom} → ${d.statusTo})` : ''].filter(Boolean).join(' ')
+    case 'task.completed':
+    case 'task.reopened':
+      return typeof d.title === 'string' ? d.title : ''
     default:
       return ''
   }

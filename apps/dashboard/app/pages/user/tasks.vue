@@ -44,6 +44,10 @@
       </template>
       <template #cell-assigneeCount="{ row }">
         {{ row.assigneeCount }}
+        <span
+          v-if="row.assigneeCount"
+          class="text-gray-500 dark:text-gray-400"
+        >({{ row.completedCount }} done)</span>
       </template>
       <template #cell-actions="{ row }">
         <div
@@ -96,6 +100,35 @@
           label="Assigned to"
           :people="people"
         />
+        <div
+          v-if="editing && editing.assignees.length"
+          class="space-y-2"
+        >
+          <p class="text-sm/6 font-medium text-gray-900 dark:text-gray-100">
+            Completion
+          </p>
+          <ul class="divide-y divide-gray-200 rounded-md border border-gray-200 dark:divide-white/10 dark:border-white/10">
+            <li
+              v-for="person in editing.assignees"
+              :key="person.id"
+              class="flex items-center justify-between gap-3 px-3 py-2"
+            >
+              <span class="text-sm text-gray-900 dark:text-white">{{ person.name }}</span>
+              <div class="flex items-center gap-2">
+                <UiBadge :variant="ASSIGNEE_COMPLETION_VARIANT[person.completedAt ? 'done' : 'not_done']">
+                  {{ ASSIGNEE_COMPLETION_LABEL[person.completedAt ? 'done' : 'not_done'] }}
+                </UiBadge>
+                <FormButton
+                  variant="link"
+                  :loading="completing === person.id"
+                  @click="toggleCompletion(person.id, !person.completedAt)"
+                >
+                  {{ person.completedAt ? 'Reopen' : 'Mark complete' }}
+                </FormButton>
+              </div>
+            </li>
+          </ul>
+        </div>
         <FormError v-if="formError">
           {{ formError }}
         </FormError>
@@ -123,7 +156,7 @@
 import { useVuelidate } from '@vuelidate/core'
 import { helpers, maxLength, required } from '@vuelidate/validators'
 import type { EmployeeListItem, TaskItem } from 'shared'
-import { TASK_STATUS_LABEL, TASK_STATUS_VARIANT } from '~/utils/labels'
+import { ASSIGNEE_COMPLETION_LABEL, ASSIGNEE_COMPLETION_VARIANT, TASK_STATUS_LABEL, TASK_STATUS_VARIANT } from '~/utils/labels'
 
 definePageMeta({
   layout: 'user',
@@ -240,6 +273,30 @@ async function submit() {
   }
   finally {
     saving.value = false
+  }
+}
+
+// ---- completion (per person, not part of the form save) ---------------------------------------
+
+const completing = ref<string | null>(null)
+
+async function toggleCompletion(userId: string, completed: boolean) {
+  if (!editing.value)
+    return
+  completing.value = userId
+  formError.value = null
+  try {
+    const updated = await api<TaskItem>(`/tasks/${editing.value.id}/assignments/${userId}`, { method: 'PATCH', body: { completed } })
+    editing.value = updated
+    const index = tasks.value.findIndex(t => t.id === updated.id)
+    if (index !== -1)
+      tasks.value[index] = updated
+  }
+  catch (e) {
+    formError.value = messageOf(e, 'Could not update completion.')
+  }
+  finally {
+    completing.value = null
   }
 }
 </script>

@@ -34,6 +34,20 @@ test.describe.serial('tasks as the admin', () => {
     await expect(taskRow(page, TASK)).toContainText('1')
   })
 
+  test('COMPLETE: the manager marks the assignee\'s task done, then reopens it', async ({ page }) => {
+    await page.goto('/user/tasks')
+    await taskRow(page, TASK).getByRole('button', { name: 'Edit' }).click()
+    await expect(dialog(page).getByText('Completion')).toBeVisible()
+    await expect(dialog(page).getByText('Not yet')).toBeVisible()
+
+    await dialog(page).getByRole('button', { name: 'Mark complete' }).click()
+    await expect(dialog(page).getByText('Completed', { exact: true })).toBeVisible()
+
+    await dialog(page).getByRole('button', { name: 'Reopen' }).click()
+    await expect(dialog(page).getByText('Not yet')).toBeVisible()
+    await dialog(page).getByRole('button', { name: 'Cancel' }).click()
+  })
+
   test('EDIT: the assignee is changed and the task is archived', async ({ page }) => {
     await page.goto('/user/tasks')
     await taskRow(page, TASK).getByRole('button', { name: 'Edit' }).click()
