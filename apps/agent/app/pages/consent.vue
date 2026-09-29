@@ -5,7 +5,9 @@
       subtitle="Please read this before tracking starts."
     />
 
-    <WhatWeTrack :page="page" />
+    <div class="min-h-0 flex-1 overflow-y-auto">
+      <WhatWeTrack :page="page" />
+    </div>
 
     <p
       v-if="error"

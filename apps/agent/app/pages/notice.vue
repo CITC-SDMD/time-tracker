@@ -5,7 +5,9 @@
       back="/settings"
     />
 
-    <WhatWeTrack :page="page" />
+    <div class="min-h-0 flex-1 overflow-y-auto">
+      <WhatWeTrack :page="page" />
+    </div>
 
     <UiPager
       class="mt-auto"

@@ -57,8 +57,10 @@
 </template>
 
 <script setup lang="ts">
-// Wording follows docs/DEVELOPMENT_PLAN.md §16. It is two short pages so it fits the window without
-// scrolling; shown on the consent screen and, read-only, from Settings.
+// Wording follows docs/DEVELOPMENT_PLAN.md §16, split into two pages to keep each one short; the page
+// that shows it (consent.vue, and read-only from notice.vue) wraps it in a scrollable area, since the
+// list can still run longer than the window on a short screen or once an organization adds more items
+// (e.g. tasks) to what is tracked.
 defineProps<{ page: 1 | 2 }>()
 
 const { me } = useAuth()
