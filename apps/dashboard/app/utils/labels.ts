@@ -1,4 +1,4 @@
-import type { AuditLogEntry, EmployeeListItem, Environment, IntegrityLevel, UserStatus } from 'shared'
+import type { AuditLogEntry, EmployeeListItem, Environment, IntegrityLevel, TaskItem, UserStatus } from 'shared'
 
 // The words and colours the dashboard uses for the values the API sends as snake_case codes.
 
@@ -51,6 +51,18 @@ export const ACCOUNT_STATUS_VARIANT: Record<UserStatus, BadgeVariant> = {
   inactive: 'neutral',
 }
 
+type TaskStatus = TaskItem['status']
+
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  active: 'Active',
+  archived: 'Archived',
+}
+
+export const TASK_STATUS_VARIANT: Record<TaskStatus, BadgeVariant> = {
+  active: 'success',
+  archived: 'neutral',
+}
+
 // Every action the API writes to the audit log (apps/api: AuditLog::record).
 export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'employee.created': 'Added an account',
@@ -85,6 +97,10 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'password.changed': 'Changed their password',
   'profile.email_changed': 'Changed their email',
   'report.exported': 'Downloaded a report',
+  'task.created': 'Made a task',
+  'task.updated': 'Edited a task',
+  'task.assigned': 'Assigned a task to a person',
+  'task.unassigned': 'Unassigned a task from a person',
 }
 
 export function auditActionLabel(action: string): string {
@@ -156,6 +172,12 @@ export function auditDetails(entry: Pick<AuditLogEntry, 'action' | 'details'>): 
       return typeof d.day === 'string' ? d.day : ''
     case 'settings.updated':
       return Object.entries(d).map(([key, value]) => `${SETTING_LABEL[key] ?? key} → ${value}`).join(', ')
+    case 'task.created':
+    case 'task.assigned':
+    case 'task.unassigned':
+      return typeof d.title === 'string' ? d.title : ''
+    case 'task.updated':
+      return [typeof d.title === 'string' ? d.title : '', d.statusTo ? `(${d.statusFrom} → ${d.statusTo})` : ''].filter(Boolean).join(' ')
     default:
       return ''
   }

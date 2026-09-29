@@ -68,7 +68,7 @@
     />
 
     <section
-      v-if="tab !== 'apps' && loaded && rows.length"
+      v-if="(tab === 'daily' || tab === 'team') && loaded && rows.length"
       class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3"
       aria-label="Totals for the range"
     >
@@ -85,13 +85,23 @@
         :value="formatDuration(sum('idleSeconds'))"
       />
     </section>
+    <section
+      v-else-if="tab === 'tasks' && loaded && rows.length"
+      class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3"
+      aria-label="Totals for the range"
+    >
+      <UiStatCard
+        label="Tracked"
+        :value="formatDuration(sum('trackedSeconds'))"
+      />
+    </section>
 
     <UiTable
       :columns="COLUMNS[tab as Tab]"
       :rows="rows"
       :loading="!loaded"
       :error="loaded ? null : error"
-      :id-key="tab === 'daily' ? 'rowId' : tab === 'apps' ? 'app' : 'userId'"
+      :id-key="tab === 'daily' || tab === 'tasks' ? 'rowId' : tab === 'apps' ? 'app' : 'userId'"
       :row-link="(row) => row.userId ? office.to(`/user/employees/${row.userId}`) : null"
       empty-title="Nothing tracked in this range"
       empty-description="Try a longer range, or check that people's desktop apps have synced."
@@ -130,7 +140,7 @@
 <script setup lang="ts">
 import { useVuelidate } from '@vuelidate/core'
 import { helpers, required } from '@vuelidate/validators'
-import type { EmployeeListItem, ReportAppRow, ReportDailyRow, ReportTeamRow } from 'shared'
+import type { EmployeeListItem, ReportAppRow, ReportDailyRow, ReportTaskRow, ReportTeamRow } from 'shared'
 
 definePageMeta({
   layout: 'user',
@@ -145,7 +155,7 @@ const { can } = useAccess()
 const office = useOffice()
 const { formatDuration, formatTime, formatDay, today, shiftDay } = useFormat()
 
-type Tab = 'daily' | 'apps' | 'team'
+type Tab = 'daily' | 'apps' | 'team' | 'tasks'
 
 const MAX_DAYS = 92
 
@@ -153,6 +163,7 @@ const TABS = [
   { key: 'daily', label: 'Daily per person' },
   { key: 'apps', label: 'App usage' },
   { key: 'team', label: 'Team totals' },
+  { key: 'tasks', label: 'Tasks' },
 ]
 
 const PRESETS = [
@@ -187,6 +198,11 @@ const COLUMNS: Record<Tab, Array<{ key: string, label: string, align?: 'left' | 
     { key: 'idleSeconds', label: 'Idle', align: 'right' },
     { key: 'averageTrackedSeconds', label: 'Average a day', align: 'right' },
   ],
+  tasks: [
+    { key: 'taskTitle', label: 'Task' },
+    { key: 'name', label: 'Name' },
+    { key: 'trackedSeconds', label: 'Tracked', align: 'right' },
+  ],
 }
 
 const DURATION_KEYS = ['trackedSeconds', 'activeSeconds', 'idleSeconds', 'averageTrackedSeconds', 'seconds'] as const
@@ -211,13 +227,22 @@ const personOptions = computed(() => people.value.map(p => ({ value: p.id, label
 const daily = ref<Array<ReportDailyRow & { rowId: string }>>([])
 const apps = ref<ReportAppRow[]>([])
 const team = ref<ReportTeamRow[]>([])
+const tasks = ref<Array<ReportTaskRow & { rowId: string }>>([])
 const loaded = ref(false)
 const error = ref<string | null>(null)
 const downloading = ref(false)
 
-// the table shows one of three row shapes, chosen by the tab; its cells are typed by the slots below
+// the table shows one of four row shapes, chosen by the tab; its cells are typed by the slots below
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const rows = computed<Array<Record<string, any>>>(() => tab.value === 'apps' ? apps.value : tab.value === 'team' ? team.value : daily.value)
+const rows = computed<Array<Record<string, any>>>(() => {
+  if (tab.value === 'apps')
+    return apps.value
+  if (tab.value === 'team')
+    return team.value
+  if (tab.value === 'tasks')
+    return tasks.value
+  return daily.value
+})
 
 function sum(key: 'trackedSeconds' | 'activeSeconds' | 'idleSeconds'): number {
   return rows.value.reduce((total, row) => total + (row[key] ?? 0), 0)
@@ -252,6 +277,11 @@ async function load() {
       const result = await api<ReportAppRow[]>('/reports/apps', { query: query() })
       if (mine === requestId)
         apps.value = result
+    }
+    else if (which === 'tasks') {
+      const result = await api<ReportTaskRow[]>('/reports/tasks', { query: query() })
+      if (mine === requestId)
+        tasks.value = result.map(r => ({ ...r, rowId: `${r.taskId}-${r.userId}` }))
     }
     else {
       const result = await api<ReportTeamRow[]>('/reports/team', { query: query() })

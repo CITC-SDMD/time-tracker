@@ -6,7 +6,7 @@ export function homeFor(me: Pick<Me, 'isSuperadmin'>): string {
   return me.isSuperadmin ? '/platform' : '/user'
 }
 
-export type NavIcon = 'overview' | 'people' | 'reports' | 'roles' | 'settings' | 'audit' | 'organizations' | 'superadmins'
+export type NavIcon = 'overview' | 'people' | 'reports' | 'tasks' | 'roles' | 'settings' | 'audit' | 'organizations' | 'superadmins'
 
 export interface NavItem {
   name: string
@@ -22,6 +22,7 @@ export const ORGANIZATION_NAV: readonly NavItem[] = [
   { name: 'Overview', to: '/user', icon: 'overview' },
   { name: 'People', to: '/user/people', icon: 'people', permission: 'people.view' },
   { name: 'Reports', to: '/user/reports', icon: 'reports', permission: 'reports.view' },
+  { name: 'Tasks', to: '/user/tasks', icon: 'tasks', permission: 'tasks.view' },
   { name: 'Roles', to: '/user/roles', icon: 'roles', permission: 'roles.manage' },
   { name: 'Settings', to: '/user/settings', icon: 'settings', permission: 'settings.manage' },
   { name: 'Audit log', to: '/user/audit', icon: 'audit', permission: 'audit.view' },
@@ -55,6 +56,7 @@ const PAGE_TITLE: Record<string, string> = {
   '/user': 'Overview',
   '/user/people': 'People',
   '/user/reports': 'Reports',
+  '/user/tasks': 'Tasks',
   '/user/roles': 'Roles',
   '/user/settings': 'Organization settings',
   '/user/audit': 'Audit log',

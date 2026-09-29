@@ -29,7 +29,7 @@ export function messageOf(error: unknown, fallback: string): string {
 // Sanctum's SPA login needs the XSRF cookie echoed back in a header on every write.
 // The paths of what happens inside an organization: when a superadmin has an office open they go through
 // /platform/organizations/{id}/office instead (useOffice).
-const ORGANIZATION_PATH = /^\/(employees|reports|admin|roles|permissions|screenshots)(\/|$)/
+const ORGANIZATION_PATH = /^\/(employees|reports|admin|roles|permissions|screenshots|tasks)(\/|$)/
 
 export function useApi() {
   const config = useRuntimeConfig()
