@@ -86,14 +86,17 @@ where
     };
 
     for batch in 0..MAX_BATCHES_PER_CYCLE {
-        let (rows, snapshot, db_reset) = {
+        let (rows, snapshot, db_reset, completed_task_ids, reopened_task_ids) = {
             let e = lock(engine);
             let rows = e
                 .db()
                 .fetch_ready_queue(user_id, BATCH_SIZE, now_ms())
                 .unwrap_or_default();
             let db_reset = e.db().get_app_state("db_reset_pending").as_deref() == Some("1");
-            (rows, e.status_snapshot(), db_reset)
+            let pending = pending_task_completions(&e);
+            let completed_task_ids: Vec<String> = pending.iter().filter(|&(_, &c)| c).map(|(id, _)| id.clone()).collect();
+            let reopened_task_ids: Vec<String> = pending.iter().filter(|&(_, &c)| !c).map(|(id, _)| id.clone()).collect();
+            (rows, e.status_snapshot(), db_reset, completed_task_ids, reopened_task_ids)
         };
         if batch > 0 && rows.is_empty() {
             break;
@@ -141,12 +144,15 @@ where
                 macro_tools: if detection_on { crate::platform::macro_tools::current(&known_tools) } else { Vec::new() },
             },
             sessions,
+            completed_task_ids: completed_task_ids.clone(),
+            reopened_task_ids: reopened_task_ids.clone(),
         };
 
         match post_sync(api, token, &request).await {
             Ok(response) => {
                 report.sent += sendable.len();
-                let commands = apply_response(engine, &sendable, response, db_reset);
+                let sent_completions: Vec<String> = completed_task_ids.iter().chain(reopened_task_ids.iter()).cloned().collect();
+                let commands = apply_response(engine, &sendable, response, db_reset, &sent_completions);
                 report.stop_tracking |= commands.stop_tracking;
                 report.sign_out |= commands.sign_out;
                 if commands.stop_reason.is_some() {
@@ -187,6 +193,7 @@ fn apply_response<C>(
     sent: &[&QueueRow],
     response: SyncResponse,
     db_reset_was_sent: bool,
+    completions_sent: &[String],
 ) -> SyncCommands
 where
     C: Clock + Send + Sync + 'static,
@@ -222,6 +229,9 @@ where
     if db_reset_was_sent {
         let _ = e.db().set_app_state("db_reset_pending", "0");
     }
+    if !completions_sent.is_empty() {
+        clear_pending_task_completions(&e, completions_sent);
+    }
     let _ = e.db().set_app_state("last_sync_at", &now_ms().to_string());
     let _ = e.db().set_app_state("last_sync_error", "");
     store_settings(&mut e, &response.settings);
@@ -241,6 +251,27 @@ where
 /// title is). Refreshed every cycle, so a task unassigned or archived since the last sync disappears from it.
 fn store_tasks<C: Clock>(engine: &Engine<C>, tasks: &[crate::sync::client::TaskDto]) {
     let _ = engine.db().set_app_state("tasks_json", &serde_json::json!(tasks).to_string());
+}
+
+/// Task id -> desired completed state, for changes marked locally (`commands::mark_task_completed`) that have
+/// not yet been confirmed sent, from `app_state["pending_task_completions"]`. The latest mark for a task wins
+/// (marking, unmarking, then marking again before a sync happens sends just the final state).
+fn pending_task_completions<C: Clock>(engine: &Engine<C>) -> HashMap<String, bool> {
+    engine
+        .db()
+        .get_app_state("pending_task_completions")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Drops the ids that were just sent from the pending map -- any added *during* this request (a fresh mark
+/// racing the sync) are left queued for the next cycle rather than lost.
+fn clear_pending_task_completions<C: Clock>(engine: &Engine<C>, sent: &[String]) {
+    let remaining: HashMap<String, bool> = pending_task_completions(engine)
+        .into_iter()
+        .filter(|(id, _)| !sent.contains(id))
+        .collect();
+    let _ = engine.db().set_app_state("pending_task_completions", &serde_json::json!(remaining).to_string());
 }
 
 fn store_settings<C: Clock>(engine: &mut Engine<C>, settings: &SyncSettings) {
@@ -801,5 +832,47 @@ mod tests {
         assert_eq!(e.db().get_app_state("db_reset_pending").as_deref(), Some("0"));
         assert!(e.db().get_app_state("office_settings_json").unwrap().contains("app_only"));
         assert!(e.db().get_app_state("last_sync_at").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_pending_task_completion_is_sent_and_cleared_after_a_successful_sync() {
+        let engine = engine();
+        lock(&engine).db().set_app_state("pending_task_completions", r#"{"5":true,"9":false}"#).unwrap();
+        let server = MockServer::start(vec![(200, ok_body(&[], &[], &[], NO_COMMANDS))]).await;
+        let api = ApiClient::new(&server.root, "dev");
+
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+
+        let body = body_of(&server.request(0));
+        assert_eq!(body["completedTaskIds"], serde_json::json!(["5"]));
+        assert_eq!(body["reopenedTaskIds"], serde_json::json!(["9"]));
+        let e = lock(&engine);
+        assert_eq!(e.db().get_app_state("pending_task_completions").as_deref(), Some("{}"));
+    }
+
+    #[tokio::test]
+    async fn nothing_pending_leaves_the_completion_fields_off_the_request() {
+        let engine = engine();
+        let server = MockServer::start(vec![(200, ok_body(&[], &[], &[], NO_COMMANDS))]).await;
+        let api = ApiClient::new(&server.root, "dev");
+
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+
+        let body = body_of(&server.request(0));
+        assert!(body.get("completedTaskIds").is_none());
+        assert!(body.get("reopenedTaskIds").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_failed_sync_leaves_the_pending_completion_queued() {
+        let engine = engine();
+        lock(&engine).db().set_app_state("pending_task_completions", r#"{"5":true}"#).unwrap();
+        let server = MockServer::start(vec![(503, "oops".to_owned())]).await;
+        let api = ApiClient::new(&server.root, "dev");
+
+        sync_cycle(&engine, &api, "tok", USER, Duration::ZERO).await;
+
+        let e = lock(&engine);
+        assert_eq!(e.db().get_app_state("pending_task_completions").as_deref(), Some(r#"{"5":true}"#));
     }
 }

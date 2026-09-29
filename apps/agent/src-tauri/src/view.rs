@@ -32,10 +32,11 @@ pub struct AppTimeDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskTimeDto {
-    /// `None` is the "No task" row: general, untagged time.
+    /// `None` is the "No task" row: general, untagged time. Always `false` for that row -- it isn't completable.
     pub id: Option<String>,
     pub title: String,
     pub tracked_seconds: i64,
+    pub completed: bool,
 }
 
 fn label_for(row: &SessionRow) -> (&'static str, String) {
@@ -101,12 +102,12 @@ pub fn build_app_list(rows: &[SessionRow], open: Option<(&str, i64)>) -> Vec<App
 
 /// Time per task today, most time first, "No task" always last. Unlike `build_app_list` this counts
 /// every session type: a task's total is how long it was the one picked, idle time included, not just
-/// active use. `known` is the caller's cached, currently-assigned tasks (id, title) -- every one of them
-/// gets a row even at zero, so a freshly assigned task is visible before it has ever been worked. `open`
-/// is the still-open session's elapsed ms, credited to whichever task id is currently picked (`None` for
-/// no task); rows for a task id no longer in `known` (unassigned or archived since) are dropped, not
+/// active use. `known` is the caller's cached, currently-assigned tasks (id, title, completed) -- every one
+/// of them gets a row even at zero, so a freshly assigned task is visible before it has ever been worked.
+/// `open` is the still-open session's elapsed ms, credited to whichever task id is currently picked (`None`
+/// for no task); rows for a task id no longer in `known` (unassigned or archived since) are dropped, not
 /// shown as an orphan -- the dashboard's task report is where that history lives.
-pub fn build_task_list(rows: &[SessionRow], open: Option<(Option<&str>, i64)>, known: &[(String, String)]) -> Vec<TaskTimeDto> {
+pub fn build_task_list(rows: &[SessionRow], open: Option<(Option<&str>, i64)>, known: &[(String, String, bool)]) -> Vec<TaskTimeDto> {
     let mut ms_by_task: HashMap<Option<String>, i64> = HashMap::new();
     for row in rows {
         *ms_by_task.entry(row.task_id.clone()).or_default() += row.duration_seconds.unwrap_or(0) * 1000;
@@ -117,10 +118,11 @@ pub fn build_task_list(rows: &[SessionRow], open: Option<(Option<&str>, i64)>, k
 
     let mut list: Vec<TaskTimeDto> = known
         .iter()
-        .map(|(id, title)| TaskTimeDto {
+        .map(|(id, title, completed)| TaskTimeDto {
             id: Some(id.clone()),
             title: title.clone(),
             tracked_seconds: ms_by_task.get(&Some(id.clone())).copied().unwrap_or(0) / 1000,
+            completed: *completed,
         })
         .collect();
     list.sort_by(|a, b| b.tracked_seconds.cmp(&a.tracked_seconds).then_with(|| a.title.cmp(&b.title)));
@@ -128,6 +130,7 @@ pub fn build_task_list(rows: &[SessionRow], open: Option<(Option<&str>, i64)>, k
         id: None,
         title: "No task".into(),
         tracked_seconds: ms_by_task.get(&None).copied().unwrap_or(0) / 1000,
+        completed: false,
     });
     list
 }
@@ -224,7 +227,7 @@ mod tests {
 
     #[test]
     fn task_list_sums_active_and_idle_time_and_adds_the_open_session() {
-        let known = [("1".to_owned(), "Budget report".to_owned())];
+        let known = [("1".to_owned(), "Budget report".to_owned(), false)];
         let rows = [
             tagged(SessionType::Application, Some("1"), 0, Some(60_000)),
             tagged(SessionType::Idle, Some("1"), 60_000, Some(90_000)),
@@ -234,19 +237,19 @@ mod tests {
         let list = build_task_list(&rows, Some((Some("1"), 30_000)), &known);
 
         assert_eq!(list.len(), 2, "the assigned task plus \"No task\"");
-        assert_eq!(list[0], TaskTimeDto { id: Some("1".into()), title: "Budget report".into(), tracked_seconds: 120 });
-        assert_eq!(list[1], TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 30 });
+        assert_eq!(list[0], TaskTimeDto { id: Some("1".into()), title: "Budget report".into(), tracked_seconds: 120, completed: false });
+        assert_eq!(list[1], TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 30, completed: false });
     }
 
     #[test]
     fn an_assigned_task_with_no_time_yet_still_appears_at_zero() {
-        let known = [("1".to_owned(), "Fresh task".to_owned())];
+        let known = [("1".to_owned(), "Fresh task".to_owned(), false)];
 
         let list = build_task_list(&[], None, &known);
 
         assert_eq!(list, vec![
-            TaskTimeDto { id: Some("1".into()), title: "Fresh task".into(), tracked_seconds: 0 },
-            TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 0 },
+            TaskTimeDto { id: Some("1".into()), title: "Fresh task".into(), tracked_seconds: 0, completed: false },
+            TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 0, completed: false },
         ]);
     }
 
@@ -256,17 +259,28 @@ mod tests {
 
         let list = build_task_list(&rows, None, &[]);
 
-        assert_eq!(list, vec![TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 0 }]);
+        assert_eq!(list, vec![TaskTimeDto { id: None, title: "No task".into(), tracked_seconds: 0, completed: false }]);
     }
 
     #[test]
     fn the_open_sessions_time_credits_no_task_when_that_is_what_is_current() {
-        let known = [("1".to_owned(), "Budget report".to_owned())];
+        let known = [("1".to_owned(), "Budget report".to_owned(), false)];
 
         let list = build_task_list(&[], Some((None, 5_000)), &known);
 
         let no_task = list.iter().find(|t| t.id.is_none()).unwrap();
         assert_eq!(no_task.tracked_seconds, 5);
         assert_eq!(list.iter().find(|t| t.id.as_deref() == Some("1")).unwrap().tracked_seconds, 0);
+    }
+
+    #[test]
+    fn a_completed_task_carries_its_flag_through_and_no_task_is_never_completed() {
+        let known = [("1".to_owned(), "Budget report".to_owned(), true), ("2".to_owned(), "Other".to_owned(), false)];
+
+        let list = build_task_list(&[], None, &known);
+
+        assert!(list.iter().find(|t| t.id.as_deref() == Some("1")).unwrap().completed);
+        assert!(!list.iter().find(|t| t.id.as_deref() == Some("2")).unwrap().completed);
+        assert!(!list.iter().find(|t| t.id.is_none()).unwrap().completed);
     }
 }

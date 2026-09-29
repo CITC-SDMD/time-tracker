@@ -530,16 +530,48 @@ pub fn get_today_tasks(state: State<'_, AppState>) -> Result<Vec<TaskTimeDto>, S
     let (open_active_ms, open_idle_ms) = engine.open_live_ms();
     let open = engine.open_session_info().map(|_| (engine.current_task_id(), open_active_ms + open_idle_ms));
 
-    let known: Vec<(String, String)> = {
+    let known: Vec<(String, String, bool)> = {
         let json = engine.db().get_app_state("tasks_json").unwrap_or_else(|| "[]".into());
         serde_json::from_str::<Vec<crate::sync::client::TaskDto>>(&json)
             .unwrap_or_default()
             .into_iter()
-            .map(|t| (t.id, t.title))
+            .map(|t| (t.id, t.title, t.completed))
             .collect()
     };
 
     Ok(build_task_list(&rows, open, &known))
+}
+
+/// The employee marked a task complete, or reopened it (`completed: false`). Updates the cached list right
+/// away for instant feedback and queues the change to report on the next sync -- a desktop token cannot call
+/// a dedicated endpoint for this (see `LimitAgentToken` on the server), so it goes through `/agent/sync` the
+/// same way a session's task id already does. A sync is triggered immediately so it is not left waiting.
+#[tauri::command]
+pub fn mark_task_completed(state: State<'_, AppState>, task_id: String, completed: bool) -> Result<Vec<crate::sync::client::TaskDto>, String> {
+    let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    let db = engine.db();
+
+    let mut tasks: Vec<crate::sync::client::TaskDto> = db
+        .get_app_state("tasks_json")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    for task in &mut tasks {
+        if task.id == task_id {
+            task.completed = completed;
+        }
+    }
+    let _ = db.set_app_state("tasks_json", &serde_json::json!(tasks).to_string());
+
+    let mut pending: std::collections::HashMap<String, bool> = db
+        .get_app_state("pending_task_completions")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    pending.insert(task_id, completed);
+    let _ = db.set_app_state("pending_task_completions", &serde_json::json!(pending).to_string());
+
+    drop(engine);
+    state.sync.trigger();
+    Ok(tasks)
 }
 
 // ---- screenshots (docs phase 10) -------------------------------------------------------------------

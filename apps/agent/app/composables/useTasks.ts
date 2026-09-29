@@ -5,14 +5,17 @@ import { invoke } from '@tauri-apps/api/core'
 export interface TaskDto {
   id: string
   title: string
+  /** whether the employee has marked their own part of this task done (completion is per person) */
+  completed: boolean
 }
 
-// Mirrors `TaskTimeDto` in src-tauri/src/view.rs. `id: null` is the "No task" row (general time); a
-// task's tracked time counts idle time too, unlike the app-usage breakdown.
+// Mirrors `TaskTimeDto` in src-tauri/src/view.rs. `id: null` is the "No task" row (general time, never
+// completable); a task's tracked time counts idle time too, unlike the app-usage breakdown.
 export interface TaskTimeDto {
   id: string | null
   title: string
   trackedSeconds: number
+  completed: boolean
 }
 
 /**
@@ -51,7 +54,16 @@ export function useTasks() {
     return invoke('set_current_task', { taskId })
   }
 
+  /** Marks a task complete, or reopens it. Updates instantly (local + optimistic) and is reported on the next sync. */
+  async function complete(taskId: string, completed: boolean) {
+    const updated = await invoke<TaskDto[]>('mark_task_completed', { taskId, completed })
+    tasks.value = updated
+    const row = times.value.find(t => t.id === taskId)
+    if (row)
+      row.completed = completed
+  }
+
   onMounted(refresh)
 
-  return { tasks, times, error, refresh, refreshTimes, select }
+  return { tasks, times, error, refresh, refreshTimes, select, complete }
 }

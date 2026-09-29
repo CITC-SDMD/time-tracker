@@ -16,6 +16,11 @@ pub struct SyncRequest {
     pub db_reset: bool,
     pub status: SyncStatusDto,
     pub sessions: Vec<Value>,
+    /// Tasks the employee marked complete or reopened since the last sync (per person, not per task).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub completed_task_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reopened_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +83,10 @@ pub struct SyncSettings {
 pub struct TaskDto {
     pub id: String,
     pub title: String,
+    /// Whether the caller has marked their own part of this task done. Older servers do not send it: treated
+    /// as not completed, which just means the "Mark complete" affordance shows instead of "Completed".
+    #[serde(default)]
+    pub completed: bool,
 }
 
 #[derive(Debug, Deserialize)]

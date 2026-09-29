@@ -19,11 +19,14 @@
         v-for="row in liveRows"
         :key="row.id ?? 'none'"
       >
-        <UiCard class="flex items-center justify-between gap-3">
+        <UiCard
+          class="flex items-center justify-between gap-3"
+          :class="row.completed ? 'opacity-60' : ''"
+        >
           <div class="min-w-0">
             <p
               class="truncate text-sm font-medium"
-              :class="isPicked(row) ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white'"
+              :class="[row.completed ? 'line-through' : '', isPicked(row) ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white']"
             >
               {{ row.title }}
             </p>
@@ -31,14 +34,42 @@
               {{ formatClock(row.seconds) }}
             </p>
           </div>
-          <UiButton
-            :variant="isLive(row) ? 'danger' : 'primary'"
-            class="shrink-0 px-4! py-1.5!"
-            :disabled="busy"
-            @click="isLive(row) ? doStop() : doPlay(row.id)"
-          >
-            {{ isLive(row) ? 'Stop' : 'Play' }}
-          </UiButton>
+
+          <div class="flex shrink-0 items-center gap-2">
+            <template v-if="row.completed">
+              <span class="text-xs font-medium text-green-600 dark:text-green-400">Completed ✓</span>
+              <UiButton
+                variant="link"
+                class="text-xs"
+                :disabled="busy"
+                @click="toggleComplete(row.id!, false)"
+              >
+                Undo
+              </UiButton>
+            </template>
+            <template v-else>
+              <label
+                v-if="row.id"
+                class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
+              >
+                <input
+                  type="checkbox"
+                  class="size-4 rounded border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-white/20"
+                  :disabled="busy"
+                  @change="toggleComplete(row.id!, true)"
+                >
+                Done
+              </label>
+              <UiButton
+                :variant="isLive(row) ? 'danger' : 'primary'"
+                class="px-4! py-1.5!"
+                :disabled="busy"
+                @click="isLive(row) ? doStop() : doPlay(row.id)"
+              >
+                {{ isLive(row) ? 'Stop' : 'Play' }}
+              </UiButton>
+            </template>
+          </div>
         </UiCard>
       </li>
     </ul>
@@ -47,7 +78,7 @@
 
 <script setup lang="ts">
 const { state, start, resume, stop, refresh: refreshTracking } = useTracking()
-const { times, refreshTimes, select, error } = useTasks()
+const { times, refreshTimes, select, complete, error } = useTasks()
 
 const busy = ref(false)
 const fetchedAt = ref(Date.now())
@@ -98,6 +129,16 @@ async function doStop() {
   try {
     await stop()
     await refreshAll()
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+async function toggleComplete(taskId: string, completed: boolean) {
+  busy.value = true
+  try {
+    await complete(taskId, completed)
   }
   finally {
     busy.value = false
