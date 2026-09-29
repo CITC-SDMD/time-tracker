@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tracing_appender::non_blocking::WorkerGuard;
 
-use crate::view::{build_app_list, build_timeline, AppTimeDto, SegmentDto};
+use crate::view::{build_app_list, build_task_list, build_timeline, AppTimeDto, SegmentDto, TaskTimeDto};
 use crate::api::{ApiClient, ApiError, MeDto};
 use crate::sync::worker::{flush, SyncHandle};
 use crate::tracker::clock::SystemClock;
@@ -507,6 +507,39 @@ pub fn set_current_task(state: State<'_, AppState>, task_id: Option<String>) -> 
     let mut engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
     engine.set_current_task(task_id);
     Ok(tracking_state_dto(&engine))
+}
+
+/// Today's tracked time per assigned task, plus "No task", for the Tasks screen's list. A task's total
+/// counts idle time too (it is "how long it was picked", not "how long there was active use"), unlike
+/// the app-usage breakdown.
+#[tauri::command]
+pub fn get_today_tasks(state: State<'_, AppState>) -> Result<Vec<TaskTimeDto>, String> {
+    let engine = state.engine.lock().map_err(|_| "engine lock poisoned")?;
+    let (day_start_ms, end_ms) = today_range_ms();
+    let reset_at_ms = engine
+        .db()
+        .get_app_state("counters_reset_at")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let start_ms = day_start_ms.max(reset_at_ms);
+    let rows = engine
+        .db()
+        .sessions_for_range(engine.user_id(), start_ms, end_ms + 1)
+        .map_err(|e| e.to_string())?;
+
+    let (open_active_ms, open_idle_ms) = engine.open_live_ms();
+    let open = engine.open_session_info().map(|_| (engine.current_task_id(), open_active_ms + open_idle_ms));
+
+    let known: Vec<(String, String)> = {
+        let json = engine.db().get_app_state("tasks_json").unwrap_or_else(|| "[]".into());
+        serde_json::from_str::<Vec<crate::sync::client::TaskDto>>(&json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| (t.id, t.title))
+            .collect()
+    };
+
+    Ok(build_task_list(&rows, open, &known))
 }
 
 // ---- screenshots (docs phase 10) -------------------------------------------------------------------

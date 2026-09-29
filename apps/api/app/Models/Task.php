@@ -25,6 +25,6 @@ class Task extends Model
     public function assignees(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'task_assignments')
-            ->withPivot('assigned_by', 'assigned_at');
+            ->withPivot('assigned_by', 'assigned_at', 'completed_at');
     }
 }

@@ -7,14 +7,38 @@ export interface TaskDto {
   title: string
 }
 
-/** The signed-in person's own tasks, and picking which one (if any) the current session is tagged with. */
+// Mirrors `TaskTimeDto` in src-tauri/src/view.rs. `id: null` is the "No task" row (general time); a
+// task's tracked time counts idle time too, unlike the app-usage breakdown.
+export interface TaskTimeDto {
+  id: string | null
+  title: string
+  trackedSeconds: number
+}
+
+/**
+ * The signed-in person's own tasks (`tasks`, for a compact "current task" readout wherever that's all
+ * that's needed) and today's tracked time per task (`times`, for the Tasks screen's list). `times` is not
+ * polled by this composable itself -- it's read from two pages with different needs, so the page that
+ * wants it live (pages/tasks.vue) owns the polling loop and just calls `refreshTimes()`.
+ */
 export function useTasks() {
   const tasks = ref<TaskDto[]>([])
+  const times = ref<TaskTimeDto[]>([])
   const error = ref<string | null>(null)
 
   async function refresh() {
     try {
       tasks.value = await invoke<TaskDto[]>('get_my_tasks')
+      error.value = null
+    }
+    catch (e) {
+      error.value = String(e)
+    }
+  }
+
+  async function refreshTimes() {
+    try {
+      times.value = await invoke<TaskTimeDto[]>('get_today_tasks')
       error.value = null
     }
     catch (e) {
@@ -29,5 +53,5 @@ export function useTasks() {
 
   onMounted(refresh)
 
-  return { tasks, error, refresh, select }
+  return { tasks, times, error, refresh, refreshTimes, select }
 }

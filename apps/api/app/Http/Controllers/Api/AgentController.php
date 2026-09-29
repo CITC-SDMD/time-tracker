@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AgentSyncRequest;
+use App\Models\AuditLog;
 use App\Models\Device;
 use App\Models\EmployeeStatus;
 use App\Models\OrganizationSetting;
 use App\Models\Session;
+use App\Models\Task;
 use App\Models\User;
 use App\Services\IntegrityService;
 use App\Services\SummaryService;
@@ -200,6 +202,16 @@ class AgentController extends Controller
 
             return compact('accepted', 'duplicates', 'rejected', 'commands');
         });
+
+        // tasks the employee marked complete or reopened since the last sync (per person, not per task)
+        foreach ([['completedTaskIds', true, 'task.completed'], ['reopenedTaskIds', false, 'task.reopened']] as [$field, $completed, $action]) {
+            foreach ($data[$field] ?? [] as $taskId) {
+                $taskId = (int) $taskId;
+                if ($this->tasks->markCompleted($user, $taskId, $completed)) {
+                    AuditLog::record($user, $action, null, ['taskId' => $taskId, 'title' => Task::find($taskId)?->title]);
+                }
+            }
+        }
 
         return response()->json([
             'accepted' => array_values($result['accepted']),

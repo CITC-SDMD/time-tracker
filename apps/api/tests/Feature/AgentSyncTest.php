@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\DailySummary;
 use App\Models\Device;
 use App\Models\EmployeeStatus;
@@ -127,7 +128,7 @@ class AgentSyncTest extends TestCase
 
         $response->assertOk()->assertJsonPath('rejected', []);
         $this->assertSame($task->id, Session::find($tagged['id'])->task_id);
-        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report']], $response->json('tasks'));
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false]], $response->json('tasks'));
         $this->assertNotNull($other); // made, but never assigned: absent from the caller's own list above
     }
 
@@ -142,6 +143,46 @@ class AgentSyncTest extends TestCase
         $response->assertOk()->assertJsonPath('rejected', []);
         $this->assertContains($tagged['id'], $response->json('accepted'));
         $this->assertNull(Session::find($tagged['id'])->task_id);
+    }
+
+    public function test_the_employee_marks_their_own_task_complete_through_the_sync_and_it_is_audited(): void
+    {
+        $user = User::factory()->create();
+        $task = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Budget report', 'status' => 'active']));
+        $task->assignees()->attach($user->id, ['organization_id' => $user->organization_id, 'assigned_at' => now()]);
+
+        $response = $this->sync($user, $this->body([], [], ['completedTaskIds' => [$task->id]]));
+
+        $response->assertOk();
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => true]], $response->json('tasks'));
+        $this->assertNotNull($task->assignees()->first()->pivot->completed_at);
+        $this->assertTrue(AuditLog::where('action', 'task.completed')->where('actor_user_id', $user->id)->whereNull('target_user_id')->exists());
+    }
+
+    public function test_the_employee_reopens_their_own_task_through_the_sync_and_it_is_audited(): void
+    {
+        $user = User::factory()->create();
+        $task = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Budget report', 'status' => 'active']));
+        $task->assignees()->attach($user->id, ['organization_id' => $user->organization_id, 'assigned_at' => now(), 'completed_at' => now()]);
+
+        $response = $this->sync($user, $this->body([], [], ['reopenedTaskIds' => [$task->id]]));
+
+        $response->assertOk();
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false]], $response->json('tasks'));
+        $this->assertNull($task->assignees()->first()->pivot->completed_at);
+        $this->assertTrue(AuditLog::where('action', 'task.reopened')->where('actor_user_id', $user->id)->whereNull('target_user_id')->exists());
+    }
+
+    public function test_a_completed_task_id_not_assigned_to_the_caller_is_silently_ignored(): void
+    {
+        $user = User::factory()->create();
+        $someoneElsesTask = Task::unguarded(fn () => Task::create(['organization_id' => $user->organization_id, 'title' => 'Not mine', 'status' => 'active']));
+
+        $response = $this->sync($user, $this->body([], [], ['completedTaskIds' => [$someoneElsesTask->id]]));
+
+        $response->assertOk();
+        $this->assertNull($someoneElsesTask->assignees()->first());
+        $this->assertFalse(AuditLog::where('action', 'task.completed')->exists());
     }
 
     public function test_the_same_batch_twice_reports_duplicates_and_leaves_totals_alone(): void

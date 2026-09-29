@@ -15,15 +15,20 @@ class TaskService
 {
     public function __construct(private AccessService $access) {}
 
-    /** @return list<array{id: string, title: string}> */
+    /** @return list<array{id: string, title: string, completed: bool}> */
     public function assignedActiveTasksFor(User $user): array
     {
         return Task::query()
             ->where('status', 'active')
             ->whereHas('assignees', fn ($q) => $q->whereKey($user->id))
+            ->with(['assignees' => fn ($q) => $q->whereKey($user->id)])
             ->orderBy('title')
-            ->get(['id', 'title'])
-            ->map(fn (Task $task) => ['id' => (string) $task->id, 'title' => $task->title])
+            ->get()
+            ->map(fn (Task $task) => [
+                'id' => (string) $task->id,
+                'title' => $task->title,
+                'completed' => $task->assignees->first()?->pivot->completed_at !== null,
+            ])
             ->all();
     }
 
@@ -48,5 +53,33 @@ class TaskService
     public function canAssignTo(User $caller, array $userIds): bool
     {
         return array_diff($userIds, $this->access->visibleUserIds($caller)) === [];
+    }
+
+    /**
+     * Completion is per person: $user marks (or reopens) their own assignment of an active task. Reach and
+     * permission (when it is a manager doing this for someone else) are the caller's job, not this method's —
+     * this only checks the task is still usable for $user, the same rule `resolveTaskId` applies. Returns
+     * whether anything actually changed, so the caller only audits real transitions.
+     */
+    public function markCompleted(User $user, int $taskId, bool $completed): bool
+    {
+        $task = Task::query()
+            ->where('status', 'active')
+            ->whereKey($taskId)
+            ->whereHas('assignees', fn ($q) => $q->whereKey($user->id))
+            ->first();
+        if ($task === null) {
+            return false;
+        }
+
+        $assignment = $task->assignees()->where('users.id', $user->id)->first();
+        $wasCompleted = $assignment?->pivot->completed_at !== null;
+        if ($wasCompleted === $completed) {
+            return false;
+        }
+
+        $task->assignees()->updateExistingPivot($user->id, ['completed_at' => $completed ? now() : null]);
+
+        return true;
     }
 }

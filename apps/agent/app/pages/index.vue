@@ -14,6 +14,13 @@
       </div>
       <nav class="flex shrink-0 gap-1.5">
         <UiButton
+          v-if="tasks.length"
+          to="/tasks"
+          class="px-3! py-1.5!"
+        >
+          Tasks
+        </UiButton>
+        <UiButton
           v-if="shots?.enabled || shots?.lastTakenAt"
           to="/screenshots"
           class="px-3! py-1.5!"
@@ -98,13 +105,13 @@
           No keyboard or mouse use.
         </p>
 
-        <UiSelect
-          v-if="taskOptions.length"
-          :model-value="state?.currentTaskId ?? ''"
-          placeholder="No task"
-          :options="taskOptions"
-          @update:model-value="(v) => selectTask(v || null)"
-        />
+        <NuxtLink
+          v-if="tasks.length"
+          to="/tasks"
+          class="block truncate text-xs text-gray-500 hover:underline dark:text-gray-400"
+        >
+          Task: <span class="font-medium text-gray-700 dark:text-gray-300">{{ currentTaskTitle }}</span>
+        </NuxtLink>
 
         <div class="flex gap-2">
           <UiButton
@@ -253,18 +260,14 @@
 </template>
 
 <script setup lang="ts">
-const { state, summary, timeline, status, clock, activeShare, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters, refresh: refreshTracking } = useTracking()
+const { state, summary, timeline, status, clock, activeShare, workClock, resumedNotice, error, start, pause, resume, stop, resetCounters } = useTracking()
 const { me, refresh } = useAuth()
 const { status: sync, notice, progress, dismissNotice } = useSync()
 const { status: shots } = useScreenshots()
-const { tasks, select } = useTasks()
+const { tasks } = useTasks()
 
-const taskOptions = computed(() => tasks.value.map(t => ({ value: t.id, label: t.title })))
-
-async function selectTask(taskId: string | null) {
-  await select(taskId)
-  await refreshTracking()
-}
+// picking a task happens on the dedicated Tasks screen; here it's just a readout with a link there
+const currentTaskTitle = computed(() => tasks.value.find(t => t.id === state.value?.currentTaskId)?.title ?? 'No task')
 
 // The counter Reset is a testing aid: only dev builds show it.
 const isDev = import.meta.dev

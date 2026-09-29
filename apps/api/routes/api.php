@@ -69,6 +69,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/tasks', [TaskController::class, 'index'])->middleware('permission:tasks.view');
         Route::post('/tasks', [TaskController::class, 'store'])->middleware('permission:tasks.manage');
         Route::patch('/tasks/{id}', [TaskController::class, 'update'])->whereNumber('id')->middleware('permission:tasks.manage');
+        // Completion is per person, so it is a manager action on one assignee, not part of the task form save.
+        Route::patch('/tasks/{id}/assignments/{userId}', [TaskController::class, 'completeAssignment'])
+            ->whereNumber(['id', 'userId'])->middleware('permission:tasks.manage');
 
         Route::post('/admin/employees', [AdminEmployeeController::class, 'store'])->middleware('permission:people.create');
         Route::post('/admin/employees/import', [AdminEmployeeController::class, 'import'])

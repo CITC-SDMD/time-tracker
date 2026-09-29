@@ -43,6 +43,13 @@ class AgentSyncRequest extends FormRequest
             'status.trackingStartedAt' => ['nullable', 'date'],
             'sessions' => ['present', 'array', 'max:'.self::MAX_SESSIONS],
             'sessions.*' => ['array'],
+            // tasks the employee marked complete or reopened since the last sync (top-level, not nested under
+            // sessions.* -- a nested sessions.*.x rule collapses validated()'s "sessions" down to just that
+            // sub-field)
+            'completedTaskIds' => ['sometimes', 'array', 'max:20'],
+            'completedTaskIds.*' => ['integer'],
+            'reopenedTaskIds' => ['sometimes', 'array', 'max:20'],
+            'reopenedTaskIds.*' => ['integer'],
         ];
     }
 

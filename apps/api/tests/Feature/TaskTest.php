@@ -112,4 +112,48 @@ class TaskTest extends TestCase
         $this->assertSame(1, $byTitle['One']['assigneeCount']);
         $this->assertSame(0, $byTitle['Two']['assigneeCount']);
     }
+
+    // ---- completion (per person, not per task) -----------------------------------------------------------
+
+    public function test_a_manager_marks_an_assignees_task_complete_and_reopens_it(): void
+    {
+        $admin = User::factory()->oic()->create();
+        $dev = User::factory()->individualContributor($admin)->create();
+        $id = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Budget report', 'assigneeIds' => [$dev->id],
+        ])->json('id');
+
+        $done = $this->actingAs($admin, 'sanctum')->patchJson("/api/v1/tasks/{$id}/assignments/{$dev->id}", ['completed' => true]);
+        $done->assertOk()->assertJsonPath('completedCount', 1);
+        $this->assertNotNull($done->json('assignees.0.completedAt'));
+        $this->assertTrue(AuditLog::where('action', 'task.completed')->where('target_user_id', $dev->id)->exists());
+
+        $reopened = $this->actingAs($admin, 'sanctum')->patchJson("/api/v1/tasks/{$id}/assignments/{$dev->id}", ['completed' => false]);
+        $reopened->assertOk()->assertJsonPath('completedCount', 0);
+        $this->assertNull($reopened->json('assignees.0.completedAt'));
+        $this->assertTrue(AuditLog::where('action', 'task.reopened')->where('target_user_id', $dev->id)->exists());
+    }
+
+    public function test_completing_for_someone_not_assigned_to_the_task_is_not_found(): void
+    {
+        $admin = User::factory()->oic()->create();
+        $unassigned = User::factory()->individualContributor($admin)->create();
+        $id = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', ['title' => 'Handover'])->json('id');
+
+        $this->actingAs($admin, 'sanctum')->patchJson("/api/v1/tasks/{$id}/assignments/{$unassigned->id}", ['completed' => true])
+            ->assertStatus(404);
+    }
+
+    public function test_completing_another_organizations_task_is_not_found(): void
+    {
+        $admin = User::factory()->oic()->create();
+        $dev = User::factory()->individualContributor($admin)->create();
+        $id = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Office A task', 'assigneeIds' => [$dev->id],
+        ])->json('id');
+
+        $otherAdmin = User::factory()->adminOf(OrganizationFactory::made('Office B'))->create();
+        $this->actingAs($otherAdmin, 'sanctum')->patchJson("/api/v1/tasks/{$id}/assignments/{$dev->id}", ['completed' => true])
+            ->assertStatus(404);
+    }
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Task;
 use App\Models\User;
+use App\Services\AccessService;
 use App\Services\TaskService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,12 +19,12 @@ use Illuminate\Validation\Rule;
 // outside the caller's reach (App\Services\TaskService::canAssignTo).
 class TaskController extends Controller
 {
-    public function __construct(private TaskService $tasks) {}
+    public function __construct(private TaskService $tasks, private AccessService $access) {}
 
     /** GET /api/v1/tasks */
     public function index(): JsonResponse
     {
-        $tasks = Task::withCount('assignees')->with('assignees:id')
+        $tasks = Task::withCount('assignees')->with('assignees:id,name')
             ->orderByRaw("status = 'archived'")->orderBy('title')->get();
 
         return response()->json($tasks->map(fn (Task $task) => $this->payload($task))->values());
@@ -49,7 +50,7 @@ class TaskController extends Controller
 
         AuditLog::record($caller, 'task.created', null, ['taskId' => $task->id, 'title' => $task->title]);
 
-        return response()->json($this->payload($task->fresh()->loadCount('assignees')->load('assignees:id')), 201);
+        return response()->json($this->payload($task->fresh()->loadCount('assignees')->load('assignees:id,name')), 201);
     }
 
     public function update(Request $request, int $id): JsonResponse
@@ -94,7 +95,36 @@ class TaskController extends Controller
             $this->syncAssignees($task, $assigneeIds, $caller, previous: $previous);
         }
 
-        return response()->json($this->payload($task->fresh()->loadCount('assignees')->load('assignees:id')));
+        return response()->json($this->payload($task->fresh()->loadCount('assignees')->load('assignees:id,name')));
+    }
+
+    /**
+     * PATCH /api/v1/tasks/{id}/assignments/{userId}: a manager marks (or reopens) someone in their reach's
+     * assignment of a task -- the same per-person flag the employee sets from the agent (over sync, since a
+     * desktop token cannot call this route: see LimitAgentToken).
+     */
+    public function completeAssignment(Request $request, int $id, int $userId): JsonResponse
+    {
+        $task = Task::find($id);
+        if ($task === null) {
+            return $this->refuse(404, 'NOT_FOUND', 'Not found.');
+        }
+        $employee = User::find($userId);
+        $caller = $request->user();
+        if ($employee === null || ! $task->assignees()->where('users.id', $userId)->exists()) {
+            return $this->refuse(404, 'NOT_FOUND', 'Not found.');
+        }
+        if (! $this->access->isVisible($caller, $userId)) {
+            return $this->refuse(403, 'FORBIDDEN', 'This person is not in your reach.');
+        }
+
+        $data = $request->validate(['completed' => ['required', 'boolean']]);
+        $changed = $this->tasks->markCompleted($employee, $id, $data['completed']);
+        if ($changed) {
+            AuditLog::record($caller, $data['completed'] ? 'task.completed' : 'task.reopened', $employee, ['taskId' => $task->id, 'title' => $task->title]);
+        }
+
+        return response()->json($this->payload($task->fresh()->loadCount('assignees')->load('assignees:id,name')));
     }
 
     /** @return array<string, mixed> */
@@ -138,15 +168,25 @@ class TaskController extends Controller
     /** @return array<string, mixed> */
     private function payload(Task $task): array
     {
+        // 'assignees' loaded with names and the pivot (id,name only) when eager-loaded; falls back to a plain
+        // query (ids only, no names) for a caller that never loaded the relation.
+        $assignees = $task->relationLoaded('assignees')
+            ? $task->assignees
+            : $task->assignees()->get(['users.id', 'users.name']);
+
         return [
             'id' => (string) $task->id,
             'title' => $task->title,
             'description' => $task->description,
             'status' => $task->status,
-            'assigneeCount' => (int) ($task->assignees_count ?? $task->assignees()->count()),
-            'assigneeIds' => $task->relationLoaded('assignees')
-                ? $task->assignees->pluck('id')->map(fn ($id) => (string) $id)->all()
-                : $task->assignees()->pluck('users.id')->map(fn ($id) => (string) $id)->all(),
+            'assigneeCount' => (int) ($task->assignees_count ?? $assignees->count()),
+            'completedCount' => $assignees->filter(fn (User $u) => $u->pivot->completed_at !== null)->count(),
+            'assigneeIds' => $assignees->pluck('id')->map(fn ($id) => (string) $id)->all(),
+            'assignees' => $assignees->map(fn (User $u) => [
+                'id' => (string) $u->id,
+                'name' => $u->name,
+                'completedAt' => $u->pivot->completed_at ? Carbon::parse($u->pivot->completed_at)->utc()->toIso8601ZuluString() : null,
+            ])->values()->all(),
         ];
     }
 

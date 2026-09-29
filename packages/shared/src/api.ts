@@ -79,6 +79,9 @@ export interface AgentSyncRequest {
     trackingStartedAt: string | null
   }
   sessions: Session[]
+  /** tasks the employee marked complete or reopened since the last sync (completion is per person, not per task) */
+  completedTaskIds?: string[]
+  reopenedTaskIds?: string[]
 }
 
 export type SyncRejectReason =
@@ -110,6 +113,8 @@ export interface AgentSyncResponse {
 export interface AssignedTask {
   id: string
   title: string
+  /** whether the caller has marked their own part of this task done -- completion is per person, not per task */
+  completed: boolean
 }
 
 // GET /api/v1/employees
@@ -284,8 +289,14 @@ export interface TaskItem {
   description: string | null
   status: 'active' | 'archived'
   assigneeCount: number
+  /** how many of the assignees have marked their own part done (completion is per person, not per task) */
+  completedCount: number
   assigneeIds: string[]
+  assignees: Array<{ id: string; name: string; completedAt: string | null }>
 }
+
+// PATCH /api/v1/tasks/{id}/assignments/{userId} (tasks.manage + reach): a manager marks or reopens one
+// assignee's completion of a task. Body: { completed: boolean }. Answers with the same TaskItem shape.
 
 // GET /api/v1/reports/tasks?from=&to=&uid=&format=json|csv — one row per task per person, untagged time excluded
 export interface ReportTaskRow {
