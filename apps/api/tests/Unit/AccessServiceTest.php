@@ -58,6 +58,17 @@ class AccessServiceTest extends TestCase
         $this->assertEqualsCanonicalizing([$this->pmB->id], $this->access()->visibleUserIds($this->pmB));
     }
 
+    public function test_a_manager_with_several_team_leaders_sees_every_employee_under_all_of_them(): void
+    {
+        $tlB = User::factory()->teamLeader($this->pmA)->create();
+        $devB = User::factory()->individualContributor($tlB)->create();
+
+        $this->assertEqualsCanonicalizing(
+            [$this->pmA->id, $this->tlA->id, $this->dev->id, $tlB->id, $devB->id],
+            $this->access()->visibleUserIds($this->pmA),
+        );
+    }
+
     public function test_the_self_scope_sees_only_themselves(): void
     {
         $this->assertSame([$this->dev->id], $this->access()->visibleUserIds($this->dev));
