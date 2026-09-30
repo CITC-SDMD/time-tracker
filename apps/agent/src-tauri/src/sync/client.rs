@@ -80,6 +80,7 @@ pub struct SyncSettings {
 /// A task as the agent sees it: just enough to show and let the employee pick from
 /// (only the caller's own active, assigned tasks -- see App\Services\TaskService on the server).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskDto {
     pub id: String,
     pub title: String,
@@ -87,6 +88,13 @@ pub struct TaskDto {
     /// as not completed, which just means the "Mark complete" affordance shows instead of "Completed".
     #[serde(default)]
     pub completed: bool,
+    /// ISO date (yyyy-mm-dd), or absent when the task has none. Older servers do not send it.
+    #[serde(default)]
+    pub due_date: Option<String>,
+    /// Server-computed: due date has passed and the task is still active. Whole-task, not per assignee --
+    /// does not get suppressed just because the caller finished their own part.
+    #[serde(default)]
+    pub overdue: bool,
 }
 
 #[derive(Debug, Deserialize)]

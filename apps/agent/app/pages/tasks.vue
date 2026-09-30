@@ -29,9 +29,17 @@
               :class="[row.completed ? 'line-through' : '', isPicked(row) ? 'text-primary-600 dark:text-primary-400' : 'text-gray-900 dark:text-white']"
             >
               {{ row.title }}
+              <span
+                v-if="row.overdue"
+                class="ml-1 text-xs font-semibold text-red-600 dark:text-red-400"
+              >Overdue</span>
             </p>
             <p class="font-mono text-xs tabular-nums text-gray-500 dark:text-gray-400">
               {{ formatClock(row.seconds) }}
+              <span
+                v-if="row.dueDate"
+                class="font-sans"
+              >· Due {{ row.dueDate }}</span>
             </p>
           </div>
 

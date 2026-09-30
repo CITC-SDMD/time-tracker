@@ -7,6 +7,9 @@ export interface TaskDto {
   title: string
   /** whether the employee has marked their own part of this task done (completion is per person) */
   completed: boolean
+  dueDate: string | null
+  /** server-computed: due date has passed and the task is still active -- whole-task, not per assignee */
+  overdue: boolean
 }
 
 // Mirrors `TaskTimeDto` in src-tauri/src/view.rs. `id: null` is the "No task" row (general time, never
@@ -16,6 +19,8 @@ export interface TaskTimeDto {
   title: string
   trackedSeconds: number
   completed: boolean
+  dueDate: string | null
+  overdue: boolean
 }
 
 /**

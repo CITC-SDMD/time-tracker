@@ -19,6 +19,10 @@
           class="px-3! py-1.5!"
         >
           Tasks
+          <span
+            v-if="overdueCount"
+            class="ml-1 rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white"
+          >{{ overdueCount }}</span>
         </UiButton>
         <UiButton
           v-if="shots?.enabled || shots?.lastTakenAt"
@@ -111,6 +115,10 @@
           class="block truncate text-xs text-gray-500 hover:underline dark:text-gray-400"
         >
           Task: <span class="font-medium text-gray-700 dark:text-gray-300">{{ currentTaskTitle }}</span>
+          <span
+            v-if="currentTaskOverdue"
+            class="font-semibold text-red-600 dark:text-red-400"
+          >· Overdue</span>
         </NuxtLink>
 
         <div class="flex gap-2">
@@ -268,6 +276,8 @@ const { tasks } = useTasks()
 
 // picking a task happens on the dedicated Tasks screen; here it's just a readout with a link there
 const currentTaskTitle = computed(() => tasks.value.find(t => t.id === state.value?.currentTaskId)?.title ?? 'No task')
+const currentTaskOverdue = computed(() => tasks.value.find(t => t.id === state.value?.currentTaskId)?.overdue ?? false)
+const overdueCount = computed(() => tasks.value.filter(t => t.overdue).length)
 
 // The counter Reset is a testing aid: only dev builds show it.
 const isDev = import.meta.dev
