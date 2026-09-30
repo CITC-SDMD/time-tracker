@@ -41,6 +41,16 @@
         <UiBadge :variant="TASK_STATUS_VARIANT[row.status as TaskItem['status']]">
           {{ TASK_STATUS_LABEL[row.status as TaskItem['status']] }}
         </UiBadge>
+        <UiBadge
+          v-if="row.overdue"
+          variant="danger"
+          class="ml-2"
+        >
+          Overdue
+        </UiBadge>
+      </template>
+      <template #cell-dueDate="{ row }">
+        {{ row.dueDate ?? '—' }}
       </template>
       <template #cell-assigneeCount="{ row }">
         {{ row.assigneeCount }}
@@ -87,6 +97,11 @@
           autocomplete="off"
           :errors="v$.description.$errors"
           @blur="v$.description.$touch()"
+        />
+        <FormInput
+          v-model="form.dueDate"
+          type="date"
+          label="Due date (optional)"
         />
         <FormRadioGroup
           v-if="editing"
@@ -174,6 +189,7 @@ const canManage = computed(() => can('tasks.manage') && !readOnly.value)
 const COLUMNS = [
   { key: 'title', label: 'Task' },
   { key: 'status', label: 'Status' },
+  { key: 'dueDate', label: 'Due date' },
   { key: 'assigneeCount', label: 'Assigned to', align: 'right' as const },
   { key: 'actions', label: '', align: 'right' as const },
 ]
@@ -215,7 +231,7 @@ const formOpen = ref(false)
 const saving = ref(false)
 const formError = ref<string | null>(null)
 const editing = ref<TaskItem | null>(null)
-const form = reactive({ title: '', description: '', status: 'active' as TaskItem['status'], assigneeIds: [] as string[] })
+const form = reactive({ title: '', description: '', status: 'active' as TaskItem['status'], dueDate: '', assigneeIds: [] as string[] })
 
 const rules = {
   title: {
@@ -231,6 +247,7 @@ function openAdd() {
   form.title = ''
   form.description = ''
   form.status = 'active'
+  form.dueDate = ''
   form.assigneeIds = []
   formError.value = null
   v$.value.$reset()
@@ -242,6 +259,7 @@ function openEdit(task: TaskItem) {
   form.title = task.title
   form.description = task.description ?? ''
   form.status = task.status
+  form.dueDate = task.dueDate ?? ''
   form.assigneeIds = [...task.assigneeIds]
   formError.value = null
   v$.value.$reset()
@@ -256,6 +274,7 @@ async function submit() {
   const body = {
     title: form.title.trim(),
     description: form.description.trim() || null,
+    dueDate: form.dueDate || null,
     assigneeIds: form.assigneeIds,
     ...(editing.value ? { status: form.status } : {}),
   }

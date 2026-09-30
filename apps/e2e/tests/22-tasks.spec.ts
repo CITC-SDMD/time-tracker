@@ -4,6 +4,7 @@ import { artisan } from '../helpers/artisan'
 
 const TASK = 'Budget report'
 const PERSON = 'Dan Ramos' // dev1@test.com
+const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
 
 const dialog = (page: Page) => page.getByRole('dialog')
 const taskRow = (page: Page, title: string) => page.getByRole('row').filter({ has: page.getByText(title, { exact: true }) })
@@ -26,12 +27,14 @@ test.describe.serial('tasks as the admin', () => {
 
     await dialog(page).getByLabel('Title').fill(TASK)
     await dialog(page).getByLabel('Description (optional)').fill('Draft and review')
+    await dialog(page).getByLabel('Due date (optional)').fill(YESTERDAY)
     await dialog(page).getByLabel(PERSON).check()
     await dialog(page).getByRole('button', { name: 'Save task' }).click()
 
     await expect(page.getByText(`The task ${TASK} was saved.`)).toBeVisible()
     await expect(taskRow(page, TASK)).toContainText('Active')
     await expect(taskRow(page, TASK)).toContainText('1')
+    await expect(taskRow(page, TASK)).toContainText('Overdue')
   })
 
   test('COMPLETE: the manager marks the assignee\'s task done, then reopens it', async ({ page }) => {
@@ -59,6 +62,8 @@ test.describe.serial('tasks as the admin', () => {
     await dialog(page).getByRole('button', { name: 'Save task' }).click()
     await expect(page.getByText(`The task ${TASK} was saved.`)).toBeVisible()
     await expect(taskRow(page, TASK)).toContainText('Archived')
+    // overdue is a whole-task, active-only flag: an archived task past its due date no longer shows it
+    await expect(taskRow(page, TASK)).not.toContainText('Overdue')
   })
 
   test('REPORT: the tasks tab of the reports page loads without error', async ({ page }) => {

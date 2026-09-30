@@ -115,11 +115,33 @@
         {{ formatTime(row.lastActivityAt) }}
       </template>
     </UiTable>
+
+    <template v-if="can('tasks.view') && overdueTasks.length">
+      <h2 class="mb-3 mt-10 text-base/7 font-semibold text-gray-900 dark:text-white">
+        Your overdue tasks
+      </h2>
+      <UiTable
+        :columns="OVERDUE_COLUMNS"
+        :rows="overdueTasks"
+      >
+        <template #cell-title="{ row }">
+          <UiLink :to="office.to('/user/tasks')">
+            {{ row.title }}
+          </UiLink>
+        </template>
+        <template #cell-dueDate="{ row }">
+          {{ row.dueDate }}
+        </template>
+        <template #cell-assignees="{ row }">
+          {{ (row as TaskItem).assignees.map(a => a.name).join(', ') }}
+        </template>
+      </UiTable>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { EmployeeListItem, Environment, IntegrityLevel } from 'shared'
+import type { EmployeeListItem, Environment, IntegrityLevel, TaskItem } from 'shared'
 
 definePageMeta({
   layout: 'user',
@@ -130,7 +152,7 @@ definePageMeta({
 // organization sees everyone, one that reaches a team only that team, and someone with neither only themselves
 // (§12 Phase 6). Refreshes every 60 s while the browser tab is visible.
 const { api } = useApi()
-const { scope } = useAccess()
+const { scope, can } = useAccess()
 const office = useOffice()
 const { formatDuration, formatTime } = useFormat()
 
@@ -145,10 +167,24 @@ const COLUMNS = [
   { key: 'lastActivityAt', label: 'Last activity' },
 ]
 
+const OVERDUE_COLUMNS = [
+  { key: 'title', label: 'Task' },
+  { key: 'dueDate', label: 'Due date' },
+  { key: 'assignees', label: 'Assigned to' },
+]
+
 const employees = ref<EmployeeListItem[]>([])
+const tasks = ref<TaskItem[]>([])
 const loaded = ref(false)
 const refreshing = ref(false)
 const error = ref<string | null>(null)
+
+// overdue tasks with at least one assignee in the caller's own reach (mirrors this page's employees list,
+// which is already reach-filtered server-side) -- keeps this section framed the same way as the page above it
+const overdueTasks = computed(() => {
+  const reach = new Set(employees.value.map(e => e.id))
+  return tasks.value.filter(t => t.overdue && t.assigneeIds.some(id => reach.has(id)))
+})
 
 function statusText(e: EmployeeListItem): string {
   return e.status === 'offline'
@@ -172,7 +208,12 @@ const totals = computed(() => ({
 async function load() {
   refreshing.value = true
   try {
-    employees.value = await api<EmployeeListItem[]>('/employees')
+    const [employeeList, taskList] = await Promise.all([
+      api<EmployeeListItem[]>('/employees'),
+      can('tasks.view') ? api<TaskItem[]>('/tasks') : Promise.resolve([]),
+    ])
+    employees.value = employeeList
+    tasks.value = taskList
     error.value = null
   }
   catch (e) {
