@@ -156,4 +156,44 @@ class TaskTest extends TestCase
         $this->actingAs($otherAdmin, 'sanctum')->patchJson("/api/v1/tasks/{$id}/assignments/{$dev->id}", ['completed' => true])
             ->assertStatus(404);
     }
+
+    public function test_a_due_date_round_trips_through_create_and_update(): void
+    {
+        $admin = User::factory()->oic()->create();
+
+        $created = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Renew the lease', 'dueDate' => '2026-12-01',
+        ]);
+        $created->assertCreated()->assertJsonPath('dueDate', '2026-12-01');
+
+        $updated = $this->actingAs($admin, 'sanctum')->patchJson('/api/v1/tasks/'.$created->json('id'), ['dueDate' => null]);
+        $updated->assertOk()->assertJsonPath('dueDate', null);
+    }
+
+    public function test_a_task_due_yesterday_is_overdue_and_one_due_today_is_not(): void
+    {
+        $admin = User::factory()->oic()->create();
+
+        $yesterday = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Late one', 'dueDate' => now()->subDay()->toDateString(),
+        ]);
+        $yesterday->assertJsonPath('overdue', true);
+
+        $today = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Due today', 'dueDate' => now()->toDateString(),
+        ]);
+        $today->assertJsonPath('overdue', false);
+    }
+
+    public function test_an_archived_task_past_its_due_date_is_not_overdue(): void
+    {
+        $admin = User::factory()->oic()->create();
+        $id = $this->actingAs($admin, 'sanctum')->postJson('/api/v1/tasks', [
+            'title' => 'Old one', 'dueDate' => now()->subWeek()->toDateString(),
+        ])->json('id');
+
+        $response = $this->actingAs($admin, 'sanctum')->patchJson("/api/v1/tasks/{$id}", ['status' => 'archived']);
+
+        $response->assertJsonPath('status', 'archived')->assertJsonPath('overdue', false);
+    }
 }

@@ -128,7 +128,7 @@ class AgentSyncTest extends TestCase
 
         $response->assertOk()->assertJsonPath('rejected', []);
         $this->assertSame($task->id, Session::find($tagged['id'])->task_id);
-        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false]], $response->json('tasks'));
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false, 'dueDate' => null, 'overdue' => false]], $response->json('tasks'));
         $this->assertNotNull($other); // made, but never assigned: absent from the caller's own list above
     }
 
@@ -154,7 +154,7 @@ class AgentSyncTest extends TestCase
         $response = $this->sync($user, $this->body([], [], ['completedTaskIds' => [$task->id]]));
 
         $response->assertOk();
-        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => true]], $response->json('tasks'));
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => true, 'dueDate' => null, 'overdue' => false]], $response->json('tasks'));
         $this->assertNotNull($task->assignees()->first()->pivot->completed_at);
         $this->assertTrue(AuditLog::where('action', 'task.completed')->where('actor_user_id', $user->id)->whereNull('target_user_id')->exists());
     }
@@ -168,7 +168,7 @@ class AgentSyncTest extends TestCase
         $response = $this->sync($user, $this->body([], [], ['reopenedTaskIds' => [$task->id]]));
 
         $response->assertOk();
-        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false]], $response->json('tasks'));
+        $this->assertSame([['id' => (string) $task->id, 'title' => 'Budget report', 'completed' => false, 'dueDate' => null, 'overdue' => false]], $response->json('tasks'));
         $this->assertNull($task->assignees()->first()->pivot->completed_at);
         $this->assertTrue(AuditLog::where('action', 'task.reopened')->where('actor_user_id', $user->id)->whereNull('target_user_id')->exists());
     }

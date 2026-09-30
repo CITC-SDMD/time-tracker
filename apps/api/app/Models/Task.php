@@ -11,10 +11,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 // A work item a manager assigns to one or more people of their organization (docs/DEVELOPMENT_PLAN.md). An
 // employee tags a tracked session with a task they were assigned, or leaves it untagged (general time).
-#[Fillable(['title', 'description', 'status'])]
+#[Fillable(['title', 'description', 'status', 'due_date'])]
 class Task extends Model
 {
     use BelongsToOrganization, HasFactory;
+
+    /** @return array<string, string> */
+    protected function casts(): array
+    {
+        return ['due_date' => 'date'];
+    }
 
     public function creator(): BelongsTo
     {

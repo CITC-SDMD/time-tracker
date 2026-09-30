@@ -115,6 +115,9 @@ export interface AssignedTask {
   title: string
   /** whether the caller has marked their own part of this task done -- completion is per person, not per task */
   completed: boolean
+  dueDate: string | null
+  /** server-computed: due date has passed and the task is still active -- whole-task, not per assignee */
+  overdue: boolean
 }
 
 // GET /api/v1/employees
@@ -288,6 +291,9 @@ export interface TaskItem {
   title: string
   description: string | null
   status: 'active' | 'archived'
+  dueDate: string | null
+  /** server-computed: due date has passed and the task is still active -- whole-task, not per assignee */
+  overdue: boolean
   assigneeCount: number
   /** how many of the assignees have marked their own part done (completion is per person, not per task) */
   completedCount: number

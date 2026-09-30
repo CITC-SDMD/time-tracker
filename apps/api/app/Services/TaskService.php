@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Task;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 
 /**
  * The one place that resolves tasks for the agent sync (docs/DEVELOPMENT_PLAN.md): the active tasks a person is
@@ -15,9 +16,11 @@ class TaskService
 {
     public function __construct(private AccessService $access) {}
 
-    /** @return list<array{id: string, title: string, completed: bool}> */
+    /** @return list<array{id: string, title: string, completed: bool, dueDate: ?string, overdue: bool}> */
     public function assignedActiveTasksFor(User $user): array
     {
+        $today = Carbon::today();
+
         return Task::query()
             ->where('status', 'active')
             ->whereHas('assignees', fn ($q) => $q->whereKey($user->id))
@@ -28,6 +31,9 @@ class TaskService
                 'id' => (string) $task->id,
                 'title' => $task->title,
                 'completed' => $task->assignees->first()?->pivot->completed_at !== null,
+                'dueDate' => $task->due_date?->toDateString(),
+                // every task here is already status=active, so overdue is just "due date has passed"
+                'overdue' => $task->due_date !== null && $task->due_date->lt($today),
             ])
             ->all();
     }

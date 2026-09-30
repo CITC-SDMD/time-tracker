@@ -43,6 +43,7 @@ class TaskController extends Controller
         $task->title = trim($data['title']);
         $task->description = $data['description'] ?? null;
         $task->status = $data['status'] ?? 'active';
+        $task->due_date = $data['dueDate'] ?? null;
         $task->created_by = $caller->id;
         $task->save();
 
@@ -79,6 +80,9 @@ class TaskController extends Controller
         }
         if (isset($data['status'])) {
             $task->status = $data['status'];
+        }
+        if (array_key_exists('dueDate', $data)) {
+            $task->due_date = $data['dueDate'];
         }
         $task->save();
 
@@ -136,6 +140,7 @@ class TaskController extends Controller
             'title' => [$sometimes, 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string', 'max:1000'],
             'status' => ['sometimes', 'string', Rule::in(['active', 'archived'])],
+            'dueDate' => ['sometimes', 'nullable', 'date'],
             'assigneeIds' => ['sometimes', 'array'],
             'assigneeIds.*' => ['integer'],
         ]);
@@ -179,6 +184,8 @@ class TaskController extends Controller
             'title' => $task->title,
             'description' => $task->description,
             'status' => $task->status,
+            'dueDate' => $task->due_date?->toDateString(),
+            'overdue' => $task->status === 'active' && $task->due_date !== null && $task->due_date->lt(Carbon::today()),
             'assigneeCount' => (int) ($task->assignees_count ?? $assignees->count()),
             'completedCount' => $assignees->filter(fn (User $u) => $u->pivot->completed_at !== null)->count(),
             'assigneeIds' => $assignees->pluck('id')->map(fn ($id) => (string) $id)->all(),
