@@ -458,6 +458,18 @@ test.describe('people as a project manager and a team leader', () => {
       await expect(row(page, 'Pedro Santos')).toHaveCount(0)
     })
 
+    test('sees the employees of both of her team leaders, not just one branch', async ({ page }) => {
+      // Paula (pm1) has two team leaders reporting to her, Tina (tl1) and Tomas (tl2), each with their own
+      // employees -- confirms the reach walk is a real multi-branch tree, not just one reporting chain deep.
+      await page.goto('/user/people')
+      for (const name of ['Tina Cruz', 'Dan Ramos', 'Dana Uy', 'Tomas Diaz', 'Dex Tan', 'Quinn Go'])
+        await expect(row(page, name)).toBeVisible()
+      await expect(row(page, 'Dan Ramos')).toContainText('Tina Cruz')
+      await expect(row(page, 'Dex Tan')).toContainText('Tomas Diaz')
+      // Tess Lim's branch reports to the other project manager (pm2), out of Paula's reach
+      for (const name of ['Tess Lim', 'Cara Sy', 'Sam Ong']) await expect(row(page, name)).toHaveCount(0)
+    })
+
     test('can give any role up to their own, but never touches the admin', async ({ page }) => {
       await page.goto('/user/people')
       await row(page, 'Dana Uy').getByRole('button', { name: 'Change role' }).click()
